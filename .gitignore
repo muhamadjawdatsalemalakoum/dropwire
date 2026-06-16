@@ -35,6 +35,10 @@ _spec_specifics.md
 # Dev-only self-contained UI preview (snapshot of ui/index.html + app.css for the
 # preview panel / browser double-click; the real app loads the separate files)
 ui/preview.html
+www/preview.html
+
+# Local Claude Code preview config (dev-only)
+.claude/launch.json
 
 # Logs / temp
 *.log
