@@ -15,6 +15,7 @@
 
 mod catalog;
 mod config;
+mod control;
 mod endpoint;
 mod error;
 mod identity;
@@ -31,11 +32,12 @@ use iroh_blobs::provider::events::{
     ConnectMode, EventMask, EventSender, ProviderMessage, RequestMode,
 };
 use iroh_blobs::store::fs::FsStore;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 pub use catalog::{Status, TransferRecord};
 pub use config::{CoreConfig, Infra};
+pub use control::CtrlMsg;
 pub use error::{CoreError, Result};
 pub use progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
@@ -66,6 +68,8 @@ pub(crate) struct Inner {
     /// One-to-one binding: content hash (hex) → the first approved receiver's
     /// `EndpointId`. The ticket is served to that one device; others are denied.
     pub(crate) bound: Mutex<HashMap<String, iroh::EndpointId>>,
+    /// Broadcast of control messages received from peers (see [`control`]).
+    pub(crate) ctrl_tx: broadcast::Sender<control::CtrlMsg>,
 }
 
 impl Core {
@@ -93,8 +97,17 @@ impl Core {
             },
         );
         let blobs = iroh_blobs::BlobsProtocol::new(&store, Some(events));
+        // A second ALPN for the free peer-to-peer control channel (presence,
+        // instant decline, chat) — additive; it never touches the blobs path.
+        let (ctrl_tx, _) = broadcast::channel(64);
         let router = Router::builder(endpoint)
             .accept(store::BLOBS_ALPN, blobs)
+            .accept(
+                control::CTRL_ALPN,
+                control::Ctrl {
+                    tx: ctrl_tx.clone(),
+                },
+            )
             .spawn();
 
         let mut catalog = Catalog::load(config.data_dir.join("transfers.json"));
@@ -109,6 +122,7 @@ impl Core {
             serving: Mutex::new(HashMap::new()),
             conns: Mutex::new(HashMap::new()),
             bound: Mutex::new(HashMap::new()),
+            ctrl_tx,
         });
         let core = Core { inner };
         tokio::spawn(send::consume_provider_events(core.clone(), ev_rx));
