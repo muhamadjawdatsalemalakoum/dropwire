@@ -6,9 +6,18 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# Keep auto-discovering the other integration tests even though `relay` is
+# declared manually below (so it can require the `test-utils` feature).
+autotests = true
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[features]
+# Test-only: exposes the in-process relay path (`Infra::LocalRelay`) used by the
+# single-machine relay/resume integration tests in `tests/relay.rs`. Pulls
+# nothing into shipped builds — `cargo build` leaves it off.
+test-utils = []
 
 [dependencies]
 iroh.workspace = true
@@ -33,3 +42,13 @@ url.workspace = true
 tempfile = "3"
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
+# `test-utils` gives the integration tests `iroh::test_utils::run_relay_server`
+# (an in-process relay). Dev-only: the shipped binary never sees this feature.
+iroh = { workspace = true, features = ["test-utils"] }
+
+# The relay/resume tests need an in-process relay, so they only build under the
+# `test-utils` feature. All other integration tests stay feature-free.
+[[test]]
+name = "relay"
+path = "tests/relay.rs"
+required-features = ["test-utils"]

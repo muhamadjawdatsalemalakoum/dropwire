@@ -85,6 +85,25 @@ pub async fn build(secret_key: SecretKey, infra: &Infra) -> Result<Endpoint> {
                 .await
                 .context("bind endpoint (self-hosted)")?
         }
+
+        // TEST-ONLY: relay-only against an in-process relay. We add the custom
+        // relay transport, trust its self-signed test certificate, and strip every
+        // direct IP transport — so the only way to the peer is through the relay.
+        // The ticket carries the relay address (no separate discovery needed).
+        #[cfg(feature = "test-utils")]
+        Infra::LocalRelay { relay_map } => {
+            use iroh::endpoint::RelayMode;
+            use iroh::tls::CaTlsConfig;
+            Endpoint::builder(presets::Minimal)
+                .secret_key(secret_key)
+                .alpns(alpns)
+                .relay_mode(RelayMode::Custom(relay_map.clone()))
+                .ca_tls_config(CaTlsConfig::insecure_skip_verify())
+                .clear_ip_transports()
+                .bind()
+                .await
+                .context("bind endpoint (local relay, test-only)")?
+        }
     };
 
     // NB: we intentionally do NOT block on `endpoint.online()` here, so app

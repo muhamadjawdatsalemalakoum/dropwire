@@ -48,6 +48,19 @@ pub enum Infra {
         /// DNS origin domain, must match the dns-server `[dns].origins`.
         origin_domain: String,
     },
+
+    /// **Test-only.** Relay-only transport against an *in-process* relay, with all
+    /// direct IP paths removed. This lets single-machine integration tests
+    /// exercise the real production path — discovery via the ticket's relay
+    /// address and bytes actually relayed through a relay server — without a
+    /// network. Gated behind the `test-utils` feature; never compiled into
+    /// shipped builds. See `core/tests/relay.rs`.
+    #[cfg(feature = "test-utils")]
+    LocalRelay {
+        /// The relay map for the in-process relay, as returned by
+        /// `iroh::test_utils::run_relay_server`.
+        relay_map: iroh::RelayMap,
+    },
 }
 
 impl CoreConfig {
