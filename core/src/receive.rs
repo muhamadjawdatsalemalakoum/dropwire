@@ -32,6 +32,27 @@ impl Core {
         ticket: String,
         dest: PathBuf,
     ) -> Result<(TransferId, ProgressStream)> {
+        self.spawn_receive(ticket, dest, None).await
+    }
+
+    /// Like [`Core::receive`], but downloads only the files at the given indices
+    /// (0-based into the transfer's file list, as reported by [`Core::inspect`]).
+    /// Unselected files are neither fetched over the network nor written to disk.
+    pub async fn receive_selected(
+        &self,
+        ticket: String,
+        dest: PathBuf,
+        selected: Vec<usize>,
+    ) -> Result<(TransferId, ProgressStream)> {
+        self.spawn_receive(ticket, dest, Some(selected)).await
+    }
+
+    async fn spawn_receive(
+        &self,
+        ticket: String,
+        dest: PathBuf,
+        selected: Option<Vec<usize>>,
+    ) -> Result<(TransferId, ProgressStream)> {
         // Parse up front so the caller gets a clean error synchronously.
         let parsed: BlobTicket = ticket
             .parse()
@@ -45,7 +66,9 @@ impl Core {
         let core = self.clone();
         let tx_err = tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_receive(core.clone(), id, parsed, ticket, dest, tx, token).await {
+            if let Err(e) =
+                run_receive(core.clone(), id, parsed, ticket, dest, selected, tx, token).await
+            {
                 let _ = tx_err
                     .send(Progress::Error {
                         id,
@@ -137,12 +160,14 @@ impl Core {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // internal plumbing; bundling would not aid clarity
 async fn run_receive(
     core: Core,
     id: TransferId,
     ticket: BlobTicket,
     ticket_str: String,
     dest: PathBuf,
+    selected: Option<Vec<usize>>,
     tx: mpsc::Sender<Progress>,
     token: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -179,7 +204,11 @@ async fn run_receive(
     let (_hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &hash, 1024 * 1024 * 32, None)
         .await
         .context("fetch sizes")?;
-    let total: u64 = sizes.iter().sum();
+    // Total bytes to fetch: the whole transfer, or just the selected files.
+    let total: u64 = match &selected {
+        None => sizes.iter().sum(),
+        Some(idx) => idx.iter().filter_map(|&i| sizes.get(i + 1)).copied().sum(),
+    };
 
     // Record (active).
     {
@@ -199,14 +228,27 @@ async fn run_receive(
         ));
     }
 
-    // Resume: only request what's not already present locally.
+    // Resume: for a full download, request only what's missing; for a selective
+    // download, request the chosen files (plus the collection structure: root + meta).
     let local = store
         .remote()
         .local(hf)
         .await
         .context("inspect local store")?;
-    if !local.is_complete() {
-        let get = store.remote().execute_get(conn, local.missing());
+    let request = match &selected {
+        None => local.missing(),
+        Some(idx) => {
+            let mut b = GetRequest::builder()
+                .root(ChunkRanges::all())
+                .child(0, ChunkRanges::all());
+            for &i in idx {
+                b = b.child((i as u64) + 1, ChunkRanges::all());
+            }
+            b.build(hash)
+        }
+    };
+    if selected.is_some() || !local.is_complete() {
+        let get = store.remote().execute_get(conn, request);
         let mut stream = get.stream();
         // Throttle UI progress to ~12/s: blob progress can fire per-chunk.
         let mut last_emit = Instant::now() - Duration::from_millis(200);
@@ -239,7 +281,12 @@ async fn run_receive(
         .await
         .context("load collection")?;
     std::fs::create_dir_all(&dest)?;
-    for (name, child_hash) in collection.iter() {
+    for (i, (name, child_hash)) in collection.iter().enumerate() {
+        if let Some(idx) = &selected {
+            if !idx.contains(&i) {
+                continue;
+            }
+        }
         let target = dest.join(sanitize_rel(name));
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
