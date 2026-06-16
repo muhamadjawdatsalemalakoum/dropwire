@@ -1,4 +1,4 @@
-# irohtransfer — Architecture (Desktop MVP)
+# Dropwire — Architecture (Desktop MVP)
 
 > Status: **design draft**, 2026-06-16. Scope: the **desktop** target (Windows / macOS / Linux).
 > Mobile, web, and enterprise hardening are explicitly out of scope here — see [Roadmap](#14-out-of-scope--roadmap).
@@ -74,7 +74,7 @@ The hard rule is the line between `src-tauri` and `irohcore`: **`iroh_blobs` sym
 A Cargo workspace with the core split out so it's reusable by future mobile/CLI shells.
 
 ```
-irohtransfer/
+dropwire/
 ├─ Cargo.toml                  # [workspace] members = ["core", "src-tauri"]
 ├─ core/                       # crate `irohcore` — the stable wrapper (no Tauri deps)
 │  ├─ Cargo.toml               # iroh, iroh-blobs, tokio, n0-future, tokio-util, serde, thiserror
@@ -92,8 +92,8 @@ irohtransfer/
 │  └─ src/{main.rs, lib.rs}
 ├─ src/  (or ui/)              # frontend (framework TBD — see §8)
 ├─ infra/                      # relay + dns-server configs + deploy notes (§6)
-│  ├─ iroh-relay.toml
-│  └─ iroh-dns-server.toml
+│  ├─ relay/relay.toml
+│  └─ dns/config.toml
 ├─ ARCHITECTURE.md             # this file
 └─ docs/research/              # (optional) move _research_synthesis.md / _spec_specifics.md here
 ```
@@ -288,7 +288,7 @@ scale the **relay on bandwidth** (flat-egress host — Hetzner/OVH — per the c
 ### 6.1 Relay (`iroh-relay`, separate crate, `--features=server`)
 
 ```toml
-# infra/iroh-relay.toml
+# infra/relay/relay.toml
 enable_relay = true
 enable_quic_addr_discovery = true
 enable_metrics = true
@@ -311,14 +311,14 @@ bytes_per_second = 1048576
 max_burst_bytes  = 4194304
 ```
 
-Run: `cargo run --features="server" --bin iroh-relay -- --config-path=infra/iroh-relay.toml`.
+Run: `cargo run --features="server" --bin iroh-relay -- --config-path=infra/relay/relay.toml`.
 Ports: HTTP 80 (ACME challenge), HTTPS 443, QUIC UDP 9889, metrics 9090. Client side already sends the token via
 `RelayConfig::with_auth_token` (§5.2), so third parties can't relay through us.
 
 ### 6.2 DNS / discovery (`iroh-dns-server`, pkarr)
 
 ```toml
-# infra/iroh-dns-server.toml  (based on the shipped config.prod.toml)
+# infra/dns/config.toml  (based on the shipped config.prod.toml)
 pkarr_put_rate_limit = "smart"
 
 [https]
