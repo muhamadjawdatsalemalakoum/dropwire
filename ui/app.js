@@ -118,65 +118,98 @@ function resetWire(svg) {
   svg.querySelectorAll('.w-node').forEach((n) => n.classList.remove('live', 'done'));
 }
 
-/* -------------------------------- SEND --------------------------------- */
-let sendId = null;
-async function startSend(path) {
-  try {
-    $('#send-pick').classList.add('hidden');
-    const card = $('#send-active'); card.classList.remove('hidden');
-    $('#send-code').textContent = '…'; $('#send-qr').innerHTML = ''; $('#send-status').textContent = 'Preparing…';
-    $('#send-cancel').textContent = 'Cancel';
-    resetWire($('#send-bar') && $('#send-bar').closest('svg'));
-    const ch = makeChannel(); ch.onmessage = onSendMsg;
-    sendId = await invoke('start_send', { path, onEvent: ch });
-  } catch (e) { $('#send-status').textContent = String(e); }
+/* ----------------- transfer cards (shared, multi-transfer) ------------- */
+// Clone a card template, giving its clipPath a unique id so multiple live cards
+// don't share one clip region.
+function uniquifyClip(card) {
+  const cp = card.querySelector('clipPath');
+  if (!cp) return;
+  const oldRef = `url(#${cp.id})`;
+  const nid = 'lit-' + Math.random().toString(36).slice(2, 9);
+  cp.id = nid;
+  card.querySelectorAll('[clip-path]').forEach((g) => {
+    if (g.getAttribute('clip-path') === oldRef) g.setAttribute('clip-path', `url(#${nid})`);
+  });
 }
-function onSendMsg(m) {
-  const svg = $('#send-bar') && $('#send-bar').closest('svg');
+function setBarEl(fill, svg, pctEl, done, total) {
+  const p = total > 0 ? Math.min(1, done / total) : 0;
+  if (fill) {
+    fill.style.strokeDashoffset = String(1 - p);
+    const clip = svg && svg.querySelector('.lit-clip');
+    if (clip) clip.setAttribute('width', String(60 + p * 480));
+  }
+  if (pctEl) pctEl.textContent = Math.round(p * 100) + '%';
+}
+function removeCard(card) {
+  if (!card) return;
+  if (canAnim) {
+    const a = card.animate([{ opacity: 1 }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 200, easing: EASE_OUT });
+    a.onfinish = () => card.remove();
+  } else card.remove();
+}
+function makeCard(tplId, listId) {
+  const card = document.getElementById(tplId).content.firstElementChild.cloneNode(true);
+  uniquifyClip(card);
+  document.getElementById(listId).prepend(card);
+  if (canAnim) card.animate([{ opacity: 0, transform: 'translateY(12px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_POP });
+  return card;
+}
+
+/* -------------------------------- SEND --------------------------------- */
+async function startSend(path) {
+  const card = makeCard('tpl-send', 'send-list');
+  const els = {
+    code: card.querySelector('.js-code'), qr: card.querySelector('.js-qr'),
+    status: card.querySelector('.js-status'), copy: card.querySelector('.js-copy'),
+    cancel: card.querySelector('.js-cancel'), fill: card.querySelector('.w-fill'),
+    pct: card.querySelector('.wire-pct'), svg: card.querySelector('svg.wire'),
+  };
+  els.code.textContent = '…'; els.status.textContent = 'Preparing…';
+  let id = null;
+  els.copy.addEventListener('click', () => {
+    const c = els.code.textContent;
+    if (c && c !== '…' && navigator.clipboard) {
+      navigator.clipboard.writeText(c);
+      els.copy.textContent = 'Copied ✓'; setTimeout(() => { els.copy.textContent = 'Copy code'; }, 1400);
+    }
+  });
+  els.cancel.addEventListener('click', async () => {
+    if (id) await invoke('cancel_transfer', { id }).catch(() => {});
+    removeCard(card);
+  });
+  try {
+    const ch = makeChannel(); ch.onmessage = (m) => onSendMsg(m, els, card);
+    id = await invoke('start_send', { path, onEvent: ch });
+  } catch (e) { els.status.textContent = String(e); }
+}
+function onSendMsg(m, els, card) {
   switch (m.kind) {
-    case 'importing': $('#send-status').textContent = `Preparing… ${fmtBytes(m.done)} / ${fmtBytes(m.total)}`; break;
-    case 'ready': revealTicket(m.ticket); break;
+    case 'importing': els.status.textContent = `Preparing… ${fmtBytes(m.done)} / ${fmtBytes(m.total)}`; break;
+    case 'ready':
+      els.code.textContent = m.ticket;
+      els.status.textContent = "Ready — share this code. Keep the app open until it's received.";
+      invoke('qr_svg', { text: m.ticket }).then((svg) => {
+        els.qr.innerHTML = svg;
+        if (canAnim) els.qr.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_OUT, delay: 80 });
+      }).catch(() => {});
+      if (canAnim) els.code.animate([{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], { duration: 380, easing: EASE_OUT });
+      break;
     case 'peerJoined':
-      if (svg && !svg.dataset.lit) { svg.dataset.lit = '1'; svg.classList.remove('connecting'); igniteNode(svg, '.w-node.peer'); }
-      $('#send-status').textContent = 'Receiver connected — sending…';
+      if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
+      els.status.textContent = 'Receiver connected — sending…';
       break;
     case 'transferring':
-      setBar('#send-bar', '#send-pct', m.offset, m.total);
-      $('#send-status').textContent = `Sending… ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
+      setBarEl(els.fill, els.svg, els.pct, m.offset, m.total);
+      els.status.textContent = `Sending… ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
       break;
     case 'done':
-      setBar('#send-bar', '#send-pct', 1, 1);
-      if (svg) doneSpark(svg);
-      $('#send-status').textContent = 'Sent ✓';
-      $('#send-cancel').textContent = 'Send another';
+      setBarEl(els.fill, els.svg, els.pct, 1, 1);
+      if (els.svg) doneSpark(els.svg);
+      els.status.textContent = 'Sent ✓'; els.cancel.textContent = 'Done';
       break;
-    case 'error': $('#send-status').textContent = 'Error: ' + m.message; break;
-    case 'cancelled': resetSend(); break;
+    case 'error': els.status.textContent = 'Error: ' + m.message; break;
+    case 'cancelled': removeCard(card); break;
   }
-}
-function revealTicket(ticket) {
-  const card = $('#send-active');
-  $('#send-code').textContent = ticket;
-  $('#send-status').textContent = "Ready — share this code. Keep the app open until it's received.";
-  invoke('qr_svg', { text: ticket }).then((svg) => {
-    $('#send-qr').innerHTML = svg;
-    if (canAnim) $('#send-qr').animate(
-      [{ opacity: 0, transform: 'scale(.96)', filter: 'blur(4px)' }, { opacity: 1, transform: 'none', filter: 'blur(0)' }],
-      { duration: 380, easing: EASE_OUT, delay: 80 });
-  }).catch(() => {});
-  if (canAnim) {
-    card.animate([{ opacity: 0, transform: 'translateY(16px) scale(.94)' }, { opacity: 1, transform: 'none' }],
-      { duration: 380, easing: EASE_POP });
-    $('#send-code').animate([{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }],
-      { duration: 380, easing: EASE_OUT });
-  }
-}
-function resetSend() {
-  sendId = null;
-  $('#send-active').classList.add('hidden');
-  $('#send-pick').classList.remove('hidden');
-  $('#send-cancel').textContent = 'Cancel';
-  resetWire($('#send-bar') && $('#send-bar').closest('svg'));
 }
 $('#pick-file').addEventListener('click', async () => {
   const p = await invoke('pick_paths', { directory: false, multiple: false }).catch(() => []);
@@ -186,21 +219,9 @@ $('#pick-folder').addEventListener('click', async () => {
   const p = await invoke('pick_paths', { directory: true, multiple: false }).catch(() => []);
   if (p && p.length) startSend(p[0]);
 });
-$('#copy-code').addEventListener('click', () => {
-  const code = $('#send-code').textContent;
-  if (code && code !== '…' && navigator.clipboard) {
-    navigator.clipboard.writeText(code);
-    const btn = $('#copy-code'); const t = btn.textContent; btn.textContent = 'Copied ✓';
-    setTimeout(() => { btn.textContent = t; }, 1400);
-  }
-});
-$('#send-cancel').addEventListener('click', async () => {
-  if (sendId) await invoke('cancel_transfer', { id: sendId }).catch(() => {});
-  resetSend();
-});
 
 /* ------------------------------- RECEIVE ------------------------------- */
-let recvId = null, recvDest = null;
+let recvDest = null;
 $('#recv-code-input').addEventListener('input', (e) => {
   const v = e.target.value.trim();
   $('#recv-start').disabled = v.length === 0;
@@ -213,23 +234,29 @@ $('#pick-dest').addEventListener('click', async () => {
 async function beginReceive(ticket, dest, selected) {
   $('#recv-error').textContent = '';
   switchView('receive');
+  const myDest = dest || null;
+  const card = makeCard('tpl-recv', 'recv-list');
+  const els = {
+    name: card.querySelector('.js-name'), route: card.querySelector('.route-badge'),
+    fill: card.querySelector('.w-fill'), pct: card.querySelector('.wire-pct'),
+    status: card.querySelector('.js-status'), svg: card.querySelector('svg.wire'),
+    open: card.querySelector('.js-open'), another: card.querySelector('.js-another'),
+    cancel: card.querySelector('.js-cancel'),
+  };
+  els.name.textContent = 'Connecting…';
+  let id = null;
+  els.cancel.addEventListener('click', async () => { if (id) await invoke('cancel_transfer', { id }).catch(() => {}); removeCard(card); });
+  els.open.addEventListener('click', async () => { if (myDest) await invoke('reveal_path', { path: myDest }).catch(() => {}); });
+  els.another.addEventListener('click', () => removeCard(card));
   try {
-    $('#recv-pick').classList.add('hidden');
-    $('#recv-active').classList.remove('hidden');
-    $('#recv-name').textContent = 'Connecting…';
-    const badge = $('#recv-route'); badge.textContent = 'connecting'; badge.className = 'route-badge connecting';
-    resetWire($('#recv-bar') && $('#recv-bar').closest('svg'));
-    setBar('#recv-bar', '#recv-pct', 0, 1);
-    $('#recv-open').classList.add('hidden'); $('#recv-another').classList.add('hidden');
-    recvDest = dest || null;
-    const ch = makeChannel(); ch.onmessage = onRecvMsg;
-    recvId = (selected && selected.length)
-      ? await invoke('start_receive_selected', { ticket, dest: dest || null, selected, onEvent: ch })
-      : await invoke('start_receive', { ticket, dest: dest || null, onEvent: ch });
+    const ch = makeChannel(); ch.onmessage = (m) => onRecvMsg(m, els, card);
+    id = (selected && selected.length)
+      ? await invoke('start_receive_selected', { ticket, dest: myDest, selected, onEvent: ch })
+      : await invoke('start_receive', { ticket, dest: myDest, onEvent: ch });
   } catch (e) {
+    removeCard(card);
     $('#recv-error').textContent = String(e);
     const input = $('#recv-code-input'); if (input) { input.classList.add('shake'); setTimeout(() => input.classList.remove('shake'), 400); }
-    resetRecv();
   }
 }
 $('#recv-start').addEventListener('click', () => {
@@ -329,47 +356,30 @@ $('#recv-preview').addEventListener('click', (e) => { if (e.target.id === 'recv-
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#recv-preview').classList.contains('hidden')) closeModal();
 });
-function onRecvMsg(m) {
-  const svg = $('#recv-bar') && $('#recv-bar').closest('svg');
+function onRecvMsg(m, els, card) {
   switch (m.kind) {
     case 'transferring': {
-      if (svg && !svg.dataset.lit) { svg.dataset.lit = '1'; svg.classList.remove('connecting'); igniteNode(svg, '.w-node.peer'); $('#recv-name').textContent = 'Receiving…'; }
-      const b = $('#recv-route'); const r = m.route;
-      b.textContent = r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed · a bit slower' : 'transferring';
-      b.className = 'route-badge ' + (r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed' : '');
-      b.setAttribute('aria-label', 'Connection: ' + b.textContent);
-      setBar('#recv-bar', '#recv-pct', m.offset, m.total);
-      $('#recv-status').textContent = `· ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
+      if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); els.name.textContent = 'Receiving…'; }
+      const r = m.route;
+      els.route.textContent = r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed · a bit slower' : 'transferring';
+      els.route.className = 'route-badge ' + (r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed' : '');
+      els.route.setAttribute('aria-label', 'Connection: ' + els.route.textContent);
+      setBarEl(els.fill, els.svg, els.pct, m.offset, m.total);
+      els.status.textContent = `· ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
       break;
     }
     case 'done':
-      setBar('#recv-bar', '#recv-pct', 1, 1);
-      if (svg) doneSpark(svg);
-      $('#recv-name').textContent = 'Received ✓';
-      $('#recv-status').textContent = `· ${fmtBytes(m.stats && m.stats.bytes)} in ${((m.stats && m.stats.seconds) || 0).toFixed(1)}s`;
-      $('#recv-open').classList.remove('hidden');
-      $('#recv-another').classList.remove('hidden');
-      if (canAnim) $('#recv-open').animate([{ opacity: 0, transform: 'translateY(8px) scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_POP });
+      setBarEl(els.fill, els.svg, els.pct, 1, 1);
+      if (els.svg) doneSpark(els.svg);
+      els.name.textContent = 'Received ✓';
+      els.status.textContent = `· ${fmtBytes(m.stats && m.stats.bytes)} in ${((m.stats && m.stats.seconds) || 0).toFixed(1)}s`;
+      els.open.classList.remove('hidden'); els.another.classList.remove('hidden'); els.cancel.classList.add('hidden');
+      if (canAnim) els.open.animate([{ opacity: 0, transform: 'translateY(8px) scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_POP });
       break;
-    case 'error': $('#recv-error').textContent = m.message; resetRecv(); break;
-    case 'cancelled': resetRecv(); break;
+    case 'error': els.name.textContent = 'Failed'; els.status.textContent = m.message; els.cancel.textContent = 'Dismiss'; break;
+    case 'cancelled': removeCard(card); break;
   }
 }
-function resetRecv() {
-  recvId = null;
-  $('#recv-active').classList.add('hidden');
-  $('#recv-pick').classList.remove('hidden');
-  $('#recv-open').classList.add('hidden'); $('#recv-another').classList.add('hidden');
-  resetWire($('#recv-bar') && $('#recv-bar').closest('svg'));
-}
-$('#recv-cancel').addEventListener('click', async () => {
-  if (recvId) await invoke('cancel_transfer', { id: recvId }).catch(() => {});
-  resetRecv();
-});
-$('#recv-open').addEventListener('click', async () => {
-  if (recvDest) await invoke('reveal_path', { path: recvDest }).catch(() => {});
-});
-$('#recv-another').addEventListener('click', () => resetRecv());
 if ($('#copy-id')) $('#copy-id').addEventListener('click', () => { const id = $('#endpoint-id').textContent; if (navigator.clipboard && id) navigator.clipboard.writeText(id); });
 if ($('#change-folder')) $('#change-folder').addEventListener('click', async () => { const dir = await invoke('pick_dest_dir').catch(() => null); if (dir) { localStorage.setItem('dropwire-default-dir', dir); $('#default-folder-label').textContent = dir; } });
 

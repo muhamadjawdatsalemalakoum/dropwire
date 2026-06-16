@@ -62,34 +62,37 @@
           </div>
         </div>
 
-        <div id="send-active" class="code-card hidden">
-          <div class="send-grid">
-            <div>
-              <p class="label">Share this code</p>
-              <div class="code" id="send-code">—</div>
-              <div class="code-actions"><button class="btn" id="copy-code">Copy code</button><button class="btn-quiet" id="send-cancel">Cancel</button></div>
-              <p class="hint" id="send-status" aria-live="polite">Preparing…</p>
+        <div id="send-list" class="transfer-list"></div>
+        <template id="tpl-send">
+          <div class="code-card xfer-card">
+            <div class="send-grid">
+              <div>
+                <p class="label">Share this code</p>
+                <div class="code js-code">—</div>
+                <div class="code-actions"><button class="btn js-copy">Copy code</button><button class="btn-quiet js-cancel">Cancel</button></div>
+                <p class="hint js-status" aria-live="polite">Preparing…</p>
+              </div>
+              <div class="qr-block">
+                <div class="qr-lens"><div class="qr js-qr" aria-label="QR code for this transfer"></div></div>
+                <p class="hint">Scan to receive</p>
+              </div>
             </div>
-            <div class="qr-block">
-              <div class="qr-lens"><div class="qr" id="send-qr" aria-label="QR code for this transfer"></div></div>
-              <p class="hint">Scan to receive</p>
+            <div class="wire-wrap">
+              <svg class="wire connecting" data-dir="send" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                <defs><clipPath id="lit-send"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
+                <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <g clip-path="url(#lit-send)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
+                <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <circle class="w-spark peer" cx="540" cy="60" r="8"/>
+                <circle class="w-node self live" cx="60" cy="60" r="8"/>
+                <circle class="w-node peer" cx="540" cy="60" r="8"/>
+              </svg>
+              <div class="wire-readout"><span class="wire-pct"></span></div>
             </div>
           </div>
-          <div class="wire-wrap">
-            <svg class="wire connecting" data-dir="send" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-              <defs><clipPath id="lit-send"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
-              <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <path class="w-fill" id="send-bar" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <g clip-path="url(#lit-send)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
-              <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <circle class="w-spark peer" cx="540" cy="60" r="8"/>
-              <circle class="w-node self live" cx="60" cy="60" r="8"/>
-              <circle class="w-node peer" cx="540" cy="60" r="8"/>
-            </svg>
-            <div class="wire-readout"><span class="wire-pct" id="send-pct"></span></div>
-          </div>
-        </div>
+        </template>
       </section>
 
       <!-- ----- RECEIVE ----- -->
@@ -107,24 +110,27 @@
           <p class="error" id="recv-error" aria-live="assertive"></p>
         </div>
 
-        <div id="recv-active" class="panel hidden">
-          <div class="recv-head"><span class="recv-name" id="recv-name">Connecting…</span><span class="route-badge connecting" id="recv-route">connecting</span></div>
-          <div class="wire-wrap">
-            <svg class="wire connecting" data-dir="recv" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-              <defs><clipPath id="lit-recv"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
-              <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <path class="w-fill" id="recv-bar" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <g clip-path="url(#lit-recv)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
-              <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-              <circle class="w-spark peer" cx="540" cy="60" r="8"/>
-              <circle class="w-node peer" cx="60" cy="60" r="8"/>
-              <circle class="w-node self" cx="540" cy="60" r="8"/>
-            </svg>
-            <div class="wire-readout"><span class="wire-pct" id="recv-pct">0%</span><span id="recv-status" aria-live="polite"></span></div>
+        <div id="recv-list" class="transfer-list"></div>
+        <template id="tpl-recv">
+          <div class="panel xfer-card">
+            <div class="recv-head"><span class="recv-name js-name">Connecting…</span><span class="route-badge connecting">connecting</span></div>
+            <div class="wire-wrap">
+              <svg class="wire connecting" data-dir="recv" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                <defs><clipPath id="lit-recv"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
+                <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <g clip-path="url(#lit-recv)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
+                <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+                <circle class="w-spark peer" cx="540" cy="60" r="8"/>
+                <circle class="w-node peer" cx="60" cy="60" r="8"/>
+                <circle class="w-node self" cx="540" cy="60" r="8"/>
+              </svg>
+              <div class="wire-readout"><span class="wire-pct">0%</span><span class="js-status" aria-live="polite"></span></div>
+            </div>
+            <div class="recv-actions"><button class="btn-quiet js-cancel">Cancel</button><button class="btn js-open hidden">Open folder</button><button class="btn-quiet js-another hidden">Receive another</button></div>
           </div>
-          <div class="recv-actions"><button class="btn-quiet" id="recv-cancel">Cancel</button><button class="btn hidden" id="recv-open">Open folder</button><button class="btn-quiet hidden" id="recv-another">Receive another</button></div>
-        </div>
+        </template>
       </section>
 
       <!-- ----- HISTORY ----- -->
