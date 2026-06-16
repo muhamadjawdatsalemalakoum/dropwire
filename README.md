@@ -44,6 +44,9 @@ your files through their servers with size caps and ads. Dropwire is the missing
 - **Free forever.** No limits, no subscriptions, no ads.
 - **Truly private.** End-to-end encrypted. No account, no sign-in, no tracking. We never
   see your files — and neither does anyone else.
+- **See it before you accept.** The receiver previews exactly what's coming — file names, sizes,
+  and count — and approves before a single byte downloads. Both sides see, live, when the other
+  device connects.
 - **Direct, peer-to-peer.** Your file goes straight from your device to theirs. When a
   direct connection isn't possible, it falls back to an encrypted relay that still can't
   read a single byte.
@@ -55,7 +58,8 @@ your files through their servers with size caps and ads. Dropwire is the missing
 
 1. **Pick** a file or folder.
 2. **Share** the short code (or QR) Dropwire gives you.
-3. The other person enters the code and the transfer runs **directly, device to device.**
+3. The other person enters the code, **sees exactly what's being sent and accepts** — then it runs
+   **directly, device to device.**
 
 Under the hood: each device has a stable cryptographic identity (you "dial a key, not an
 IP"); peers find each other via DNS/DHT discovery; the connection is QUIC with TLS 1.3;
