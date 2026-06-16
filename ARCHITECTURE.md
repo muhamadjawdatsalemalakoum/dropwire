@@ -364,6 +364,17 @@ accept gate **+ real one-to-one enforcement** (`RequestMode::NotifyLog → Inter
 sender identity, signature display (**M**); thumbnails / text snippets — which *do* read real content, so
 opt-in and clearly "downloading a preview" — and symmetric "sender offers X / receiver accepts" consent (**L**).
 
+**Feasibility — verified against the iroh-blobs 0.103 source (2026-06-17).** Both load-bearing APIs exist:
+- **Sender-side gate (real one-to-one):** `RequestMode::Intercept` / `InterceptLog` + `ProviderMessage::GetRequestReceived`,
+  whose `tx: oneshot::Sender<EventResult>` replies `Ok(())` to allow or `Err(AbortReason::Permission)` to deny —
+  and the provider **blocks on `rx.await??` before serving any bytes** (`src/provider/events.rs`). `ConnectMode::Intercept`
+  gates by `EndpointId` at connect time too. Working pattern in the crate's `examples/limit.rs`.
+- **Selective + range fetch:** `GetRequest::builder().child(i, ranges)…build(hash)` and `GetRequest::blob_ranges(hash, ranges)`
+  with `ChunkRanges`/`ChunkRangesSeq` (`::chunks(..k)`, `::bytes(a..b)`, `::last_chunk()`); ranges are BLAKE3-verified via BAO,
+  and `store.remote().execute_get(conn, request)` accepts any hand-built `GetRequest` (not just `local.missing()`).
+
+So selective download, range-grab, the sender accept gate, allow-list, and TTL are all on confirmed ground.
+
 ---
 
 ## 6. Self-hosted infrastructure
