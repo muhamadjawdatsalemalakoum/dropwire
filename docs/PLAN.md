@@ -49,8 +49,12 @@ Built test-first, each milestone verified on a real MSVC build and pushed:
 - **M0 — Resume proven** (`82a4a0e`): `resume_after_interrupt` is now deterministic (cancel on real byte `offset`, not a wall-clock guess) and always-run — byte-perfect resume is a CI-gated guarantee on iroh-blobs 0.103.
 - **M1 — Preview engine** (`af6a237`): `Core::inspect(ticket) -> TransferPreview` (files, sizes, count, total, route), metadata-only (proven: a 16 MiB transfer leaves the receiver store < 4 MiB). Purely additive; no new dependencies.
 - **M2 — Preview/accept GUI** (`9da1de3`): `inspect_ticket` Tauri command + the receive accept modal (verified file list → **Accept & download** / Cancel / Esc). Shell compiles clean; modal DOM-verified, no console errors.
+- **M3 — One-to-one enforced** (`36ba244`): `RequestMode::InterceptLog` gate binds a ticket to the first device (whether it previews or downloads); a different `EndpointId` is denied. Allow-by-default on any uncertainty, so a normal single-receiver transfer is never blocked or hung. Test: `ticket_is_bound_to_first_device`.
+- **M4 — Selective download** (`62a3eff`): `Core::receive_selected` + per-file checkboxes in the modal — fetch and write only the chosen files via a hand-built `GetRequest`; unselected content never enters the store. Tests: `selective.rs`.
+- **M5 — Control channel** (`7fb4846`): a free custom-ALPN two-way channel (`CtrlMsg`: Hello / Decline / Ack / Chat) on the same endpoint, additive to the blobs path — instant decline + chat-lite. Tests: `control_stream.rs`.
+- **M6 — GUI reach** (`c9bea1d`): selective checkboxes + instant decline wired into the accept modal (`start_receive_selected`, `send_control`); device id (Settings) and History/Resume already present.
 
-The **"preview before you accept" core is complete end-to-end.** Remaining milestones — **M3** (sender accept gate / real one-to-one), **M4** (selective download), **M5** (control stream), **M6** (reach & devices) — are the next features to decide on.
+**All six milestones (M0–M6) shipped.** Engine: 13 tests green (+1 network-only ignored), `clippy -D warnings` + `fmt --all` clean, the Tauri shell builds. Remaining before a public release: real on-device screenshots for the landing site (deferred to the end), and optional polish (on-brand dead-state cards, a chat UI panel, an `og:image`).
 
 ---
 
