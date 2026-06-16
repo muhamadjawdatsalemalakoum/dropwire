@@ -1,0 +1,29 @@
+[package]
+name = "dropwire"
+description = "Dropwire — free, private, peer-to-peer file transfer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+default-run = "dropwire"
+
+# Tauri's lib/main split so desktop + a future mobile target share one entry point.
+[lib]
+name = "dropwire_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+irohcore = { path = "../core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+anyhow = { workspace = true }
+qrcode = "0.14"
+dirs = "5"
