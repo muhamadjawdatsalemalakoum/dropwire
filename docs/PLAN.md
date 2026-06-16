@@ -42,6 +42,18 @@ This is the product's integrity made visible, and it is enforced at the type/tok
 
 ---
 
+## Progress (shipped)
+
+Built test-first, each milestone verified on a real MSVC build and pushed:
+
+- **M0 — Resume proven** (`82a4a0e`): `resume_after_interrupt` is now deterministic (cancel on real byte `offset`, not a wall-clock guess) and always-run — byte-perfect resume is a CI-gated guarantee on iroh-blobs 0.103.
+- **M1 — Preview engine** (`af6a237`): `Core::inspect(ticket) -> TransferPreview` (files, sizes, count, total, route), metadata-only (proven: a 16 MiB transfer leaves the receiver store < 4 MiB). Purely additive; no new dependencies.
+- **M2 — Preview/accept GUI** (`9da1de3`): `inspect_ticket` Tauri command + the receive accept modal (verified file list → **Accept & download** / Cancel / Esc). Shell compiles clean; modal DOM-verified, no console errors.
+
+The **"preview before you accept" core is complete end-to-end.** Remaining milestones — **M3** (sender accept gate / real one-to-one), **M4** (selective download), **M5** (control stream), **M6** (reach & devices) — are the next features to decide on.
+
+---
+
 ## Build order & dependencies
 
 The spine first (it is what everything clips onto), then trust, then consent/one-to-one, then selectivity, then the
