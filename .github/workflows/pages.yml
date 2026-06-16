@@ -1,0 +1,37 @@
+# Deploy the Dropwire landing page (www/) to GitHub Pages.
+#
+# ⚠️ PUBLIC: a GitHub Pages site is served at a PUBLIC URL even when the repo is
+# private (on the Free plan). This workflow is therefore **manual-only** — it does
+# NOT run on push. Nothing is published until you:
+#   1. Repo Settings → Pages → Build and deployment → Source = "GitHub Actions"
+#   2. Actions → "Deploy landing page (GitHub Pages)" → Run workflow
+# Run it only when you're ready for the landing page to be publicly visible.
+
+name: Deploy landing page (GitHub Pages)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+      - id: deployment
+        uses: actions/deploy-pages@v4
