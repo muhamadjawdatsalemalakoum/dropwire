@@ -210,7 +210,7 @@ $('#pick-dest').addEventListener('click', async () => {
   const dir = await invoke('pick_dest_dir').catch(() => null);
   if (dir) { recvDest = dir; $('#recv-dest-label').innerHTML = `Save to: <em>${dir}</em>`; }
 });
-async function beginReceive(ticket, dest) {
+async function beginReceive(ticket, dest, selected) {
   $('#recv-error').textContent = '';
   switchView('receive');
   try {
@@ -223,7 +223,9 @@ async function beginReceive(ticket, dest) {
     $('#recv-open').classList.add('hidden'); $('#recv-another').classList.add('hidden');
     recvDest = dest || null;
     const ch = makeChannel(); ch.onmessage = onRecvMsg;
-    recvId = await invoke('start_receive', { ticket, dest: dest || null, onEvent: ch });
+    recvId = (selected && selected.length)
+      ? await invoke('start_receive_selected', { ticket, dest: dest || null, selected, onEvent: ch })
+      : await invoke('start_receive', { ticket, dest: dest || null, onEvent: ch });
   } catch (e) {
     $('#recv-error').textContent = String(e);
     const input = $('#recv-code-input'); if (input) { input.classList.add('shake'); setTimeout(() => input.classList.remove('shake'), 400); }
@@ -238,7 +240,7 @@ $('#recv-start').addEventListener('click', () => {
 });
 
 /* ---- preview / accept modal: see exactly what's coming before downloading ---- */
-let previewTicket = null, previewDest = null, lastFocus = null;
+let previewTicket = null, previewDest = null, lastFocus = null, previewFileCount = 0, previewLoaded = false;
 function showModal() {
   const scrim = $('#recv-preview');
   lastFocus = document.activeElement;
@@ -252,22 +254,35 @@ function showModal() {
 function closeModal() {
   const scrim = $('#recv-preview');
   scrim.classList.add('hidden'); scrim.setAttribute('aria-hidden', 'true');
-  previewTicket = null; previewDest = null;
+  previewTicket = null; previewDest = null; previewLoaded = false;
   if (lastFocus && lastFocus.focus) lastFocus.focus();
+}
+function checkedIndices() {
+  return [...document.querySelectorAll('#preview-files .file-check')]
+    .filter((c) => c.checked)
+    .map((c) => Number(c.dataset.index));
+}
+function updateAcceptState() {
+  $('#preview-accept').disabled = checkedIndices().length === 0;
 }
 function fillPreview(p) {
   const rb = $('#preview-route'); const r = p.route;
   rb.textContent = r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed · a bit slower' : 'connected';
   rb.className = 'route-badge ' + (r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed' : '');
-  const n = p.fileCount || (p.files ? p.files.length : 0);
-  $('#preview-summary').textContent = `They want to send you ${n} file${n === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)}`;
+  previewFileCount = (p.files || []).length;
+  $('#preview-summary').textContent = `They want to send you ${previewFileCount} file${previewFileCount === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)}`;
   const ul = $('#preview-files'); ul.innerHTML = '';
-  (p.files || []).forEach((f) => {
+  (p.files || []).forEach((f, i) => {
     const li = document.createElement('li'); li.className = 'file-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.className = 'file-check'; cb.checked = true;
+    cb.dataset.index = String(i); cb.setAttribute('aria-label', `Include ${f.name}`);
+    cb.addEventListener('change', updateAcceptState);
     const name = document.createElement('span'); name.className = 'file-name'; name.textContent = f.name; name.title = f.name;
     const size = document.createElement('span'); size.className = 'file-size'; size.textContent = fmtBytes(f.size);
-    li.append(name, size); ul.appendChild(li);
+    li.append(cb, name, size); ul.appendChild(li);
   });
+  updateAcceptState();
 }
 async function openPreview(ticket, dest) {
   previewTicket = ticket; previewDest = dest;
@@ -284,7 +299,8 @@ async function openPreview(ticket, dest) {
     const p = await invoke('inspect_ticket', { ticket });
     if (previewTicket !== ticket) return; // modal closed/replaced while inspecting
     fillPreview(p);
-    accept.disabled = false; accept.focus();
+    previewLoaded = true;
+    accept.focus();
   } catch (e) {
     if (previewTicket !== ticket) return;
     $('#preview-summary').textContent = "Couldn't reach the sender to preview.";
@@ -294,11 +310,21 @@ async function openPreview(ticket, dest) {
   }
 }
 $('#preview-accept').addEventListener('click', () => {
-  const t = previewTicket, d = previewDest;
+  const t = previewTicket, d = previewDest, total = previewFileCount;
+  const idx = checkedIndices();
   closeModal();
-  if (t) beginReceive(t, d);
+  if (!t) return;
+  // Pass a selection only when it's a strict subset; otherwise download everything.
+  const selected = (idx.length > 0 && idx.length < total) ? idx : null;
+  beginReceive(t, d, selected);
 });
-$('#preview-decline').addEventListener('click', () => closeModal());
+$('#preview-decline').addEventListener('click', () => {
+  // If we got a preview, tell the sender "no" instantly over the control channel.
+  if (previewTicket && previewLoaded) {
+    invoke('send_control', { ticket: previewTicket, kind: 'decline' }).catch(() => {});
+  }
+  closeModal();
+});
 $('#recv-preview').addEventListener('click', (e) => { if (e.target.id === 'recv-preview') closeModal(); });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#recv-preview').classList.contains('hidden')) closeModal();

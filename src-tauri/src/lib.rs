@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use irohcore::{Core, CoreConfig, Progress, TransferId, TransferPreview, TransferRecord};
+use irohcore::{Core, CoreConfig, CtrlMsg, Progress, TransferId, TransferPreview, TransferRecord};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -117,6 +117,25 @@ async fn inspect_ticket(
     state.core.inspect(ticket).await.map_err(|e| e.to_string())
 }
 
+/// Resolve a destination directory, defaulting to Downloads/Dropwire.
+fn dest_or_default(dest: Option<String>) -> PathBuf {
+    match dest {
+        Some(d) => PathBuf::from(d),
+        None => dirs::download_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Dropwire"),
+    }
+}
+
+/// Pump a transfer's progress stream to the UI channel.
+fn pump(mut stream: irohcore::ProgressStream, on_event: Channel<Progress>) {
+    tauri::async_runtime::spawn(async move {
+        while let Some(p) = stream.next().await {
+            let _ = on_event.send(p);
+        }
+    });
+}
+
 /// Start receiving a ticket into `dest` (or the default Downloads/Dropwire folder).
 #[tauri::command]
 async fn start_receive(
@@ -125,23 +144,51 @@ async fn start_receive(
     on_event: Channel<Progress>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let dest_dir = match dest {
-        Some(d) => PathBuf::from(d),
-        None => dirs::download_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Dropwire"),
-    };
-    let (id, mut stream) = state
+    let (id, stream) = state
         .core
-        .receive(ticket, dest_dir)
+        .receive(ticket, dest_or_default(dest))
         .await
         .map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn(async move {
-        while let Some(p) = stream.next().await {
-            let _ = on_event.send(p);
-        }
-    });
+    pump(stream, on_event);
     Ok(id.to_string())
+}
+
+/// Start receiving only the chosen files (0-based indices into the preview list).
+#[tauri::command]
+async fn start_receive_selected(
+    ticket: String,
+    dest: Option<String>,
+    selected: Vec<usize>,
+    on_event: Channel<Progress>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let (id, stream) = state
+        .core
+        .receive_selected(ticket, dest_or_default(dest), selected)
+        .await
+        .map_err(|e| e.to_string())?;
+    pump(stream, on_event);
+    Ok(id.to_string())
+}
+
+/// Send a one-shot control message to the sender (e.g. an instant decline).
+#[tauri::command]
+async fn send_control(
+    ticket: String,
+    kind: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let msg = match kind.as_str() {
+        "decline" => CtrlMsg::Decline,
+        "ack" => CtrlMsg::Ack,
+        "hello" => CtrlMsg::Hello,
+        other => return Err(format!("unknown control kind: {other}")),
+    };
+    state
+        .core
+        .send_control(ticket, msg)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Cancel an in-flight transfer.
@@ -190,6 +237,8 @@ pub fn run() {
             start_send,
             inspect_ticket,
             start_receive,
+            start_receive_selected,
+            send_control,
             cancel_transfer,
             reveal_path
         ])

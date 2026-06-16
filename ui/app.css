@@ -302,7 +302,8 @@ a{color:var(--wire); text-underline-offset:2px}
 .file-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px;
   border-bottom:1px solid var(--hairline-soft)}
 .file-row:last-child{border-bottom:0}
-.file-name{font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.file-check{accent-color:var(--wire); width:16px; height:16px; flex:none; cursor:pointer}
+.file-name{flex:1; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
 .file-size{font-family:var(--font-mono); font-size:12px; color:var(--text-faint); flex:none;
   font-variant-numeric:tabular-nums}
 .modal-note{font-size:12px; color:var(--text-faint); margin:0 0 var(--sp-5); word-break:break-word}
