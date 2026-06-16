@@ -35,7 +35,7 @@ The **NS delegation** is the part people miss: it makes your `iroh-dns-server` a
 ## 3. Deploy the relay (on RELAY_HOST)
 
 ```sh
-git clone https://github.com/dropwire/dropwire && cd dropwire/infra/relay
+git clone https://github.com/muhamadjawdatsalemalakoum/dropwire && cd dropwire/infra/relay
 cp ../.env.example .env
 # edit .env: set IROH_RELAY_ACCESS_TOKEN to your `openssl rand -hex 32` value
 # edit relay.toml: set [tls].hostname to relay.dropwire.app
@@ -49,7 +49,7 @@ docker compose logs -f         # watch for a successful LetsEncrypt cert
 ## 4. Deploy discovery (on DNS_HOST)
 
 ```sh
-git clone https://github.com/dropwire/dropwire && cd dropwire/infra/dns
+git clone https://github.com/muhamadjawdatsalemalakoum/dropwire && cd dropwire/infra/dns
 # edit config.toml: set domains/origins to dns.dropwire.app, rr_a to DNS_HOST IPv4,
 #                   rr_ns to ns1.dropwire.app.
 docker compose up -d --build
