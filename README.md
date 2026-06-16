@@ -1,11 +1,8 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/wordmark-dark.svg" />
-  <img src="branding/wordmark.svg" alt="Dropwire" width="340" />
-</picture>
+<img src="branding/promo.png" alt="Dropwire — send any file to anyone, directly. No accounts, no limits, end-to-end encrypted, free forever. Peer-to-peer, built on iroh." width="880" />
 
-### Send any file to anyone — directly, privately, free.
+<br /><br />
 
 A peer-to-peer file-transfer app built on [iroh](https://iroh.computer): no accounts,
 no file-size limits, no server in the middle holding your data — end-to-end encrypted,
