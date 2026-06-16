@@ -676,9 +676,13 @@ img, svg { max-width: 100%; }
     grid-template-columns: 1fr;
     text-align: left;
   }
-  .wire { flex-direction: row; justify-content: center; min-width: 0; padding-block: 0.5rem; }
-  .wire-line { width: 80px; transform: rotate(90deg); }
-  .packet { display: none; }
+  .wire { flex-direction: column; align-items: center; gap: 0.6rem; min-width: 0; padding-block: 0.85rem; }
+  .wire-track {
+    width: 3px;
+    height: 34px;
+    background: repeating-linear-gradient(var(--surface-border) 0 6px, transparent 6px 13px);
+  }
+  .wire-line, .packet { display: none; }
   .device-b { margin-top: 0.5rem; }
 }
 
