@@ -375,6 +375,8 @@ opt-in and clearly "downloading a preview" — and symmetric "sender offers X / 
 
 So selective download, range-grab, the sender accept gate, allow-list, and TTL are all on confirmed ground.
 
+**Build plan:** the full milestone-by-milestone, test-first implementation plan lives in [`docs/PLAN.md`](docs/PLAN.md).
+
 ---
 
 ## 6. Self-hosted infrastructure
