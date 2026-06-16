@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dropwire — Private, direct file transfer</title>
+  <meta name="description" content="Dropwire is a free, open-source, privacy-first file transfer app. Send files directly device to device, end-to-end encrypted, no accounts, no servers holding your data. Works across the internet, not just your LAN." />
+  <meta name="color-scheme" content="light dark" />
+
+  <!-- Open Graph / social -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Dropwire — Private, direct file transfer" />
+  <meta property="og:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer. No accounts. No servers holding your files." />
+
+  <!-- Prevent theme flash: set theme before first paint -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("dropwire-theme");
+        if (saved === "light" || saved === "dark") {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      } catch (e) {}
+    })();
+  </script>
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230E1116'/%3E%3Cpath d='M16 36 H28 l4 -8 4 8 H48' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='36' r='6.5' fill='%23D2FF3A'/%3E%3Ccircle cx='48' cy='36' r='5' fill='%23ffffff'/%3E%3C/svg%3E" />
+  <meta name="theme-color" content="#f7f9f5" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#top" aria-label="Dropwire home">
+        <span class="brand-mark" aria-hidden="true">
+          <!-- Brand mark (BRAND.md §7): two nodes + a live wire with a spark. -->
+          <svg viewBox="0 0 64 64" width="28" height="28" role="img" aria-hidden="true">
+            <rect width="64" height="64" rx="15" fill="#0e1116" />
+            <path d="M16 36 H28 l4 -8 4 8 H48" fill="none" stroke="#d2ff3a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="16" cy="36" r="6.5" fill="#d2ff3a" />
+            <circle cx="48" cy="36" r="5" fill="#ffffff" />
+          </svg>
+        </span>
+        <span class="brand-name">Dropwire</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#how">How it works</a>
+        <a href="#why">Why Dropwire</a>
+        <a href="#faq">FAQ</a>
+        <a class="nav-github" href="https://github.com/dropwire/dropwire" rel="noopener">GitHub</a>
+      </nav>
+
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2" fill="currentColor" />
+          <g stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <line x1="12" y1="2.5" x2="12" y2="5" />
+            <line x1="12" y1="19" x2="12" y2="21.5" />
+            <line x1="2.5" y1="12" x2="5" y2="12" />
+            <line x1="19" y1="12" x2="21.5" y2="12" />
+            <line x1="5.1" y1="5.1" x2="6.9" y2="6.9" />
+            <line x1="17.1" y1="17.1" x2="18.9" y2="18.9" />
+            <line x1="5.1" y1="18.9" x2="6.9" y2="17.1" />
+            <line x1="17.1" y1="6.9" x2="18.9" y2="5.1" />
+          </g>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="currentColor" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <a id="top"></a>
+
+    <!-- ======================= HERO ======================= -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container hero-inner">
+        <p class="eyebrow">
+          <span class="dot" aria-hidden="true"></span>
+          Free &amp; open source · No accounts · End-to-end encrypted
+        </p>
+
+        <h1 id="hero-title">
+          Send files <span class="accent-text">straight to the other device.</span>
+        </h1>
+
+        <p class="subhead">
+          Dropwire is a free, private, peer-to-peer file transfer app. Your files travel
+          <strong>directly</strong> from your device to theirs &mdash; encrypted end to end,
+          with no account to create and no server holding your data.
+        </p>
+
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#download">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M12 3v10m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Download for Windows
+          </a>
+          <a class="btn btn-secondary" href="https://github.com/dropwire/dropwire" rel="noopener">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49
+                0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62
+                1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07
+                0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 2.5-.34c.85 0
+                1.71.12 2.5.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0
+                3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.82 0 .27.18.6.69.49A10.04 10.04 0
+                0 0 22 12.25C22 6.58 17.52 2 12 2z" fill="currentColor" />
+            </svg>
+            View on GitHub
+          </a>
+        </div>
+
+        <p class="cta-note">
+          Also available for
+          <a href="#download">macOS</a> and <a href="#download">Linux</a>.
+          Free forever &mdash; no trial, no paywall.
+        </p>
+      </div>
+
+      <!-- Decorative transfer illustration -->
+      <div class="container hero-figure" aria-hidden="true">
+        <div class="transfer-card">
+          <div class="device device-a">
+            <span class="device-label">Your device</span>
+            <div class="file-chip">
+              <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 2h8l4 4v16H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 2v4h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              project-files.zip
+            </div>
+            <div class="code-pill">share code: <strong>brave-river-42</strong></div>
+          </div>
+
+          <div class="wire">
+            <span class="badge badge-direct">Direct · encrypted</span>
+            <svg class="wire-line" viewBox="0 0 120 24" preserveAspectRatio="none">
+              <line x1="2" y1="12" x2="118" y2="12" />
+            </svg>
+            <span class="packet"></span>
+          </div>
+
+          <div class="device device-b">
+            <span class="device-label">Their device</span>
+            <div class="progress-mock">
+              <div class="progress-bar"><span style="width:68%"></span></div>
+              <span class="progress-text">Receiving · 68%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= HOW IT WORKS ======================= -->
+    <section id="how" class="section" aria-labelledby="how-title">
+      <div class="container">
+        <div class="section-head">
+          <h2 id="how-title">How it works</h2>
+          <p class="section-sub">Three steps. No sign-up, no upload to anyone&rsquo;s cloud.</p>
+        </div>
+
+        <ol class="steps">
+          <li class="step">
+            <div class="step-num" aria-hidden="true">1</div>
+            <h3>Pick a file or folder</h3>
+            <p>Drag it in or browse. Whole folders go as one resumable transfer &mdash; nothing is copied to a server first.</p>
+          </li>
+          <li class="step">
+            <div class="step-num" aria-hidden="true">2</div>
+            <h3>Share a short code or QR</h3>
+            <p>Dropwire gives you a short, speakable code and a QR. Send it however you like &mdash; chat, in person, a sticky note.</p>
+          </li>
+          <li class="step">
+            <div class="step-num" aria-hidden="true">3</div>
+            <h3>It transfers directly</h3>
+            <p>They enter the code and the file moves device to device, end-to-end encrypted, with a live progress bar.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ======================= WHY DROPWIRE ======================= -->
+    <section id="why" class="section section-muted" aria-labelledby="why-title">
+      <div class="container">
+        <div class="section-head">
+          <h2 id="why-title">Why Dropwire</h2>
+          <p class="section-sub">Built privacy-first, from the wire up.</p>
+        </div>
+
+        <div class="cards">
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 21s-7-4.5-7-10V6l7-3 7 3v5c0 5.5-7 10-7 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Free forever</h3>
+            <p>No trial, no premium tier, no &ldquo;upgrade to send big files.&rdquo; Dropwire is free and open source, today and later.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Truly private</h3>
+            <p>Every transfer is end-to-end encrypted (QUIC / TLS 1.3). There&rsquo;s no account to make and no profile to mine. The code is your key.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="6" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><line x1="8.5" y1="12" x2="15.5" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            </div>
+            <h3>Direct peer-to-peer</h3>
+            <p>Your bytes go straight from one device to the other. No middle server stores or even sees your files in the clear.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path d="M20 11a8 8 0 1 0-1.6 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M20 5v6h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Resumable</h3>
+            <p>Lost Wi-Fi mid-transfer? Reconnect and Dropwire picks up where it left off &mdash; it re-sends only the missing pieces, verified as it goes.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path d="M9 18c-4 1-4-2-6-2.5M15 21v-3.5c0-1 .2-1.6-.5-2.2 2.3-.25 4.5-1.1 4.5-5a3.9 3.9 0 0 0-1-2.7 3.6 3.6 0 0 0-.1-2.7s-.9-.25-2.9 1.05a9 9 0 0 0-4 0C9 3.4 8.1 3.65 8.1 3.65a3.6 3.6 0 0 0-.1 2.7A3.9 3.9 0 0 0 7 9c0 3.9 2.2 4.75 4.5 5-.5.45-.5 1.1-.5 2.2V21" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Open source</h3>
+            <p>Every line is public. Read it, audit it, build it yourself, or send a patch. No black boxes &mdash; trust by inspection.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9S9.5 5.5 12 3z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+            </div>
+            <h3>Works across the internet</h3>
+            <p>Not a LAN-only tool. Send to someone in the next room or another continent &mdash; Dropwire connects across networks, no shared Wi-Fi needed.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= FAQ ======================= -->
+    <section id="faq" class="section" aria-labelledby="faq-title">
+      <div class="container container-narrow">
+        <div class="section-head">
+          <h2 id="faq-title">Honest answers</h2>
+          <p class="section-sub">The questions worth asking about anything that touches your files.</p>
+        </div>
+
+        <div class="faq-list">
+          <details class="faq-item" open>
+            <summary>
+              <span>Is it really free?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Yes &mdash; genuinely free, and open source. There&rsquo;s no paid tier, no file-size paywall, and no ads.
+              Because your files travel directly between devices, there&rsquo;s no storage bill to pass on to you.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>How is it private?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Transfers are end-to-end encrypted using QUIC over TLS 1.3. The connection is authenticated and encrypted
+              between the two devices, so only the sender and receiver can read the contents. You don&rsquo;t create an
+              account, and there&rsquo;s no profile or contact list to harvest. Treat the share code like a password:
+              whoever has it can receive that transfer, so share it only with the person you mean to.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>What if a direct connection can&rsquo;t be made?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Most transfers connect directly, device to device. When a network (some strict firewalls or mobile
+              carriers) won&rsquo;t allow that, Dropwire falls back to a free, shared relay from the open iroh network so
+              the transfer still completes &mdash; we don&rsquo;t run any servers ourselves. The relay only forwards
+              already-encrypted data &mdash; it <strong>cannot read your files</strong>,
+              and it doesn&rsquo;t store them. You&rsquo;ll see a clear &ldquo;direct&rdquo; or &ldquo;relayed&rdquo;
+              badge so you always know how a transfer is travelling.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>Do I need an account?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>No. There&rsquo;s nothing to sign up for, no email, no password. Install Dropwire, pick a file, share the
+              code. That&rsquo;s the whole flow on both ends.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>Is my data stored anywhere?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>No. Dropwire doesn&rsquo;t upload your files to a cloud or keep copies. The data moves directly from your
+              device to the recipient&rsquo;s. Even in the relay-fallback case, the relay only passes encrypted bytes
+              through in transit &mdash; nothing is retained after the transfer finishes.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= DOWNLOAD CTA ======================= -->
+    <section id="download" class="section download" aria-labelledby="download-title">
+      <div class="container container-narrow download-inner">
+        <h2 id="download-title">Get Dropwire</h2>
+        <p class="section-sub">Free, open source, and ready on every desktop. Pick your platform.</p>
+        <div class="download-buttons">
+          <a class="btn btn-primary" href="#download">Download for Windows</a>
+          <a class="btn btn-secondary" href="#download">Download for macOS</a>
+          <a class="btn btn-secondary" href="#download">Download for Linux</a>
+        </div>
+        <p class="cta-note">Prefer to build it yourself? Grab the source on
+          <a href="https://github.com/dropwire/dropwire" rel="noopener">GitHub</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ======================= FOOTER ======================= -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <a class="brand" href="#top" aria-label="Dropwire home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" width="24" height="24" aria-hidden="true">
+              <rect width="64" height="64" rx="15" fill="#0e1116" />
+              <path d="M16 36 H28 l4 -8 4 8 H48" fill="none" stroke="#d2ff3a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="16" cy="36" r="6.5" fill="#d2ff3a" />
+              <circle cx="48" cy="36" r="5" fill="#ffffff" />
+            </svg>
+          </span>
+          <span class="brand-name">Dropwire</span>
+        </a>
+        <p class="footer-tagline">Private, direct file transfer. Free forever.</p>
+      </div>
+
+      <nav class="footer-links" aria-label="Footer">
+        <div class="footer-col">
+          <h4>Project</h4>
+          <a href="https://github.com/dropwire/dropwire" rel="noopener">GitHub</a>
+          <a href="https://github.com/dropwire/dropwire#readme" rel="noopener">Docs</a>
+          <a href="https://github.com/dropwire/dropwire/blob/main/LICENSE" rel="noopener">License</a>
+        </div>
+        <div class="footer-col">
+          <h4>Learn</h4>
+          <a href="#how">How it works</a>
+          <a href="#why">Why Dropwire</a>
+          <a href="#faq">FAQ</a>
+        </div>
+      </nav>
+    </div>
+
+    <div class="container footer-bottom">
+      <p class="made-with">Made with <a href="https://www.iroh.computer/" rel="noopener">iroh</a>.</p>
+      <p class="privacy-note">
+        Privacy-first by design: no trackers, no analytics, no accounts. Your files are yours.
+      </p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
