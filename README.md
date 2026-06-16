@@ -1,12 +1,27 @@
 <div align="center">
 
-# Dropwire
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="branding/wordmark-dark.svg" />
+  <img src="branding/wordmark.svg" alt="Dropwire" width="340" />
+</picture>
 
-**Send any file to anyone — directly, privately, free.**
+### Send any file to anyone — directly, privately, free.
 
-A peer-to-peer file transfer app built on [iroh](https://iroh.computer). No accounts.
-No file-size limits. No server in the middle holding your data. End-to-end encrypted,
+A peer-to-peer file-transfer app built on [iroh](https://iroh.computer): no accounts,
+no file-size limits, no server in the middle holding your data — end-to-end encrypted,
 resumable, and open source.
+
+<br />
+
+![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3DA35D)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-2C333D)
+![Built with iroh](https://img.shields.io/badge/built%20with-iroh-D2FF3A?labelColor=0E1116)
+![Status](https://img.shields.io/badge/status-pre--alpha-E0A93A)
+
+[**Download**](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases) ·
+[Architecture](ARCHITECTURE.md) ·
+[Privacy](docs/PRIVACY.md) ·
+[Contributing](CONTRIBUTING.md)
 
 </div>
 
