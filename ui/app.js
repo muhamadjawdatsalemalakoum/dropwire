@@ -234,7 +234,74 @@ $('#recv-start').addEventListener('click', () => {
   const ticket = $('#recv-code-input').value.trim();
   if (!ticket) return;
   const dest = recvDest || localStorage.getItem('dropwire-default-dir') || null;
-  beginReceive(ticket, dest);
+  openPreview(ticket, dest);
+});
+
+/* ---- preview / accept modal: see exactly what's coming before downloading ---- */
+let previewTicket = null, previewDest = null, lastFocus = null;
+function showModal() {
+  const scrim = $('#recv-preview');
+  lastFocus = document.activeElement;
+  scrim.classList.remove('hidden'); scrim.setAttribute('aria-hidden', 'false');
+  if (canAnim) {
+    scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
+    const sheet = scrim.querySelector('.modal-sheet');
+    sheet.animate([{ opacity: 0, transform: 'translateY(12px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE_POP });
+  }
+}
+function closeModal() {
+  const scrim = $('#recv-preview');
+  scrim.classList.add('hidden'); scrim.setAttribute('aria-hidden', 'true');
+  previewTicket = null; previewDest = null;
+  if (lastFocus && lastFocus.focus) lastFocus.focus();
+}
+function fillPreview(p) {
+  const rb = $('#preview-route'); const r = p.route;
+  rb.textContent = r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed · a bit slower' : 'connected';
+  rb.className = 'route-badge ' + (r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed' : '');
+  const n = p.fileCount || (p.files ? p.files.length : 0);
+  $('#preview-summary').textContent = `They want to send you ${n} file${n === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)}`;
+  const ul = $('#preview-files'); ul.innerHTML = '';
+  (p.files || []).forEach((f) => {
+    const li = document.createElement('li'); li.className = 'file-row';
+    const name = document.createElement('span'); name.className = 'file-name'; name.textContent = f.name; name.title = f.name;
+    const size = document.createElement('span'); size.className = 'file-size'; size.textContent = fmtBytes(f.size);
+    li.append(name, size); ul.appendChild(li);
+  });
+}
+async function openPreview(ticket, dest) {
+  previewTicket = ticket; previewDest = dest;
+  $('#recv-error').textContent = '';
+  $('#preview-summary').textContent = 'Connecting to sender to preview…';
+  $('#preview-files').innerHTML = '';
+  const rb = $('#preview-route'); rb.textContent = 'connecting'; rb.className = 'route-badge connecting';
+  const accept = $('#preview-accept'); accept.disabled = true; accept.classList.remove('hidden');
+  const decline = $('#preview-decline'); decline.textContent = 'Cancel';
+  $('#preview-note').textContent = 'Nothing is saved until you accept.';
+  showModal();
+  decline.focus();
+  try {
+    const p = await invoke('inspect_ticket', { ticket });
+    if (previewTicket !== ticket) return; // modal closed/replaced while inspecting
+    fillPreview(p);
+    accept.disabled = false; accept.focus();
+  } catch (e) {
+    if (previewTicket !== ticket) return;
+    $('#preview-summary').textContent = "Couldn't reach the sender to preview.";
+    $('#preview-note').textContent = String(e && e.message ? e.message : e);
+    accept.classList.add('hidden');
+    decline.textContent = 'Close';
+  }
+}
+$('#preview-accept').addEventListener('click', () => {
+  const t = previewTicket, d = previewDest;
+  closeModal();
+  if (t) beginReceive(t, d);
+});
+$('#preview-decline').addEventListener('click', () => closeModal());
+$('#recv-preview').addEventListener('click', (e) => { if (e.target.id === 'recv-preview') closeModal(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#recv-preview').classList.contains('hidden')) closeModal();
 });
 function onRecvMsg(m) {
   const svg = $('#recv-bar') && $('#recv-bar').closest('svg');

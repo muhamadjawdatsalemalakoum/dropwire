@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use irohcore::{Core, CoreConfig, Progress, TransferId, TransferRecord};
+use irohcore::{Core, CoreConfig, Progress, TransferId, TransferPreview, TransferRecord};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -107,6 +107,16 @@ async fn start_send(
     Ok(id.to_string())
 }
 
+/// Preview a ticket's contents (file list, sizes, total, route) WITHOUT
+/// downloading any file content. Powers the receive "preview before you accept".
+#[tauri::command]
+async fn inspect_ticket(
+    ticket: String,
+    state: State<'_, AppState>,
+) -> Result<TransferPreview, String> {
+    state.core.inspect(ticket).await.map_err(|e| e.to_string())
+}
+
 /// Start receiving a ticket into `dest` (or the default Downloads/Dropwire folder).
 #[tauri::command]
 async fn start_receive(
@@ -178,6 +188,7 @@ pub fn run() {
             pick_dest_dir,
             qr_svg,
             start_send,
+            inspect_ticket,
             start_receive,
             cancel_transfer,
             reveal_path

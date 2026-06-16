@@ -284,3 +284,26 @@ a{color:var(--wire); text-underline-offset:2px}
   /* keep the determinate fill length transition (gentle, informative) */
   .w-fill{transition:stroke-dashoffset var(--dur-2) linear !important}
 }
+
+/* ----------------------- preview / accept modal ------------------------- */
+.modal-scrim{position:fixed; inset:0; background:var(--scrim); display:flex; align-items:center;
+  justify-content:center; padding:24px; z-index:50}
+.modal-sheet{width:100%; max-width:440px; max-height:82vh; display:flex; flex-direction:column;
+  background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
+  box-shadow:var(--elev-pop); padding:var(--sp-6)}
+.modal-title{font-family:var(--font-display); font-size:22px; font-weight:600; letter-spacing:-.4px; margin:0 0 4px}
+.modal-sub{color:var(--text-muted); font-size:13px; margin:0 0 var(--sp-4)}
+.preview-meta{display:flex; align-items:center; gap:10px; margin-bottom:var(--sp-3); flex-wrap:wrap}
+.preview-verified{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600;
+  letter-spacing:.3px; color:var(--success)}
+.preview-verified::before{content:""; width:6px; height:6px; border-radius:var(--r-full); background:currentColor}
+.file-list{list-style:none; margin:0 0 var(--sp-4); padding:0; overflow-y:auto;
+  border:1px solid var(--hairline); border-radius:var(--r-3); background:var(--surface-2)}
+.file-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px;
+  border-bottom:1px solid var(--hairline-soft)}
+.file-row:last-child{border-bottom:0}
+.file-name{font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.file-size{font-family:var(--font-mono); font-size:12px; color:var(--text-faint); flex:none;
+  font-variant-numeric:tabular-nums}
+.modal-note{font-size:12px; color:var(--text-faint); margin:0 0 var(--sp-5); word-break:break-word}
+.modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:auto}

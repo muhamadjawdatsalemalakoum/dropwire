@@ -160,6 +160,24 @@
     </main>
   </div>
 
+  <!-- ===== preview / accept modal (shown before any download) ===== -->
+  <div id="recv-preview" class="modal-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="preview-title" aria-hidden="true">
+    <div class="modal-sheet" role="document">
+      <h2 class="modal-title" id="preview-title">Incoming transfer</h2>
+      <p class="modal-sub" id="preview-summary" aria-live="polite">Connecting to sender to preview…</p>
+      <div class="preview-meta">
+        <span class="route-badge connecting" id="preview-route">connecting</span>
+        <span class="preview-verified" title="These names and sizes are committed by the transfer code — the sender cannot fake them.">verified by the code</span>
+      </div>
+      <ul class="file-list" id="preview-files" aria-label="Files in this transfer"></ul>
+      <p class="modal-note" id="preview-note">Nothing is saved until you accept.</p>
+      <div class="modal-actions">
+        <button class="btn-quiet" id="preview-decline">Cancel</button>
+        <button class="btn" id="preview-accept" disabled>Accept &amp; download</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
