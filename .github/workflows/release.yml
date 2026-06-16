@@ -1,0 +1,84 @@
+# Dropwire — cross-platform release builds in the cloud (GitHub Actions).
+#
+# Builds Windows, macOS, and Linux installers from ONE machine you don't own —
+# push a tag like `v0.1.0` (or run manually) and it produces a draft GitHub
+# Release with all installers attached.
+#
+# COST: free + unlimited on a PUBLIC repo. On a PRIVATE repo it bills Actions
+# minutes against your monthly allotment with multipliers Linux x1 / Windows x2 /
+# macOS x10 — so run this on TAGS only (not every push) while private.
+#
+# SIGNING: unsigned by default (fine for testing; users see Gatekeeper/SmartScreen
+# warnings). To ship trusted builds, add the secrets noted in the `env:` block —
+# Apple Developer ID ($99/yr) for macOS notarization, a code-signing cert for
+# Windows. No secrets are required for the build itself to succeed.
+#
+# This file does nothing until the repo is on GitHub and a tag is pushed.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest        # Apple Silicon runner; builds a universal (arm64 + Intel) app
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-latest
+            args: ""
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Build + bundle + draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ---- Code signing (uncomment + add repo secrets to enable; unsigned otherwise) ----
+          # macOS notarization (Apple Developer ID, $99/yr):
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing:
+          # WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          # WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # Tauri auto-updater signing (optional, for in-app updates):
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Dropwire ${{ github.ref_name }}"
+          releaseBody: "Free, private, peer-to-peer file transfer. Installers for Windows, macOS, and Linux are attached below."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
