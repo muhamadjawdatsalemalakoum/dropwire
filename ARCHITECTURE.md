@@ -278,6 +278,92 @@ This is the single behavior most likely to regress on a blobs version bump — i
 point and a cost signal). Source it from the connection/path info on the iroh `Connection` (the exact accessor
 for path type on iroh 1.0 is in §13 to confirm); default to `Unknown` until verified rather than guessing.
 
+### 5.7 Transfer preview, accept gate & live status (manifest-first)
+
+> **Status: designed — next milestone, not yet implemented.** The rest of §5 describes shipped code; this
+> subsection is the agreed design for the upcoming capability.
+
+The receiver should see *what* they're getting — file names, sizes, count — and **accept before a single
+payload byte lands**, and both sides should see a live **connected → previewing → transferring** status.
+All of this is built from the one primitive Dropwire already has — *move a blob over the connection* — with
+**no new wire protocol and no third party.** The trick: one of the blobs in the transfer is a
+Dropwire-defined **manifest**, fetched first.
+
+**Where the manifest lives — approach (a), bound first entry.** `send` prepends a reserved
+`".dropwire/manifest.json"` as **child 0** of the Collection (before the real files). Because the Collection
+HashSeq is what the ticket hash commits to, the manifest is **BLAKE3-bound to the ticket and to every file
+hash** — a sender cannot show one manifest then deliver different bytes. It rides inside the same transfer
+(atomic, resumable), not as a side channel.
+
+```jsonc
+// .dropwire/manifest.json (v1) — Dropwire-owned schema, NOT iroh's CollectionMeta
+{
+  "v": 1,
+  "from": "Keon's Laptop",          // sender-authored claim — display only
+  "note": "vacation photos",        // sender-authored claim — display only
+  "created_at": 1718539200,
+  "count": 2,
+  "total_bytes": 86046412,
+  "files": [                        // names/sizes are ALSO bound by the HashSeq → verifiable facts
+    { "name": "IMG_2391.jpg", "size": 4823002 },
+    { "name": "clip.mov",     "size": 81223410 }
+  ]
+}
+```
+
+**Two-phase receive** — `receive` splits into `inspect` (cheap, no payload) then `accept`:
+
+```rust
+// PHASE 1 — peek: connect, fetch only the manifest child. No file bodies.
+let conn = endpoint.connect(ticket.addr().clone(), iroh_blobs::ALPN).await?;
+let (hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &ticket.hash(), 32 << 20, None).await?; // per-file + total
+let manifest: Manifest = from_json(&get_blob(&conn, hash_seq[0]).await?)?;   // child 0 = .dropwire/manifest.json
+emit(Progress::Manifest { files, count, total, via });                        // PAUSE — await user accept
+
+// PHASE 2 — only on accept: the existing execute_get + export, reusing `conn`.
+```
+
+Phase 1 is data the engine *already* fetches today (`get_hash_seq_and_sizes` runs before download in §5.5) —
+it's just surfaced and gated instead of summed silently. **Off-by-one to watch:** `sizes[0]` / `hash_seq[0]`
+are the manifest blob, not a file — zip file names with `sizes[1..]`.
+
+**Live status falls out of pull events — no back-channel.** Every fetch reaches the sender as a provider
+event keyed by `request.hash` (§5.4), so the state machine *is* the request sequence:
+
+| Wire event | Sender shows | Receiver shows |
+|---|---|---|
+| receiver connects + pulls `manifest.json` | Connected — previewing… | Connected to sender |
+| receiver pulls payload children | Accepted — transferring | progress bar |
+| manifest pulled, no payload after *N* s | Waiting for them to accept | accept modal open |
+
+An explicit **Decline** (so the sender hears "no" instantly instead of via timeout) is the *only* part that
+wants a real back-channel — deferred; a one-shot control blob or a tiny custom-ALPN stream covers it.
+
+**Trust & privacy — be honest in the UI.**
+- **Bound = fact:** file *names*, *sizes*, *count*, and each content hash are committed by the ticket and
+  un-spoofable. `from` / `note` / any inferred file-type are **sender claims** — label them as such, never
+  render `note` as HTML, keep the path-traversal sanitizer (§5.5), warn on executable extensions.
+- **A peek is a real connection.** Previewing dials the sender, so the sender must be **online** and the
+  receiver reveals its endpoint exactly as a download would. Not a regression (the receiver already holds the
+  ticket) — but the UI must say "Connecting to sender to preview…", not imply an offline lookup.
+
+**API surface.**
+- `core`: `Core::inspect(ticket) -> TransferPreview { files: Vec<FilePreview>, count, total, via, sender }`
+  (connects, caches the live `Connection` by a preview id, **no export**); `Core::accept(preview_id,
+  selection: Option<Vec<usize>>) -> ProgressStream` (reuses the cached conn; `selection` is the hook for
+  selective download). New `Progress::Manifest { .. }`. No iroh types cross the boundary — `FilePreview` is plain.
+- `src-tauri`: `inspect_ticket(ticket) -> TransferPreviewDto` (derive the coarse type/icon from extension
+  here, not in the engine); `start_receive` becomes gated behind the accepted preview id.
+- `ui`: an accept modal (file list + sizes + total + count + route badge + sender) between code-entry and
+  download; the send view gains the live status line above.
+
+**Doors this opens** (all on the same manifest, by effort): folder-tree preview (names are already `a/b/c`
+paths), file-kind icons, pre-flight free-space / overwrite checks, size & safety warnings (**S**); sender-side
+accept gate **+ real one-to-one enforcement** (`RequestMode::NotifyLog → Intercept`, reply allow/deny on
+`GetRequestReceived`), selective per-file download (`execute_get` already takes a range spec), verified note /
+sender identity, signature display (**M**); thumbnails / text snippets — which *do* read real content, so
+opt-in and clearly "downloading a preview" — and symmetric "sender offers X / receiver accepts" consent (**L**).
+
 ---
 
 ## 6. Self-hosted infrastructure
