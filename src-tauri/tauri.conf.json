@@ -26,12 +26,36 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Free, private, peer-to-peer file transfer.",
+    "longDescription": "Dropwire sends any file straight from one device to another — end-to-end encrypted, resumable, with no account and no server holding your data. Built on iroh.",
+    "copyright": "Copyright © 2026 Dropwire contributors",
+    "publisher": "Dropwire",
+    "homepage": "https://dropwire.app",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "dmg": {
+        "background": "icons/dmg-background.png",
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 }
+      }
+    },
+    "linux": {
+      "deb": {
+        "section": "net",
+        "desktopTemplate": "linux/dropwire.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/dropwire.desktop"
+      }
+    }
   }
 }

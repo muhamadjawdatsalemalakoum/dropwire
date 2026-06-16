@@ -1,0 +1,15 @@
+[Desktop Entry]
+Categories=Utility;Network;FileTransfer;
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+Keywords=file;transfer;p2p;peer-to-peer;send;share;dropwire;iroh;
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}
