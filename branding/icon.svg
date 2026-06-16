@@ -1,25 +1,8 @@
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Dropwire app icon: two devices joined by a live wire with a spark">
-  <title>Dropwire</title>
-  <desc>Two nodes connected by a single direct wire with an upward spark at the midpoint, on a dark tile, in the brand Live Wire lime.</desc>
-
-  <!-- Wire Black rounded tile -->
-  <rect x="0" y="0" width="512" height="512" rx="116" fill="#0E1116"/>
-
-  <!-- subtle underglow along the wire (hero accent, very faint) -->
-  <path d="M150 296 H236 l20 -56 20 56 H362"
-        fill="none" stroke="#D2FF3A" stroke-opacity="0.16"
-        stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- the live wire: left node -> spark -> right node -->
-  <path d="M150 296 H236 l20 -56 20 56 H362"
-        fill="none" stroke="#D2FF3A"
-        stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- left node: the live / sending device (lime) -->
-  <circle cx="150" cy="296" r="34" fill="#D2FF3A"/>
-  <!-- inner dot for depth on the dark tile -->
-  <circle cx="150" cy="296" r="13" fill="#0E1116"/>
-
-  <!-- right node: the receiving device (white) -->
-  <circle cx="362" cy="296" r="26" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="dropwire-icon-title dropwire-icon-desc">
+  <title id="dropwire-icon-title">Dropwire app icon</title>
+  <desc id="dropwire-icon-desc">Two device nodes joined by one live wire with a sharp transfer spark on a dark rounded tile.</desc>
+  <rect width="64" height="64" rx="14" fill="#0E1116"/>
+  <path d="M17 36h11l4-8 4 8h11" fill="none" stroke="#D2FF3A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="17" cy="36" r="6" fill="#D2FF3A"/>
+  <circle cx="47" cy="36" r="5" fill="#F2F5EF"/>
 </svg>

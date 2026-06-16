@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="dropwire-mono-title dropwire-mono-desc">
+  <title id="dropwire-mono-title">Dropwire mono mark</title>
+  <desc id="dropwire-mono-desc">A single-color mark of two nodes connected directly by a kinked live wire.</desc>
+  <path d="M17 36h11l4-8 4 8h11" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="17" cy="36" r="6" fill="currentColor"/>
+  <circle cx="47" cy="36" r="5" fill="currentColor"/>
+</svg>
