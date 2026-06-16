@@ -1,0 +1,286 @@
+/* ============================================================================
+   Dropwire — "The Wire is alive" design system
+   Implements docs/DESIGN.md. Dark-first. Tokens → components → motion.
+   ============================================================================ */
+
+:root {
+  color-scheme: dark;
+  /* --- Live Wire current --- */
+  --wire:#D2FF3A; --wire-press:#B6E830; --wire-dim:#8FB81F; --wire-ink:#0E1116;
+  --wire-glow:rgba(210,255,58,.55); --wire-glow-soft:rgba(210,255,58,.16); --wire-hot:#EAFFA0;
+  /* --- Surface ladder --- */
+  --canvas:#0B0E13; --wire-black:#0E1116; --surface:#131820; --surface-2:#1A212B; --surface-3:#232C38;
+  --scrim:rgba(7,9,12,.66);
+  /* --- Hairlines --- */
+  --hairline:#232B36; --hairline-soft:rgba(242,245,239,.06); --hairline-strong:rgba(242,245,239,.14);
+  /* --- Text --- */
+  --text:#F2F5EF; --text-muted:#9BA6B2; --text-faint:#6B7480; --text-on-wire:#0E1116;
+  /* --- Semantic --- */
+  --success:#34D77A; --direct:#34D77A; --relayed:#E0A93A; --warning:#E0A93A; --error:#F2664F; --info:#5AA0FF;
+  --success-glow:rgba(52,215,122,.45);
+  /* --- Elevation --- */
+  --elev-1:inset 0 1px 0 0 var(--hairline-strong), 0 1px 2px rgba(0,0,0,.40);
+  --elev-2:inset 0 1px 0 0 var(--hairline-strong), 0 8px 24px rgba(0,0,0,.45);
+  --elev-pop:inset 0 1px 0 0 var(--hairline-strong), 0 16px 48px rgba(0,0,0,.55);
+  --glow-focus:0 0 0 3px var(--wire-glow-soft);
+  --glow-live:0 0 16px var(--wire-glow), 0 0 2px var(--wire-glow);
+  --glow-success:0 0 20px var(--success-glow);
+  /* --- Type --- */
+  --font-ui:"Inter",-apple-system,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;
+  --font-display:"Space Grotesk","Inter",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
+  /* --- Spacing --- */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px; --sp-8:64px;
+  /* --- Radii --- */
+  --r-1:6px; --r-2:10px; --r-3:14px; --r-4:20px; --r-full:999px;
+  /* --- Motion --- */
+  --dur-0:80ms; --dur-1:140ms; --dur-2:220ms; --dur-3:380ms; --dur-4:640ms; --dur-flow:1100ms;
+  --ease-out:cubic-bezier(.22,1,.36,1); --ease-in-out:cubic-bezier(.65,0,.35,1);
+  --ease-in:cubic-bezier(.5,0,.75,0); --ease-snap:cubic-bezier(.34,1.2,.5,1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --wire:#C6F032; --wire-press:#A8D616; --wire-dim:#B8D84A; --wire-ink:#0E1116;
+  --wire-glow:rgba(168,214,22,.45); --wire-glow-soft:rgba(168,214,22,.18); --wire-hot:#86B300;
+  --canvas:#FBFCF9; --wire-black:#0E1116; --surface:#FFFFFF; --surface-2:#F2F5EE; --surface-3:#E8ECE2;
+  --scrim:rgba(14,17,22,.32);
+  --hairline:#DDE2D8; --hairline-soft:rgba(14,17,22,.06); --hairline-strong:rgba(14,17,22,.12);
+  --text:#0E1116; --text-muted:#5B6470; --text-faint:#8A93A0; --text-on-wire:#0E1116;
+  --success:#1F9D55; --direct:#1F9D55; --relayed:#C98A1E; --warning:#C98A1E; --error:#D7402B; --info:#2D7FF0;
+  --success-glow:rgba(31,157,85,.30);
+  --elev-1:0 1px 2px rgba(14,17,22,.06), 0 0 0 1px var(--hairline);
+  --elev-2:0 6px 20px rgba(14,17,22,.10), 0 0 0 1px var(--hairline);
+  --elev-pop:0 16px 48px rgba(14,17,22,.16), 0 0 0 1px var(--hairline);
+  --glow-live:0 0 14px var(--wire-glow);
+}
+
+/* ---------------------------------- base --------------------------------- */
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+html{background:var(--canvas)}
+body{
+  font-family:var(--font-ui); font-size:15px; line-height:1.5; color:var(--text);
+  background:var(--canvas); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  font-feature-settings:"calt" 1,"kern" 1,"liga" 1; user-select:none; overflow:hidden;
+}
+.tabular{font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+a{color:var(--wire); text-underline-offset:2px}
+:focus-visible{outline:none; box-shadow:var(--glow-focus)}
+
+/* --------------------------------- shell --------------------------------- */
+.app{display:grid; grid-template-columns:64px 1fr; height:100vh}
+
+/* rail nav */
+.sidebar{
+  width:64px; background:var(--wire-black); border-right:1px solid var(--hairline-soft);
+  display:flex; flex-direction:column; align-items:center; padding:16px 0; gap:4px; position:relative;
+}
+.brand{display:flex; align-items:center; justify-content:center; margin-bottom:16px}
+.brand-name{display:none}
+.nav{display:flex; flex-direction:column; align-items:center; gap:4px; position:relative}
+.nav-item{
+  width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+  border:0; border-radius:var(--r-2); background:transparent; color:var(--text-faint);
+  position:relative; transition:color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+}
+.nav-item span{display:none}              /* labels hidden; tooltip on hover */
+.nav-item::after{                          /* tooltip */
+  content:attr(data-tip); position:absolute; left:52px; top:50%; transform:translateY(-50%) translateX(-4px);
+  background:var(--surface-3); color:var(--text); font-size:12px; font-weight:500; padding:5px 9px;
+  border-radius:var(--r-2); white-space:nowrap; opacity:0; pointer-events:none; box-shadow:var(--elev-1);
+  transition:opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); z-index:5;
+}
+.nav-item:hover{color:var(--text); background:rgba(255,255,255,.05)}
+.nav-item:hover::after{opacity:1; transform:translateY(-50%) translateX(0)}
+.nav-item.is-active{color:var(--wire)}
+/* sliding lime indicator = a wire segment */
+.nav-indicator{
+  position:absolute; left:-12px; width:3px; height:20px; border-radius:var(--r-full);
+  background:var(--wire); box-shadow:var(--glow-live);
+  transition:transform var(--dur-2) var(--ease-out); will-change:transform;
+}
+.sidebar-foot{margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:10px}
+.ghost-btn{width:32px;height:32px;border:0;border-radius:var(--r-2);background:transparent;color:var(--text-faint);
+  font-size:0; display:flex; align-items:center; justify-content:center}
+.ghost-btn::before{content:"◐"; font-size:16px}
+.ghost-btn:hover{background:var(--surface-2); color:var(--text)}
+.net-badge{font-size:0; width:8px; height:8px; border-radius:var(--r-full); background:var(--wire);
+  box-shadow:0 0 8px var(--wire-glow); animation:breathe 3s ease-in-out infinite}
+
+/* --------------------------------- main ---------------------------------- */
+.main{overflow-y:auto; padding:32px 40px}
+.view{display:none; max-width:640px; margin:0 auto}
+.view.is-active{display:block}
+.view-head h1{font-family:var(--font-display); font-size:28px; font-weight:600; letter-spacing:-.8px;
+  line-height:1.15; margin:0 0 4px; view-transition-name:view-title}
+.view-head .sub{color:var(--text-muted); margin:0 0 24px; font-size:15px}
+
+/* -------------------------------- buttons -------------------------------- */
+.btn{height:40px; padding:0 18px; border:0; border-radius:var(--r-2); background:var(--wire);
+  color:var(--text-on-wire); font-size:14px; font-weight:600; display:inline-flex; align-items:center;
+  justify-content:center; gap:8px; box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 0 12px rgba(210,255,58,.18);
+  transition:transform var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out), background var(--dur-0) var(--ease-snap)}
+.btn:hover{transform:translateY(-1px); box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 0 18px rgba(210,255,58,.3)}
+.btn:active{transform:scale(.97); background:var(--wire-press); box-shadow:inset 0 1px 0 rgba(255,255,255,.2), 0 0 8px rgba(210,255,58,.15)}
+.btn:disabled{opacity:.4; cursor:not-allowed; transform:none; box-shadow:none}
+.btn-ghost{height:40px; padding:0 18px; border:1px solid var(--hairline); border-radius:var(--r-2);
+  background:transparent; color:var(--text); font-size:14px; font-weight:500; display:inline-flex; align-items:center;
+  justify-content:center; gap:8px; transition:transform var(--dur-0) var(--ease-snap), background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+.btn-ghost:hover{background:var(--surface-2); border-color:var(--hairline-strong)}
+.btn-ghost:active{transform:scale(.97)}
+.btn-quiet{height:40px; padding:0 14px; border:0; background:transparent; color:var(--text-muted); font-size:14px;
+  font-weight:500; border-radius:var(--r-2); transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
+.btn-quiet:hover{background:var(--surface-2); color:var(--text)}
+.btn-block{width:100%}
+
+/* -------------------------------- panels --------------------------------- */
+.panel{background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-3); padding:var(--sp-5);
+  box-shadow:var(--elev-1)}
+.hidden{display:none !important}
+
+/* ------------------------------- drop zone ------------------------------- */
+.dropzone{min-height:220px; border:2px dashed var(--hairline); border-radius:var(--r-4); background:var(--surface);
+  display:flex; align-items:center; justify-content:center; text-align:center; padding:var(--sp-7); outline:none;
+  transition:border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out)}
+.dropzone:hover,.dropzone:focus-visible{border-color:var(--wire-dim); background:var(--surface-2)}
+.dropzone.dragover{border-color:var(--wire); border-style:solid; background:color-mix(in srgb, var(--wire-glow-soft) 60%, var(--surface));
+  transform:scale(1.015)}
+.dz-glyph{width:64px; height:34px; margin:0 auto 14px; display:block}
+.dz-title{font-family:var(--font-ui); font-weight:600; font-size:17px; letter-spacing:-.2px; margin:0 0 4px}
+.dz-sub{color:var(--text-faint); margin:6px 0; font-size:12px}
+.dz-actions{display:flex; gap:10px; justify-content:center; margin-top:16px}
+
+/* ----------------------- the share-code "ticket" card -------------------- */
+.code-card{position:relative; background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
+  padding:var(--sp-6); box-shadow:var(--elev-2); overflow:hidden}
+.code-card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--wire);
+  box-shadow:0 0 10px var(--wire-glow)}              /* the lit "wire spine" */
+.send-grid{display:grid; grid-template-columns:1fr auto; gap:var(--sp-6); align-items:center}
+.label{font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase; color:var(--text-muted); margin:0 0 var(--sp-3)}
+.code{font-family:var(--font-mono); font-size:clamp(20px,4.6vw,30px); font-weight:600; letter-spacing:1.5px;
+  line-height:1.35; color:var(--text); background:var(--surface-2); border-radius:var(--r-3); padding:var(--sp-4);
+  box-shadow:inset 0 1px 0 var(--hairline-strong); word-break:break-all; user-select:all; caret-color:var(--wire)}
+.code-actions{display:flex; gap:var(--sp-4); margin-top:var(--sp-4)}
+.hint{color:var(--text-muted); font-size:12px; margin:var(--sp-3) 0 0}
+.qr-block{text-align:center}
+.qr{width:168px; height:168px; background:#fff; border-radius:var(--r-3); padding:12px; display:block}
+.qr svg{width:100%; height:100%; display:block}
+.qr-lens{border:1px solid var(--hairline); border-radius:var(--r-4); padding:4px; background:var(--surface); display:inline-block}
+
+/* ------------------------------- inputs ---------------------------------- */
+.field-label{display:block; font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase;
+  color:var(--text-muted); margin-bottom:var(--sp-3)}
+.code-input-wrap{position:relative; display:flex; align-items:center}
+.code-input{width:100%; height:56px; padding:0 16px 0 44px; border-radius:var(--r-3); background:var(--surface-2);
+  border:1px solid var(--hairline); color:var(--text); font-family:var(--font-mono); font-size:16px; letter-spacing:.5px;
+  user-select:text; caret-color:var(--wire); transition:box-shadow var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+.code-input:focus{outline:none; border-color:transparent; box-shadow:0 0 0 2px var(--wire), var(--glow-focus)}
+.code-input-glyph{position:absolute; left:14px; width:20px; height:12px; pointer-events:none}
+.code-input.shake{animation:shake var(--dur-3) var(--ease-in-out)}
+.recv-dest{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:var(--sp-4)}
+.error{color:var(--error); font-size:12px; min-height:1em; margin:var(--sp-3) 0 0}
+
+/* ------------------------- the wire-progress viz ------------------------- */
+.wire-wrap{margin-top:var(--sp-5)}
+.wire{width:100%; height:auto; display:block; overflow:visible}
+.w-track{fill:none; stroke:var(--wire-dim); stroke-width:3; opacity:.3; stroke-linecap:round}
+.w-fill{fill:none; stroke:var(--wire); stroke-width:4; stroke-linecap:round; filter:url(#wireGlow);
+  stroke-dasharray:1; stroke-dashoffset:1; transition:stroke-dashoffset var(--dur-2) var(--ease-out)}
+.w-current{fill:none; stroke:var(--wire-hot); stroke-width:2.5; stroke-linecap:round; stroke-dasharray:3 15;
+  animation:flow var(--dur-flow) linear infinite}
+.wire[data-dir="recv"] .w-current{animation-direction:reverse}
+.w-node{fill:var(--surface-3); stroke:var(--hairline-strong); stroke-width:1; transition:fill var(--dur-2) var(--ease-out)}
+.w-node.self.live{fill:var(--wire); stroke:none; filter:url(#wireGlow)}
+.w-node.peer.live{fill:var(--wire); stroke:none; filter:url(#wireGlow)}
+.w-node.peer.done{fill:var(--success); stroke:none}
+.w-spark{fill:none; stroke:var(--wire); stroke-width:2; opacity:0}
+.wire.connecting .w-fill{opacity:0}
+.wire.connecting .w-sweep{opacity:1}
+.w-sweep{fill:none; stroke:var(--wire-hot); stroke-width:3; stroke-linecap:round; stroke-dasharray:.06 1;
+  stroke-dashoffset:0; opacity:0; animation:sweep var(--dur-flow) linear infinite; filter:url(#wireGlow)}
+.wire-readout{margin-top:var(--sp-3); font-family:var(--font-mono); font-size:13px; color:var(--text-muted);
+  display:flex; align-items:center; gap:10px}
+.wire-pct{font-family:var(--font-display); font-size:22px; font-weight:600; color:var(--text); letter-spacing:-.5px}
+
+/* ----------------------------- route badge ------------------------------- */
+.route-badge{display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:var(--r-full);
+  font-size:11px; font-weight:600; letter-spacing:.4px; background:var(--surface-2); color:var(--text-muted);
+  transition:background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out)}
+.route-badge::before{content:""; width:6px; height:6px; border-radius:var(--r-full); background:currentColor}
+.route-badge.connecting::before{animation:breathe 1.4s ease-in-out infinite}
+.route-badge.direct{background:color-mix(in srgb,var(--direct) 16%,transparent); color:var(--direct)}
+.route-badge.relayed{background:color-mix(in srgb,var(--relayed) 16%,transparent); color:var(--relayed)}
+
+/* ------------------------------- receive --------------------------------- */
+.recv-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-4)}
+.recv-name{font-weight:600; font-size:17px; letter-spacing:-.2px}
+.recv-actions{display:flex; gap:10px; margin-top:var(--sp-5)}
+
+/* ------------------------------- history --------------------------------- */
+.history{display:flex; flex-direction:column; gap:10px}
+.hist-item{display:grid; grid-template-columns:auto 1fr auto; gap:var(--sp-4); align-items:center;
+  background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-2); padding:var(--sp-4);
+  transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+.hist-item:hover{background:var(--surface-2); border-color:var(--hairline-strong)}
+.hist-dir{width:34px; height:18px}
+.hist-name{font-weight:600; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.hist-meta{font-size:12px; color:var(--text-faint); margin-top:2px}
+.empty{color:var(--text-faint); text-align:center; padding:48px 24px}
+.empty-glyph{width:80px; height:42px; margin:0 auto 16px; display:block; opacity:.6}
+
+/* ------------------------------- settings -------------------------------- */
+.settings{display:flex; flex-direction:column}
+.setting{display:flex; justify-content:space-between; align-items:center; gap:24px; padding:var(--sp-4) 0;
+  border-bottom:1px solid var(--hairline-soft)}
+.setting:last-child{border-bottom:0}
+.setting .label{margin:0}
+.setting .val{color:var(--text-muted); font-size:14px; text-align:right}
+.mono{font-family:var(--font-mono); font-size:13px; word-break:break-all; user-select:text; color:var(--text-muted)}
+.setting-control{display:flex; align-items:center; gap:8px; max-width:62%; justify-content:flex-end}
+.setting-control .val{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.btn-quiet.sm,.btn-ghost.sm{height:30px; padding:0 12px; font-size:13px}
+.seg{display:inline-flex; background:var(--surface-2); border-radius:var(--r-2); padding:2px; gap:2px}
+.seg-btn{height:28px; padding:0 14px; border:0; background:transparent; color:var(--text-muted); font-size:13px; font-weight:500;
+  border-radius:8px; transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
+.seg-btn:hover{color:var(--text)}
+.seg-btn.on{background:var(--surface-3); color:var(--wire)}
+
+/* ------------------------ keyframes / motion ----------------------------- */
+@keyframes flow{from{stroke-dashoffset:0} to{stroke-dashoffset:-18}}
+@keyframes sweep{from{stroke-dashoffset:0} to{stroke-dashoffset:-1.06}}
+@keyframes breathe{0%,100%{opacity:.55} 50%{opacity:1}}
+@keyframes shake{0%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}100%{transform:translateX(0)}}
+@keyframes viewIn{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+.view.is-active{animation:viewIn var(--dur-2) var(--ease-out)}
+
+/* view transitions (Send/Receive/...) */
+::view-transition-old(root){animation:vt-out var(--dur-1) var(--ease-in) both}
+::view-transition-new(root){animation:vt-in var(--dur-2) var(--ease-out) both}
+@keyframes vt-out{to{opacity:0; transform:translateY(-6px)}}
+@keyframes vt-in{from{opacity:0; transform:translateY(8px)}}
+::view-transition-old(view-title),::view-transition-new(view-title){animation-duration:var(--dur-2)}
+
+/* --------------------------- reduced motion ------------------------------ */
+/* --------------------------- flourish / power-on ------------------------- */
+.app{animation:appIn 460ms var(--ease-out)}
+@keyframes appIn{from{opacity:0; transform:scale(.992)}}
+/* the brand wire-mark draws itself on launch */
+.brand-wire{stroke-dasharray:1; animation:wireDraw 620ms var(--ease-out) 60ms both}
+@keyframes wireDraw{from{stroke-dashoffset:1} to{stroke-dashoffset:0}}
+/* connect pulse: a single bright dash that races the wire (fired from JS on peerJoined) */
+.w-pulse{fill:none; stroke:var(--wire-hot); stroke-width:4; stroke-linecap:round; stroke-dasharray:.045 1;
+  stroke-dashoffset:1; opacity:0; filter:url(#wireGlow)}
+/* ambient: one dim particle drifts along an idle wire glyph */
+.drift{offset-path:path('M16 34 H52 l8 -14 8 14 H104'); offset-rotate:0deg; opacity:.7;
+  animation:drift 4.2s linear infinite}
+@keyframes drift{from{offset-distance:0%} to{offset-distance:100%}}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important; animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+  .w-current,.w-sweep,.w-pulse,.drift,.net-badge{display:none !important}
+  /* keep the determinate fill length transition (gentle, informative) */
+  .w-fill{transition:stroke-dashoffset var(--dur-2) linear !important}
+}

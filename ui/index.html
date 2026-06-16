@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dropwire</title>
+  <style>html{background:#0B0E13}</style>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <!-- shared SVG defs (one glow filter, referenced by every wire) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <filter id="wireGlow" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="2.4" /></filter>
+  </defs></svg>
+
+  <div class="app">
+    <!-- ===================== RAIL ===================== -->
+    <aside class="sidebar">
+      <div class="brand" aria-label="Dropwire">
+        <svg viewBox="0 0 64 40" width="30" height="19" aria-hidden="true">
+          <path class="brand-wire" pathLength="1" d="M8 20 H28 l4 -8 4 8 H56" fill="none" stroke="#8FB81F" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="8" cy="20" r="6" fill="#D2FF3A"/><circle cx="56" cy="20" r="5" fill="#6B7480"/>
+        </svg>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <div class="nav-indicator" aria-hidden="true"></div>
+        <button class="nav-item is-active" data-view="send" data-tip="Send" aria-current="page" title="Send">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Send</span>
+        </button>
+        <button class="nav-item" data-view="receive" data-tip="Receive" title="Receive">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Receive</span>
+        </button>
+        <button class="nav-item" data-view="history" data-tip="History" title="History">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 7v5l3 2M21 12a9 9 0 1 1-9-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>History</span>
+        </button>
+        <button class="nav-item" data-view="settings" data-tip="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Settings</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <button id="theme-toggle" class="ghost-btn" type="button" aria-label="Toggle theme"></button>
+        <span class="net-badge" title="Discovery via the public DHT; free relay only as fallback">serverless</span>
+      </div>
+    </aside>
+
+    <!-- ===================== MAIN ===================== -->
+    <main class="main">
+      <!-- ----- SEND ----- -->
+      <section class="view is-active" id="view-send" role="region" aria-label="Send">
+        <header class="view-head"><h1>Send</h1><p class="sub">Pick a file or folder. Share the code — it goes straight to them.</p></header>
+
+        <div id="send-pick" class="dropzone" tabindex="0">
+          <div>
+            <svg class="dz-glyph" viewBox="0 0 120 60" aria-hidden="true">
+              <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
+              <circle class="drift" r="3" fill="var(--wire)"/>
+            </svg>
+            <p class="dz-title">Drop a file or folder here</p>
+            <p class="dz-sub">or</p>
+            <div class="dz-actions"><button class="btn" id="pick-file">Choose a file</button><button class="btn-ghost" id="pick-folder">Choose a folder</button></div>
+          </div>
+        </div>
+
+        <div id="send-active" class="code-card hidden">
+          <div class="send-grid">
+            <div>
+              <p class="label">Share this code</p>
+              <div class="code" id="send-code">—</div>
+              <div class="code-actions"><button class="btn" id="copy-code">Copy code</button><button class="btn-quiet" id="send-cancel">Cancel</button></div>
+              <p class="hint" id="send-status" aria-live="polite">Preparing…</p>
+            </div>
+            <div class="qr-block">
+              <div class="qr-lens"><div class="qr" id="send-qr" aria-label="QR code for this transfer"></div></div>
+              <p class="hint">Scan to receive</p>
+            </div>
+          </div>
+          <div class="wire-wrap">
+            <svg class="wire connecting" data-dir="send" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <defs><clipPath id="lit-send"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
+              <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <path class="w-fill" id="send-bar" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <g clip-path="url(#lit-send)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
+              <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <circle class="w-spark peer" cx="540" cy="60" r="8"/>
+              <circle class="w-node self live" cx="60" cy="60" r="8"/>
+              <circle class="w-node peer" cx="540" cy="60" r="8"/>
+            </svg>
+            <div class="wire-readout"><span class="wire-pct" id="send-pct"></span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ----- RECEIVE ----- -->
+      <section class="view" id="view-receive" role="region" aria-label="Receive">
+        <header class="view-head"><h1>Receive</h1><p class="sub">Enter the code you were given. Choose where to save it.</p></header>
+
+        <div id="recv-pick" class="panel">
+          <label class="field-label" for="recv-code-input">Transfer code</label>
+          <div class="code-input-wrap">
+            <svg class="code-input-glyph" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="var(--wire-dim)"/><circle cx="34" cy="12" r="3.5" fill="var(--text-faint)"/></svg>
+            <input id="recv-code-input" class="code-input" type="text" spellcheck="false" autocomplete="off" placeholder="blob…" />
+          </div>
+          <div class="recv-dest"><span class="hint" id="recv-dest-label">Save to: <em>Downloads</em></span><button class="btn-ghost" id="pick-dest">Choose folder…</button></div>
+          <button class="btn btn-block" id="recv-start" style="margin-top:16px" disabled>Receive</button>
+          <p class="error" id="recv-error" aria-live="assertive"></p>
+        </div>
+
+        <div id="recv-active" class="panel hidden">
+          <div class="recv-head"><span class="recv-name" id="recv-name">Connecting…</span><span class="route-badge connecting" id="recv-route">connecting</span></div>
+          <div class="wire-wrap">
+            <svg class="wire connecting" data-dir="recv" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <defs><clipPath id="lit-recv"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
+              <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <path class="w-fill" id="recv-bar" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <g clip-path="url(#lit-recv)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
+              <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+              <circle class="w-spark peer" cx="540" cy="60" r="8"/>
+              <circle class="w-node peer" cx="60" cy="60" r="8"/>
+              <circle class="w-node self" cx="540" cy="60" r="8"/>
+            </svg>
+            <div class="wire-readout"><span class="wire-pct" id="recv-pct">0%</span><span id="recv-status" aria-live="polite"></span></div>
+          </div>
+          <div class="recv-actions"><button class="btn-quiet" id="recv-cancel">Cancel</button><button class="btn hidden" id="recv-open">Open folder</button><button class="btn-quiet hidden" id="recv-another">Receive another</button></div>
+        </div>
+      </section>
+
+      <!-- ----- HISTORY ----- -->
+      <section class="view" id="view-history" role="region" aria-label="History">
+        <header class="view-head"><h1>History</h1><p class="sub">Transfers on this device. Stored only here.</p></header>
+        <div id="history-list" class="history"></div>
+        <div class="empty hidden" id="history-empty">
+          <svg class="empty-glyph" viewBox="0 0 120 60" aria-hidden="true"><path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/><circle class="drift" r="3" fill="var(--wire)"/></svg>
+          <p style="font-family:var(--font-display);font-size:22px;font-weight:600;margin:0 0 4px;color:var(--text)">No transfers yet</p>
+          <p style="margin:0">Files you send or receive show up here — stored only on this device.</p>
+        </div>
+      </section>
+
+      <!-- ----- SETTINGS ----- -->
+      <section class="view" id="view-settings" role="region" aria-label="Settings">
+        <header class="view-head"><h1>Settings</h1><p class="sub">Dropwire keeps nothing in the cloud. Everything below lives on this device.</p></header>
+        <div class="panel settings">
+          <div class="setting"><span class="label">This device's ID</span>
+            <span class="setting-control"><code class="mono val" id="endpoint-id">…</code><button class="btn-quiet sm" id="copy-id">Copy</button></span>
+          </div>
+          <div class="setting"><span class="label">Default download folder</span>
+            <span class="setting-control"><span class="val" id="default-folder-label">Downloads</span><button class="btn-ghost sm" id="change-folder">Change…</button></span>
+          </div>
+          <div class="setting"><span class="label">Theme</span>
+            <div class="seg" role="group" aria-label="Theme">
+              <button class="seg-btn" data-theme-set="auto">Auto</button><button class="seg-btn" data-theme-set="light">Light</button><button class="seg-btn" data-theme-set="dark">Dark</button>
+            </div>
+          </div>
+          <div class="setting"><span class="label">Connection</span><span class="val">Serverless — peers via the public DHT, free relay only as fallback. No account, no tracking.</span></div>
+          <div class="setting"><span class="label">About</span><span class="val">Dropwire · free &amp; open source · built on iroh · <a href="#" id="about-link">dropwire.app</a></span></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
