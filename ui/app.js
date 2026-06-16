@@ -390,13 +390,16 @@ async function loadHistory() {
   items.forEach((t, i) => {
     const dir = (t.direction || '').toLowerCase();
     const resumable = dir === 'receive' && t.status === 'interrupted' && t.ticket && t.dest;
+    const resendable = dir === 'send' && !!t.source;
     const el = document.createElement('div');
     el.className = 'hist-item';
-    const right = resumable
-      ? `<button class="btn-quiet sm" data-resume="1">Resume</button>`
-      : `<div class="hist-meta">${dir === 'send' ? 'Sent' : 'Received'}</div>`;
+    let right;
+    if (resumable) right = `<button class="btn-quiet sm" data-resume="1">Resume</button>`;
+    else if (resendable) right = `<button class="btn-quiet sm" data-resend="1">Resend</button>`;
+    else right = `<div class="hist-meta">${dir === 'send' ? 'Sent' : 'Received'}</div>`;
     el.innerHTML = `${histGlyph(dir)}<div><div class="hist-name">${esc(t.name || 'transfer')}</div><div class="hist-meta">${fmtBytes(t.total_bytes)} · ${esc(t.status || '')}</div></div>${right}`;
     if (resumable) el.querySelector('[data-resume]').addEventListener('click', () => beginReceive(t.ticket, t.dest));
+    if (resendable) el.querySelector('[data-resend]').addEventListener('click', () => { switchView('send'); startSend(t.source); });
     list.appendChild(el);
     if (canAnim) el.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 220, delay: Math.min(i, 6) * 40, easing: EASE_OUT });
   });
