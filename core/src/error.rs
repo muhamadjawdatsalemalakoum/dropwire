@@ -15,6 +15,10 @@ pub enum CoreError {
     #[error("invalid ticket: {0}")]
     InvalidTicket(String),
 
+    /// Couldn't reach the sender (offline, unreachable, or the link expired).
+    #[error("can't reach the sender: {0}")]
+    Unreachable(String),
+
     #[error("transfer not found: {0}")]
     NotFound(String),
 

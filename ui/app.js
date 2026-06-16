@@ -330,8 +330,8 @@ async function openPreview(ticket, dest) {
     accept.focus();
   } catch (e) {
     if (previewTicket !== ticket) return;
-    $('#preview-summary').textContent = "Couldn't reach the sender to preview.";
-    $('#preview-note').textContent = String(e && e.message ? e.message : e);
+    $('#preview-summary').textContent = 'Sender offline, or this link has expired.';
+    $('#preview-note').textContent = "We couldn't reach the sender. They need to be online — and the code still valid — for the transfer to start.";
     accept.classList.add('hidden');
     decline.textContent = 'Close';
   }
@@ -376,7 +376,13 @@ function onRecvMsg(m, els, card) {
       els.open.classList.remove('hidden'); els.another.classList.remove('hidden'); els.cancel.classList.add('hidden');
       if (canAnim) els.open.animate([{ opacity: 0, transform: 'translateY(8px) scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_POP });
       break;
-    case 'error': els.name.textContent = 'Failed'; els.status.textContent = m.message; els.cancel.textContent = 'Dismiss'; break;
+    case 'error': {
+      const offline = /reach the sender|offline|link expired|unreachable/i.test(m.message || '');
+      els.name.textContent = offline ? 'Sender offline or link expired' : 'Failed';
+      els.status.textContent = offline ? '' : (m.message || '');
+      els.cancel.textContent = 'Dismiss';
+      break;
+    }
     case 'cancelled': removeCard(card); break;
   }
 }

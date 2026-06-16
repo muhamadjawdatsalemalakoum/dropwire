@@ -24,6 +24,16 @@ use crate::progress::{
 use crate::store::BLOBS_ALPN;
 use crate::Core;
 
+/// How long to wait to connect to the sender before declaring it unreachable
+/// (offline or expired link), instead of hanging indefinitely. Local-only mode
+/// has no relay/DHT, so a reachable peer connects near-instantly — fail fast there.
+fn connect_timeout(infra: &crate::Infra) -> Duration {
+    match infra {
+        crate::Infra::LocalOnly => Duration::from_secs(3),
+        _ => Duration::from_secs(15),
+    }
+}
+
 impl Core {
     /// Download the content referenced by `ticket` into `dest`, resuming from any
     /// partial data already in the local store.
@@ -104,10 +114,20 @@ impl Core {
         let endpoint = self.inner.router.endpoint();
         let hash = parsed.hash();
 
-        let conn = endpoint
-            .connect(parsed.addr().clone(), BLOBS_ALPN)
-            .await
-            .context("connect to sender")?;
+        let conn = match tokio::time::timeout(
+            connect_timeout(&self.inner.config.infra),
+            endpoint.connect(parsed.addr().clone(), BLOBS_ALPN),
+        )
+        .await
+        {
+            Ok(Ok(c)) => c,
+            Ok(Err(e)) => return Err(CoreError::Unreachable(e.to_string())),
+            Err(_) => {
+                return Err(CoreError::Unreachable(
+                    "timed out — the sender may be offline or the link may have expired".into(),
+                ))
+            }
+        };
 
         let store = &self.inner.store;
 
@@ -176,11 +196,25 @@ async fn run_receive(
     let hf = ticket.hash_and_format();
     let hash = ticket.hash();
 
-    // Connect to the provider.
-    let conn = endpoint
-        .connect(ticket.addr().clone(), BLOBS_ALPN)
-        .await
-        .context("connect to sender")?;
+    // Connect to the provider (bounded, so an offline sender fails cleanly).
+    let conn = match tokio::time::timeout(
+        connect_timeout(&core.inner.config.infra),
+        endpoint.connect(ticket.addr().clone(), BLOBS_ALPN),
+    )
+    .await
+    {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            return Err(anyhow!(
+                "can't reach the sender (offline or link expired): {e}"
+            ))
+        }
+        Err(_) => {
+            return Err(anyhow!(
+                "can't reach the sender — they may be offline or the link expired"
+            ))
+        }
+    };
     // Track the connection path; relay→direct can upgrade after hole-punch, so we
     // watch it live and the badge reflects the *current* path during the transfer.
     let route_state = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(route_u8(

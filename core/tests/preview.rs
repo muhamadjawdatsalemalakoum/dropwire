@@ -108,6 +108,30 @@ async fn inspect_then_receive_completes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn inspect_offline_sender_is_unreachable() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("f.bin");
+    std::fs::write(&src, make_payload(1024)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    // The sender goes away — the ticket now points at nothing.
+    sender.shutdown().await.unwrap();
+
+    let receiver = local_core(recv_data.path()).await;
+    let err = receiver.inspect(ticket).await.unwrap_err();
+    assert!(
+        matches!(err, CoreError::Unreachable(_)),
+        "an offline sender must surface as Unreachable, got: {err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn inspect_invalid_ticket_errors() {
     let recv_data = tempfile::tempdir().unwrap();
     let receiver = local_core(recv_data.path()).await;
