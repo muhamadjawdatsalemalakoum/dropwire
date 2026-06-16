@@ -1,0 +1,46 @@
+# Dropwire — Cargo workspace
+# `src-tauri` is added as a member once the desktop shell lands (M2); keeping the
+# workspace at `core` only for now lets `cargo build`/`test` stay green while the
+# engine is built and verified first.
+[workspace]
+resolver = "2"
+members = ["core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dropwire/dropwire"
+homepage = "https://dropwire.app"
+authors = ["Dropwire contributors"]
+rust-version = "1.82"
+
+# Pinned exactly: iroh core is stable (1.0); iroh-blobs is pre-1.0 (0.10x line) and
+# wrapped behind the `irohcore` crate so its churn never leaks past one boundary.
+[workspace.dependencies]
+iroh = "=1.0.0"
+iroh-blobs = "=0.103.0"
+# Mainline-DHT (pkarr) discovery lives in its own crate in iroh 1.0 (independently
+# versioned; depends on iroh ^1.0.0). This is our default, serverless discovery.
+iroh-mainline-address-lookup = "0.4.0"
+n0-future = "0.3"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+futures-lite = "2"
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+walkdir = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+data-encoding = "2"
+url = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

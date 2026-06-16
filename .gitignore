@@ -1,0 +1,41 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+*.pdb
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+src-tauri/WixTools
+
+# Node / frontend
+node_modules
+dist
+.vite
+*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Dropwire local runtime data (never commit user data / identity keys)
+*.dropwire-data
+node.key
+transfers.json
+
+# Research scratch (kept locally, not shipped)
+# (comment these out if you want them in version control)
+_research_synthesis.md
+_spec_specifics.md
+
+# Dev-only self-contained UI preview (snapshot of ui/index.html + app.css for the
+# preview panel / browser double-click; the real app loads the separate files)
+ui/preview.html
+
+# Logs / temp
+*.log
+tmp/
