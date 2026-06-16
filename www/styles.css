@@ -434,7 +434,13 @@ img, svg { max-width: 100%; }
   color: var(--accent-strong);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
+.wire-track {
+  position: relative;
+  width: 100%;
+  height: 24px;
+}
 .wire-line {
+  display: block;
   width: 100%;
   height: 24px;
 }
@@ -446,8 +452,9 @@ img, svg { max-width: 100%; }
 }
 .packet {
   position: absolute;
-  top: calc(50% + 6px);
-  left: 0;
+  top: 50%;
+  left: 2%;
+  transform: translate(-50%, -50%);
   width: 10px;
   height: 10px;
   border-radius: 50%;
