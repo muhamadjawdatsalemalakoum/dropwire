@@ -3,49 +3,11 @@
 //! These use `Infra::LocalOnly` (no relay, no discovery) so they're hermetic:
 //! the receiver dials the direct addresses embedded in the ticket over loopback.
 
-use std::time::Duration;
-
-use irohcore::{Core, CoreConfig, Progress, ProgressStream};
+use irohcore::{Core, CoreConfig, Progress};
 use tokio_stream::StreamExt;
 
-fn make_payload(n: usize) -> Vec<u8> {
-    (0..n).map(|i| (i % 251) as u8).collect()
-}
-
-/// Read the send stream until the ticket is ready.
-async fn wait_ready(stream: &mut ProgressStream) -> String {
-    let fut = async {
-        while let Some(ev) = stream.next().await {
-            match ev {
-                Progress::Ready { ticket, .. } => return ticket,
-                Progress::Error { message, .. } => panic!("send error: {message}"),
-                _ => {}
-            }
-        }
-        panic!("send stream ended before Ready");
-    };
-    tokio::time::timeout(Duration::from_secs(30), fut)
-        .await
-        .expect("timed out waiting for ticket")
-}
-
-/// Read the receive stream until the transfer completes.
-async fn wait_done(stream: &mut ProgressStream) {
-    let fut = async {
-        while let Some(ev) = stream.next().await {
-            match ev {
-                Progress::Done { .. } => return,
-                Progress::Error { message, .. } => panic!("receive error: {message}"),
-                Progress::Cancelled { .. } => panic!("receive cancelled unexpectedly"),
-                _ => {}
-            }
-        }
-        panic!("receive stream ended before Done");
-    };
-    tokio::time::timeout(Duration::from_secs(60), fut)
-        .await
-        .expect("timed out waiting for completion");
-}
+mod common;
+use common::{drain_until_terminal, local_core, make_payload, wait_done, wait_ready};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn roundtrip_single_file() {
@@ -57,12 +19,8 @@ async fn roundtrip_single_file() {
     let payload = make_payload(2 * 1024 * 1024);
     std::fs::write(&src, &payload).unwrap();
 
-    let sender = Core::start(CoreConfig::local_only(send_data.path()))
-        .await
-        .unwrap();
-    let receiver = Core::start(CoreConfig::local_only(recv_data.path()))
-        .await
-        .unwrap();
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
 
     let (_sid, mut ss) = sender.send(src).await.unwrap();
     let ticket = wait_ready(&mut ss).await;
@@ -86,12 +44,8 @@ async fn roundtrip_folder() {
     std::fs::write(dir.join("a.bin"), make_payload(1024)).unwrap();
     std::fs::write(dir.join("sub").join("b.bin"), make_payload(4096)).unwrap();
 
-    let sender = Core::start(CoreConfig::local_only(send_data.path()))
-        .await
-        .unwrap();
-    let receiver = Core::start(CoreConfig::local_only(recv_data.path()))
-        .await
-        .unwrap();
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
 
     let (_sid, mut ss) = sender.send(dir).await.unwrap();
     let ticket = wait_ready(&mut ss).await;
@@ -111,10 +65,13 @@ async fn roundtrip_folder() {
 }
 
 /// Resume across an interruption — the critical correctness test (ARCHITECTURE.md §12).
-/// Timing-sensitive on a fast loopback, so it is `#[ignore]` by default; run with:
-/// `cargo test -p irohcore -- --ignored resume_after_interrupt`
+///
+/// Determinism: instead of guessing a wall-clock cancel delay, we drive the first
+/// receive until a `Transferring` event reports a real byte `offset > 0`, then
+/// cancel. That leaves a partial in the receiver's `FsStore`; the second receive
+/// must finish and the final bytes must be perfect regardless of how far the first
+/// attempt got. This guards the #1 regression risk across iroh-blobs version bumps.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "timing-sensitive; tune cancel delay on a real build before enabling in CI"]
 async fn resume_after_interrupt() {
     let work = tempfile::tempdir().unwrap();
     let send_data = tempfile::tempdir().unwrap();
@@ -124,36 +81,45 @@ async fn resume_after_interrupt() {
     let payload = make_payload(64 * 1024 * 1024);
     std::fs::write(&src, &payload).unwrap();
 
-    let sender = Core::start(CoreConfig::local_only(send_data.path()))
-        .await
-        .unwrap();
-    let receiver = Core::start(CoreConfig::local_only(recv_data.path()))
-        .await
-        .unwrap();
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
 
     let (_sid, mut ss) = sender.send(src).await.unwrap();
     let ticket = wait_ready(&mut ss).await;
 
-    // First attempt: cancel shortly after bytes begin to flow.
+    // First attempt: cancel deterministically once real bytes have landed.
     let out = work.path().join("out");
     let (rid, mut rs) = receiver.receive(ticket.clone(), out.clone()).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_millis(40), rs.next()).await;
-    receiver.cancel(rid).await;
+    let mut interrupted_at = 0u64;
     while let Some(ev) = rs.next().await {
-        if matches!(
-            ev,
-            Progress::Cancelled { .. } | Progress::Error { .. } | Progress::Done { .. }
-        ) {
-            break;
+        match ev {
+            Progress::Transferring { offset, .. } if offset > 0 => {
+                interrupted_at = offset;
+                receiver.cancel(rid).await;
+                break;
+            }
+            Progress::Done { .. } => break, // raced to completion; still correct
+            Progress::Error { message, .. } => panic!("first attempt error: {message}"),
+            _ => {}
         }
     }
+    drain_until_terminal(&mut rs).await;
 
-    // Second attempt: must finish using the partial data already in the store.
+    // Second attempt: must finish, reusing whatever partial is already in the store.
     let (_rid2, mut rs2) = receiver.receive(ticket, out.clone()).await.unwrap();
     wait_done(&mut rs2).await;
 
     let got = std::fs::read(out.join("big.bin")).unwrap();
-    assert_eq!(got, payload);
+    assert_eq!(
+        got.len(),
+        payload.len(),
+        "resumed file size must match source"
+    );
+    // Avoid dumping 64 MiB on failure: compare without assert_eq! formatting.
+    assert!(
+        got == payload,
+        "resumed file must be byte-perfect (first attempt reached {interrupted_at} bytes)"
+    );
 }
 
 /// Real-network smoke test of the SERVERLESS path (`Infra::Decentralized`: DHT
@@ -187,7 +153,7 @@ async fn roundtrip_serverless() {
     assert_eq!(std::fs::read(out.join("hello.bin")).unwrap(), payload);
 }
 
-/// The SENDER now sees live progress (via iroh-blobs provider events): when a
+/// The SENDER sees live progress (via iroh-blobs provider events): when a
 /// receiver fetches, the send stream emits PeerJoined → Transferring… → Done.
 #[tokio::test(flavor = "multi_thread")]
 async fn sender_sees_progress() {
@@ -199,12 +165,8 @@ async fn sender_sees_progress() {
     let payload = make_payload(3 * 1024 * 1024);
     std::fs::write(&src, &payload).unwrap();
 
-    let sender = Core::start(CoreConfig::local_only(send_data.path()))
-        .await
-        .unwrap();
-    let receiver = Core::start(CoreConfig::local_only(recv_data.path()))
-        .await
-        .unwrap();
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
 
     let (_sid, mut ss) = sender.send(src).await.unwrap();
     let ticket = wait_ready(&mut ss).await;
@@ -215,7 +177,7 @@ async fn sender_sees_progress() {
     tokio::spawn(async move { while rs.next().await.is_some() {} });
 
     // The sender stream should report a peer joining and the transfer completing.
-    let (peer, done) = tokio::time::timeout(Duration::from_secs(60), async {
+    let (peer, done) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         let (mut peer, mut done) = (false, false);
         while let Some(ev) = ss.next().await {
             match ev {
