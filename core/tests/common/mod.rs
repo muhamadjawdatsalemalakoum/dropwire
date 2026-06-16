@@ -55,6 +55,23 @@ pub async fn wait_done(stream: &mut ProgressStream) {
         .expect("timed out waiting for completion");
 }
 
+/// Recursively sum the byte size of every file under `dir` (0 if it's absent).
+/// Used to prove `inspect` does not download content into the receiver's store.
+pub fn dir_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                total += dir_size(&path);
+            } else if let Ok(meta) = std::fs::metadata(&path) {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
 /// Drain a stream until any terminal event (Done / Error / Cancelled).
 pub async fn drain_until_terminal(stream: &mut ProgressStream) {
     while let Some(ev) = stream.next().await {

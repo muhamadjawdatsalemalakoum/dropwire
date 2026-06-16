@@ -8,6 +8,7 @@ use iroh_blobs::api::blobs::{ExportMode, ExportOptions};
 use iroh_blobs::api::remote::GetProgressItem;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::request::get_hash_seq_and_sizes;
+use iroh_blobs::protocol::{ChunkRanges, GetRequest};
 use iroh_blobs::ticket::BlobTicket;
 use n0_future::StreamExt;
 use tokio::sync::mpsc;
@@ -16,7 +17,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::catalog::{Catalog, Status};
 use crate::error::{CoreError, Result};
-use crate::progress::{Direction, Progress, ProgressStream, Route, TransferId, TransferStats};
+use crate::progress::{
+    Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
+    TransferStats,
+};
 use crate::store::BLOBS_ALPN;
 use crate::Core;
 
@@ -58,6 +62,78 @@ impl Core {
         });
 
         Ok((id, ReceiverStream::new(rx)))
+    }
+
+    /// Connect to the sender and fetch ONLY the transfer's metadata — the file
+    /// names, per-file sizes, count, total, and connection route — *without*
+    /// downloading any file content. This is the "preview before you accept"
+    /// step: the receiver sees exactly what's being sent and decides before a
+    /// single payload byte lands.
+    ///
+    /// Cheap and content-free: it fetches the collection's HashSeq (with each
+    /// child's verified size) and the small metadata blob holding the names. The
+    /// names and sizes are committed by the ticket's BLAKE3 hash, so they cannot
+    /// be faked. Requires the sender to be online (it is a live connection).
+    pub async fn inspect(&self, ticket: String) -> Result<TransferPreview> {
+        let parsed: BlobTicket = ticket
+            .parse()
+            .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
+        let endpoint = self.inner.router.endpoint();
+        let hash = parsed.hash();
+
+        let conn = endpoint
+            .connect(parsed.addr().clone(), BLOBS_ALPN)
+            .await
+            .context("connect to sender")?;
+
+        let store = &self.inner.store;
+
+        // Per-file verified sizes (last chunk only) — no bodies. The collection's
+        // HashSeq is [metadata, file0, file1, …], so sizes[0] is the metadata blob
+        // and sizes[1..] are the file sizes.
+        let (_hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &hash, 1024 * 1024 * 32, None)
+            .await
+            .context("fetch sizes")?;
+        let route = detect_route(&conn);
+
+        // Fetch ONLY the collection structure into the store — the HashSeq root and
+        // the names/metadata blob (offset 0 + child 0), never any file content — then
+        // read the names locally. (A standalone get of the metadata blob by hash is
+        // not served, since it is reachable only through the HashSeq.)
+        let request = GetRequest::builder()
+            .root(ChunkRanges::all())
+            .child(0, ChunkRanges::all())
+            .build(hash);
+        let mut stream = store.remote().execute_get(conn, request).stream();
+        while let Some(item) = stream.next().await {
+            match item {
+                GetProgressItem::Done(_) => break,
+                GetProgressItem::Error(e) => {
+                    return Err(CoreError::Other(anyhow!("fetch metadata: {e}")))
+                }
+                GetProgressItem::Progress(_) => {}
+            }
+        }
+
+        let collection = Collection::load(hash, store.as_ref())
+            .await
+            .context("load collection metadata")?;
+        let files: Vec<FilePreview> = collection
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _hash))| FilePreview {
+                name: name.clone(),
+                size: sizes.get(i + 1).copied().unwrap_or(0),
+            })
+            .collect();
+        let total_bytes = files.iter().map(|f| f.size).sum();
+
+        Ok(TransferPreview {
+            file_count: files.len(),
+            total_bytes,
+            files,
+            route,
+        })
     }
 }
 

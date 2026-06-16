@@ -37,7 +37,10 @@ use tokio_util::sync::CancellationToken;
 pub use catalog::{Status, TransferRecord};
 pub use config::{CoreConfig, Infra};
 pub use error::{CoreError, Result};
-pub use progress::{Direction, Progress, ProgressStream, Route, TransferId, TransferStats};
+pub use progress::{
+    Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
+    TransferStats,
+};
 
 use catalog::Catalog;
 

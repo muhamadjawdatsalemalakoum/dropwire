@@ -64,6 +64,27 @@ pub struct TransferStats {
     pub seconds: f64,
 }
 
+/// One file in a [`TransferPreview`]: its name and byte size. Both are committed
+/// by the ticket's BLAKE3 hash, so they are facts the sender cannot fake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePreview {
+    pub name: String,
+    pub size: u64,
+}
+
+/// What a transfer contains, learned from the sender *before* downloading any
+/// file content: the file list, count, total size, and the connection route.
+/// This is what powers "preview before you accept".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferPreview {
+    pub files: Vec<FilePreview>,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub route: Route,
+}
+
 /// Progress events emitted on a transfer's [`ProgressStream`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
