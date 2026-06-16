@@ -1,0 +1,21 @@
+# Deploy on the DNS/discovery host.
+#   docker compose up -d --build
+services:
+  dns:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        IROH_REF: v1.0.0
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"   # DNS
+      - "53:53/tcp"   # DNS (TCP fallback / large responses)
+      - "80:80"       # ACME http-01 challenge (LetsEncrypt)
+      - "443:443"     # HTTPS: pkarr publish/resolve + DNS-over-HTTPS
+    volumes:
+      - ./config.toml:/config/config.toml:ro
+      - dns-data:/data
+
+volumes:
+  dns-data:

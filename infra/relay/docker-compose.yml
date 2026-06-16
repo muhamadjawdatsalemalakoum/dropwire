@@ -1,0 +1,24 @@
+# Deploy on the relay host. Copy ../.env.example to ./.env and set the token first.
+#   docker compose up -d --build
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        IROH_REF: v1.0.0
+    restart: unless-stopped
+    environment:
+      # Locks the relay to the Dropwire app (must match the app's embedded token).
+      - IROH_RELAY_ACCESS_TOKEN=${IROH_RELAY_ACCESS_TOKEN:?set IROH_RELAY_ACCESS_TOKEN in .env}
+    ports:
+      - "80:80"          # ACME http-01 challenge (LetsEncrypt)
+      - "443:443"        # relay HTTPS / WebSocket
+      - "9889:9889/udp"  # QUIC address discovery
+      - "127.0.0.1:9090:9090"  # metrics (localhost only)
+    volumes:
+      - ./relay.toml:/config/relay.toml:ro
+      - relay-data:/data
+
+volumes:
+  relay-data:

@@ -1,0 +1,30 @@
+# Dropwire self-hosted relay config (iroh-relay, built with --features server).
+# See ARCHITECTURE.md §6.1. Fields map 1:1 to the iroh-relay `Config` struct.
+# VERIFY (ARCHITECTURE.md §13.7): confirm the [limits] table shape against the
+# pinned iroh-relay version before relying on the caps.
+
+enable_relay = true
+enable_quic_addr_discovery = true
+enable_metrics = true
+# metrics_bind_addr = "0.0.0.0:9090"   # restrict to localhost/VPN in production
+
+[tls]
+hostname  = ["relay.dropwire.app"]      # <-- A record must point here
+cert_mode = "LetsEncrypt"               # Manual | LetsEncrypt | Reloading
+prod_tls  = true                        # false = LetsEncrypt staging CA (for testing)
+contact   = "security@dropwire.app"
+cert_dir  = "/data/certs"
+
+# Access control: lock the relay to the Dropwire app.
+# Preferred: set IROH_RELAY_ACCESS_TOKEN in .env (env overrides this file).
+# To pin it here instead, uncomment:
+# access.shared_token = ["REPLACE_WITH_LONG_RANDOM_SECRET"]
+
+# Per-client receive-bandwidth cap (token bucket). Tune from your measured
+# direct-vs-relay rate; too low throttles legitimate large transfers.
+[limits]
+accept_conn_limit = 100.0               # accepts/sec
+accept_conn_burst = 200
+[limits.client.rx]
+bytes_per_second = 2097152              # ~2 MiB/s/client
+max_burst_bytes  = 8388608             # 8 MiB burst
