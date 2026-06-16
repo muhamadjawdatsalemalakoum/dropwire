@@ -60,6 +60,12 @@ pub(crate) struct Inner {
     /// In-flight sends, keyed by content hash (hex), so provider events can be
     /// routed to the right transfer's progress stream.
     pub(crate) serving: Mutex<HashMap<String, mpsc::UnboundedSender<send::ProviderEvent>>>,
+    /// Live connections: `connection_id` → the peer's `EndpointId`. Populated from
+    /// provider connect events so a get request can be attributed to a device.
+    pub(crate) conns: Mutex<HashMap<u64, iroh::EndpointId>>,
+    /// One-to-one binding: content hash (hex) → the first approved receiver's
+    /// `EndpointId`. The ticket is served to that one device; others are denied.
+    pub(crate) bound: Mutex<HashMap<String, iroh::EndpointId>>,
 }
 
 impl Core {
@@ -80,7 +86,9 @@ impl Core {
             ev_tx,
             EventMask {
                 connected: ConnectMode::Notify,
-                get: RequestMode::NotifyLog,
+                // InterceptLog = we can allow/deny each request before bytes flow
+                // (one-to-one enforcement) AND still get per-request progress.
+                get: RequestMode::InterceptLog,
                 ..EventMask::DEFAULT
             },
         );
@@ -99,6 +107,8 @@ impl Core {
             catalog: Mutex::new(catalog),
             active: Mutex::new(HashMap::new()),
             serving: Mutex::new(HashMap::new()),
+            conns: Mutex::new(HashMap::new()),
+            bound: Mutex::new(HashMap::new()),
         });
         let core = Core { inner };
         tokio::spawn(send::consume_provider_events(core.clone(), ev_rx));

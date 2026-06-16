@@ -6,7 +6,7 @@ use anyhow::Context;
 use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
 use iroh_blobs::api::TempTag;
 use iroh_blobs::format::collection::Collection;
-use iroh_blobs::provider::events::{ProviderMessage, RequestUpdate};
+use iroh_blobs::provider::events::{AbortReason, ProviderMessage, RequestUpdate};
 use iroh_blobs::ticket::BlobTicket;
 use iroh_blobs::{BlobFormat, Hash};
 use tokio::sync::mpsc;
@@ -171,6 +171,7 @@ async fn run_send(
     }
 
     core.inner.serving.lock().await.remove(&hash_key);
+    core.inner.bound.lock().await.remove(&hash_key);
     drop(collection_tag);
     drop(tags);
     if !completed {
@@ -238,45 +239,92 @@ pub(crate) enum ProviderEvent {
 /// served-request's progress to the matching in-flight `send` (by content hash).
 pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<ProviderMessage>) {
     while let Some(msg) = rx.recv().await {
-        // A peer requested a blob by hash — correlate to a send we registered.
-        if let ProviderMessage::GetRequestReceivedNotify(m) = msg {
-            let hash_key = m.request.hash.to_string();
-            let sub = core.inner.serving.lock().await.get(&hash_key).cloned();
-            if let Some(tx) = sub {
-                let _ = tx.send(ProviderEvent::PeerJoined);
-                let mut stream = m.rx; // irpc receiver of per-request RequestUpdate
-                tokio::spawn(async move {
-                    let mut total = 0u64;
-                    // Throttle UI progress to ~12/s (provider progress is per-chunk).
-                    let mut last =
-                        std::time::Instant::now() - std::time::Duration::from_millis(200);
-                    while let Ok(Some(update)) = stream.recv().await {
-                        match update {
-                            RequestUpdate::Started(s) => total = s.size,
-                            RequestUpdate::Progress(p) => {
-                                if last.elapsed() >= std::time::Duration::from_millis(80) {
-                                    last = std::time::Instant::now();
-                                    let _ = tx.send(ProviderEvent::Progress {
-                                        offset: p.end_offset,
-                                        total,
+        match msg {
+            // Learn which device each connection belongs to, for one-to-one gating.
+            ProviderMessage::ClientConnectedNotify(m) => {
+                if let Some(eid) = m.endpoint_id {
+                    core.inner.conns.lock().await.insert(m.connection_id, eid);
+                }
+            }
+            ProviderMessage::ConnectionClosed(m) => {
+                core.inner.conns.lock().await.remove(&m.connection_id);
+            }
+            // A peer requested our content by hash. Gate it (one-to-one), then, if
+            // allowed, route per-request progress to the matching send.
+            ProviderMessage::GetRequestReceived(m) => {
+                let hash_key = m.request.hash.to_string();
+                let conn_id = m.connection_id;
+                let endpoint = core.inner.conns.lock().await.get(&conn_id).copied();
+                if !approve_one_to_one(&core, &hash_key, endpoint).await {
+                    let _ = m.tx.send(Err(AbortReason::Permission)).await;
+                    continue;
+                }
+                let _ = m.tx.send(Ok(())).await;
+
+                let sub = core.inner.serving.lock().await.get(&hash_key).cloned();
+                if let Some(tx) = sub {
+                    let _ = tx.send(ProviderEvent::PeerJoined);
+                    let mut stream = m.rx; // irpc receiver of per-request RequestUpdate
+                    tokio::spawn(async move {
+                        let mut total = 0u64;
+                        // Throttle UI progress to ~12/s (provider progress is per-chunk).
+                        let mut last =
+                            std::time::Instant::now() - std::time::Duration::from_millis(200);
+                        while let Ok(Some(update)) = stream.recv().await {
+                            match update {
+                                RequestUpdate::Started(s) => total = s.size,
+                                RequestUpdate::Progress(p) => {
+                                    if last.elapsed() >= std::time::Duration::from_millis(80) {
+                                        last = std::time::Instant::now();
+                                        let _ = tx.send(ProviderEvent::Progress {
+                                            offset: p.end_offset,
+                                            total,
+                                        });
+                                    }
+                                }
+                                RequestUpdate::Completed(c) => {
+                                    let _ = tx.send(ProviderEvent::Done {
+                                        bytes: c.stats.payload_bytes_sent,
+                                        seconds: c.stats.duration.as_secs_f64(),
                                     });
+                                    break;
+                                }
+                                RequestUpdate::Aborted(_) => {
+                                    let _ = tx.send(ProviderEvent::Aborted);
+                                    break;
                                 }
                             }
-                            RequestUpdate::Completed(c) => {
-                                let _ = tx.send(ProviderEvent::Done {
-                                    bytes: c.stats.payload_bytes_sent,
-                                    seconds: c.stats.duration.as_secs_f64(),
-                                });
-                                break;
-                            }
-                            RequestUpdate::Aborted(_) => {
-                                let _ = tx.send(ProviderEvent::Aborted);
-                                break;
-                            }
                         }
-                    }
-                });
+                    });
+                }
             }
+            _ => {}
         }
+    }
+}
+
+/// One-to-one enforcement: a ticket is served to the FIRST device that requests it
+/// (whether it peeks via `inspect` or downloads); the same device may reconnect
+/// (preview → accept, or resume), but a different device is denied. Defaults to
+/// ALLOW whenever the peer is unknown or we are not the sender for this hash, so a
+/// normal single-receiver transfer is never blocked or hung.
+async fn approve_one_to_one(
+    core: &Core,
+    hash_key: &str,
+    endpoint: Option<iroh::EndpointId>,
+) -> bool {
+    let Some(eid) = endpoint else {
+        return true;
+    };
+    if !core.inner.serving.lock().await.contains_key(hash_key) {
+        return true;
+    }
+    let mut bound = core.inner.bound.lock().await;
+    match bound.get(hash_key) {
+        None => {
+            bound.insert(hash_key.to_string(), eid);
+            true
+        }
+        Some(existing) => *existing == eid,
     }
 }
