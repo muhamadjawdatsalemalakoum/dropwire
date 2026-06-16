@@ -224,6 +224,7 @@ async fn run_receive(
             ticket_str,
             hash.to_string(),
             Some(dest.to_string_lossy().to_string()),
+            None,
             total,
         ));
     }

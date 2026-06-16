@@ -132,6 +132,7 @@ async fn run_send(
             ticket_str.clone(),
             hash_key.clone(),
             None,
+            Some(path.to_string_lossy().to_string()),
             total,
         ));
     }

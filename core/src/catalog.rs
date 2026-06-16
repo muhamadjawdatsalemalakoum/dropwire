@@ -37,6 +37,9 @@ pub struct TransferRecord {
     pub hash: String,
     /// Destination directory for receives.
     pub dest: Option<String>,
+    /// Source path for sends (lets a send be re-shared from history).
+    #[serde(default)]
+    pub source: Option<String>,
     pub total_bytes: u64,
     pub transferred: u64,
     pub status: Status,
@@ -118,6 +121,7 @@ impl Catalog {
     }
 
     /// Build a fresh record stamped with the current time.
+    #[allow(clippy::too_many_arguments)] // a flat record constructor; a struct would not aid clarity
     pub fn new_record(
         id: TransferId,
         direction: Direction,
@@ -125,6 +129,7 @@ impl Catalog {
         ticket: String,
         hash: String,
         dest: Option<String>,
+        source: Option<String>,
         total_bytes: u64,
     ) -> TransferRecord {
         let now = now_secs();
@@ -135,6 +140,7 @@ impl Catalog {
             ticket,
             hash,
             dest,
+            source,
             total_bytes,
             transferred: 0,
             status: Status::Active,
