@@ -63,3 +63,56 @@
 
   syncToggle();
 })();
+
+/* =========================================================================
+   Lightbox — tap a screenshot to view it full-size. Native <dialog> gives us
+   the focus trap, Esc-to-close, and backdrop for free. Progressive: if the
+   browser lacks <dialog>.showModal, the screenshots simply stay inline.
+   ========================================================================= */
+(function () {
+  "use strict";
+  var lb = document.getElementById("lightbox");
+  if (!lb || typeof lb.showModal !== "function") return;
+  var lbImg = lb.querySelector(".lightbox-img");
+  var closeBtn = lb.querySelector(".lightbox-close");
+  var shots = document.querySelectorAll(
+    "#see .shot-media img, #see .install-pair img"
+  );
+  if (!shots.length) return;
+
+  function openShot(img) {
+    lbImg.src = img.currentSrc || img.src;
+    lbImg.alt = img.alt || "";
+    lb.showModal();
+    document.documentElement.style.overflow = "hidden"; // lock scroll
+    closeBtn.focus();
+  }
+
+  Array.prototype.forEach.call(shots, function (img) {
+    img.setAttribute("role", "button");
+    img.setAttribute("tabindex", "0");
+    img.setAttribute("aria-label", "View larger: " + (img.alt || "screenshot"));
+    img.addEventListener("click", function () {
+      openShot(img);
+    });
+    img.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openShot(img);
+      }
+    });
+  });
+
+  closeBtn.addEventListener("click", function () {
+    lb.close();
+  });
+  // Click the dim area (or the image itself) to dismiss.
+  lb.addEventListener("click", function (e) {
+    if (e.target === lb || e.target === lbImg) lb.close();
+  });
+  // Fires on Esc (native) and on close() — restore scroll + free the image.
+  lb.addEventListener("close", function () {
+    document.documentElement.style.overflow = "";
+    lbImg.removeAttribute("src");
+  });
+})();
