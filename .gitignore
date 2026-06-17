@@ -40,6 +40,9 @@ www/preview.html
 # Local Claude Code preview config (dev-only)
 .claude/launch.json
 
+# Raw on-device screenshots (full-size originals; optimized copies live in www/screenshots/)
+live screnshots taken/
+
 # Logs / temp
 *.log
 tmp/
