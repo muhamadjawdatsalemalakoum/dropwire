@@ -16,6 +16,7 @@
   --accent-strong: #a8d616;
   --accent-soft: #eef7c9;
   --accent-contrast: #0e1116;
+  --link: #4f6b00;
 
   /* Light theme surfaces + ink (faint warm-green undertone) */
   --bg: #f7f9f5;
@@ -24,7 +25,7 @@
   --surface-border: #dde2d8;
   --ink: #0e1116;
   --ink-soft: #5b6470;
-  --ink-faint: #8a93a0;
+  --ink-faint: #62696f;
 
   --ring: rgba(168, 214, 22, 0.45);
   --shadow-sm: 0 1px 2px rgba(28, 29, 34, 0.06), 0 1px 3px rgba(28, 29, 34, 0.05);
@@ -52,6 +53,7 @@
     --accent-strong: #b6e830;
     --accent-soft: #21280a;
     --accent-contrast: #0e1116;
+    --link: var(--accent);
 
     --bg: #0e1116;
     --bg-elevated: #171b22;
@@ -74,6 +76,7 @@
   --accent-strong: #b6e830;
   --accent-soft: #21280a;
   --accent-contrast: #0e1116;
+  --link: var(--accent);
 
   --bg: #0e1116;
   --bg-elevated: #171b22;
@@ -104,6 +107,7 @@ html {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+  .packet { animation: none !important; opacity: 0; }
 }
 
 body {
@@ -127,7 +131,7 @@ h1, h2, h3, h4 {
 p { margin: 0 0 1rem; }
 
 a {
-  color: var(--accent-strong);
+  color: var(--link);
   text-decoration: none;
 }
 a:hover { text-decoration: underline; }
@@ -139,6 +143,12 @@ img, svg { max-width: 100%; }
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* Skip-link lands focus on <main> for keyboard users without a visible ring */
+#main:focus { outline: none; }
+
+/* Offset in-page anchors so the sticky header doesn't cover section tops */
+:where(main[id], section[id]) { scroll-margin-top: 80px; }
 
 /* --------------------------- Layout helpers --------------------------- */
 .container {
@@ -250,7 +260,7 @@ img, svg { max-width: 100%; }
   font-weight: 500;
   font-size: 0.975rem;
 }
-.site-nav a:hover { color: var(--accent-strong); text-decoration: none; }
+.site-nav a:hover { color: var(--link); text-decoration: none; }
 .nav-github {
   padding: 0.4rem 0.85rem;
   border: 1.5px solid var(--surface-border);
@@ -338,7 +348,7 @@ img, svg { max-width: 100%; }
   font-size: clamp(2.3rem, 6.5vw, 4rem);
   margin-bottom: 1.1rem;
 }
-.accent-text { color: var(--accent-strong); }
+.accent-text { color: var(--link); }
 
 .subhead {
   font-size: clamp(1.05rem, 2.4vw, 1.3rem);
@@ -359,7 +369,7 @@ img, svg { max-width: 100%; }
   color: var(--ink-faint);
 }
 .cta-note a { color: var(--ink-soft); text-decoration: underline; }
-.cta-note a:hover { color: var(--accent-strong); }
+.cta-note a:hover { color: var(--link); }
 
 /* Hero transfer illustration */
 .hero-figure {
@@ -431,7 +441,7 @@ img, svg { max-width: 100%; }
 }
 .badge-direct {
   background: var(--accent-soft);
-  color: var(--accent-strong);
+  color: var(--link);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .wire-track {
@@ -581,7 +591,7 @@ img, svg { max-width: 100%; }
   list-style: none;
 }
 .faq-item summary::-webkit-details-marker { display: none; }
-.faq-item summary:hover { color: var(--accent-strong); }
+.faq-item summary:hover { color: var(--link); }
 .chevron {
   flex: none;
   width: 11px;
@@ -638,7 +648,7 @@ img, svg { max-width: 100%; }
   gap: clamp(2rem, 6vw, 4rem);
 }
 .footer-col { display: flex; flex-direction: column; gap: 0.55rem; }
-.footer-col h4 {
+.footer-col h3 {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -649,7 +659,7 @@ img, svg { max-width: 100%; }
   color: var(--ink-soft);
   font-size: 0.95rem;
 }
-.footer-col a:hover { color: var(--accent-strong); }
+.footer-col a:hover { color: var(--link); }
 
 .footer-bottom {
   border-top: 1px solid var(--surface-border);
@@ -661,7 +671,7 @@ img, svg { max-width: 100%; }
   justify-content: space-between;
 }
 .footer-bottom p { margin: 0; font-size: 0.9rem; color: var(--ink-faint); }
-.made-with a { color: var(--accent-strong); font-weight: 600; }
+.made-with a { color: var(--link); font-weight: 600; }
 .privacy-note { max-width: 480px; }
 
 /* --------------------------- Responsive ------------------------------- */
@@ -671,7 +681,7 @@ img, svg { max-width: 100%; }
 }
 
 @media (max-width: 720px) {
-  .site-nav { display: none; }
+  .site-nav a:not(.nav-github) { display: none; }
   .transfer-card {
     grid-template-columns: 1fr;
     text-align: left;

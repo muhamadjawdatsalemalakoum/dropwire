@@ -11,6 +11,17 @@
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Dropwire — Private, direct file transfer" />
   <meta property="og:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer. No accounts. No servers holding your files." />
+  <meta property="og:url" content="https://dropwire.app/" />
+  <meta property="og:image" content="https://dropwire.app/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Dropwire — Private, direct file transfer" />
+  <meta name="twitter:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer. No accounts. No servers holding your files." />
+  <meta name="twitter:image" content="https://dropwire.app/og.png" />
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230E1116'/%3E%3Cpath d='M17 36h11l4-8 4 8h11' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17' cy='36' r='6' fill='%23D2FF3A'/%3E%3Ccircle cx='47' cy='36' r='5' fill='%23F2F5EF'/%3E%3C/svg%3E" />
+  <meta name="theme-color" id="meta-theme-color" content="#f7f9f5" />
 
   <!-- Prevent theme flash: set theme before first paint -->
   <script>
@@ -19,14 +30,13 @@
         var saved = localStorage.getItem("dropwire-theme");
         if (saved === "light" || saved === "dark") {
           document.documentElement.setAttribute("data-theme", saved);
+          var m = document.getElementById("meta-theme-color");
+          if (m) m.content = saved === "dark" ? "#0e1116" : "#f7f9f5";
         }
       } catch (e) {}
     })();
   </script>
 
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230E1116'/%3E%3Cpath d='M17 36h11l4-8 4 8h11' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17' cy='36' r='6' fill='%23D2FF3A'/%3E%3Ccircle cx='47' cy='36' r='5' fill='%23F2F5EF'/%3E%3C/svg%3E" />
-  <meta name="theme-color" content="#f7f9f5" media="(prefers-color-scheme: light)" />
-  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -34,7 +44,7 @@
 
   <header class="site-header">
     <div class="container header-inner">
-      <a class="brand" href="#top" aria-label="Dropwire home">
+      <a class="brand" href="#main" aria-label="Dropwire home">
         <span class="brand-mark" aria-hidden="true">
           <!-- Brand mark (branding/icon.svg): two nodes + a live wire with a spark. -->
           <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">
@@ -75,8 +85,7 @@
     </div>
   </header>
 
-  <main id="main">
-    <a id="top"></a>
+  <main id="main" tabindex="-1">
 
     <!-- ======================= HERO ======================= -->
     <section class="hero" aria-labelledby="hero-title">
@@ -102,7 +111,7 @@
               <path d="M12 3v10m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-            Download for Windows
+            Get Dropwire
           </a>
           <a class="btn btn-secondary" href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -119,9 +128,7 @@
         </div>
 
         <p class="cta-note">
-          Also available for
-          <a href="#download">macOS</a> and <a href="#download">Linux</a>.
-          Free forever &mdash; no trial, no paywall.
+          Free forever &mdash; no trial, no paywall. Prebuilt apps for Windows, macOS &amp; Linux are coming; build from source today.
         </p>
       </div>
 
@@ -134,7 +141,7 @@
               <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 2h8l4 4v16H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 2v4h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
               project-files.zip
             </div>
-            <div class="code-pill">share code: <strong>brave-river-42</strong></div>
+            <div class="code-pill">share code: <strong>blob9af2&hellip;q7xk</strong></div>
           </div>
 
           <div class="wire">
@@ -174,8 +181,8 @@
           </li>
           <li class="step">
             <div class="step-num" aria-hidden="true">2</div>
-            <h3>Share a short code or QR</h3>
-            <p>Dropwire gives you a short, speakable code and a QR. Send it however you like &mdash; chat, in person, a sticky note.</p>
+            <h3>Share the code or QR</h3>
+            <p>Dropwire gives you a one-time transfer code and a matching QR. Copy the code into any chat, or have them scan the QR &mdash; whichever is easier.</p>
           </li>
           <li class="step">
             <div class="step-num" aria-hidden="true">3</div>
@@ -213,10 +220,26 @@
 
           <article class="card">
             <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5 20c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            </div>
+            <h3>One code, one recipient</h3>
+            <p>A code isn&rsquo;t a public link. It&rsquo;s served to the first device that connects &mdash; everyone after that is turned away. Your file goes to the person you meant, not whoever forwards the code.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="24" height="24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
             </div>
             <h3>See before you accept</h3>
-            <p>The receiver previews exactly what&rsquo;s coming &mdash; names, sizes, and count &mdash; and approves before a single byte downloads. Both sides see when the other device connects, live.</p>
+            <p>The receiver previews exactly what&rsquo;s coming &mdash; names, sizes, and count &mdash; and approves before a single byte downloads. Not what you expected? Decline in one tap &mdash; the sender is told right away. Both sides see when the other device connects, live.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path d="M4 7h10M4 12h10M4 17h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M17 8.5l2 2 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Take only what you want</h3>
+            <p>Sending a folder? The receiver can untick anything they don&rsquo;t need and download just the files they choose &mdash; the rest is never transferred.</p>
           </article>
 
           <article class="card">
@@ -224,7 +247,7 @@
               <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="6" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><line x1="8.5" y1="12" x2="15.5" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
             </div>
             <h3>Direct peer-to-peer</h3>
-            <p>Your bytes go straight from one device to the other. No middle server stores or even sees your files in the clear.</p>
+            <p>Your bytes go straight from one device to the other. Devices find each other over the public Mainline DHT and n0&rsquo;s free relay is only a fallback &mdash; there are no servers we run, and no middle server stores or sees your files in the clear.</p>
           </article>
 
           <article class="card">
@@ -237,10 +260,26 @@
 
           <article class="card">
             <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><rect x="3" y="4" width="18" height="4" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="3" y="10" width="18" height="4" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="3" y="16" width="18" height="4" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+            </div>
+            <h3>Many at once</h3>
+            <p>Send and receive several transfers at the same time. Each gets its own live card with its own progress, route badge, and controls.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="24" height="24"><path d="M9 18c-4 1-4-2-6-2.5M15 21v-3.5c0-1 .2-1.6-.5-2.2 2.3-.25 4.5-1.1 4.5-5a3.9 3.9 0 0 0-1-2.7 3.6 3.6 0 0 0-.1-2.7s-.9-.25-2.9 1.05a9 9 0 0 0-4 0C9 3.4 8.1 3.65 8.1 3.65a3.6 3.6 0 0 0-.1 2.7A3.9 3.9 0 0 0 7 9c0 3.9 2.2 4.75 4.5 5-.5.45-.5 1.1-.5 2.2V21" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
             <h3>Open source</h3>
             <p>Every line is public. Read it, audit it, build it yourself, or send a patch. No black boxes &mdash; trust by inspection.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 4v4h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8v4l3 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>History that stays on your device</h3>
+            <p>Past transfers are listed only on your machine &mdash; never in any cloud. Resend a file in a click, or pick up an interrupted download right where it stopped.</p>
           </article>
 
           <article class="card">
@@ -282,8 +321,8 @@
             <div class="faq-body">
               <p>Transfers are end-to-end encrypted using QUIC over TLS 1.3. The connection is authenticated and encrypted
               between the two devices, so only the sender and receiver can read the contents. You don&rsquo;t create an
-              account, and there&rsquo;s no profile or contact list to harvest. Treat the share code like a password:
-              whoever has it can receive that transfer, so share it only with the person you mean to.</p>
+              account, and there&rsquo;s no profile or contact list to harvest. Treat the share code like a one-time key:
+              it&rsquo;s served to the first device that connects, and others are refused &mdash; so share it with the person you mean to.</p>
             </div>
           </details>
 
@@ -299,6 +338,18 @@
               already-encrypted data &mdash; it <strong>cannot read your files</strong>,
               and it doesn&rsquo;t store them. You&rsquo;ll see a clear &ldquo;direct&rdquo; or &ldquo;relayed&rdquo;
               badge so you always know how a transfer is travelling.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>What if the sender is offline or the code has expired?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>You won&rsquo;t be left waiting. If the sender isn&rsquo;t online or the code is no longer being shared,
+              Dropwire tells you clearly instead of spinning forever &mdash; so you know to ask for a fresh code rather
+              than wonder if it&rsquo;s stuck.</p>
             </div>
           </details>
 
@@ -332,11 +383,9 @@
     <section id="download" class="section download" aria-labelledby="download-title">
       <div class="container container-narrow download-inner">
         <h2 id="download-title">Get Dropwire</h2>
-        <p class="section-sub">Free, open source, and ready on every desktop. Pick your platform.</p>
+        <p class="section-sub">Free and open source. Prebuilt installers are on the way &mdash; for now, build it from source.</p>
         <div class="download-buttons">
-          <a class="btn btn-primary" href="#download">Download for Windows</a>
-          <a class="btn btn-secondary" href="#download">Download for macOS</a>
-          <a class="btn btn-secondary" href="#download">Download for Linux</a>
+          <a class="btn btn-primary" href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">Build from source</a>
         </div>
         <p class="cta-note">Prefer to build it yourself? Grab the source on
           <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">GitHub</a>.</p>
@@ -348,7 +397,7 @@
   <footer class="site-footer">
     <div class="container footer-inner">
       <div class="footer-brand">
-        <a class="brand" href="#top" aria-label="Dropwire home">
+        <a class="brand" href="#main" aria-label="Dropwire home">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 64 64" width="24" height="24" aria-hidden="true">
               <rect width="64" height="64" rx="14" fill="#0e1116" />
@@ -364,13 +413,13 @@
 
       <nav class="footer-links" aria-label="Footer">
         <div class="footer-col">
-          <h4>Project</h4>
+          <h3>Project</h3>
           <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">GitHub</a>
           <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire#readme" rel="noopener">Docs</a>
           <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire#license" rel="noopener">License</a>
         </div>
         <div class="footer-col">
-          <h4>Learn</h4>
+          <h3>Learn</h3>
           <a href="#how">How it works</a>
           <a href="#why">Why Dropwire</a>
           <a href="#faq">FAQ</a>

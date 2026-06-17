@@ -31,6 +31,8 @@
       isDark ? "Switch to light theme" : "Switch to dark theme"
     );
     toggle.title = isDark ? "Switch to light theme" : "Switch to dark theme";
+    var m = document.getElementById("meta-theme-color");
+    if (m) m.content = effectiveTheme() === "dark" ? "#0e1116" : "#f7f9f5";
   }
 
   toggle.addEventListener("click", function () {
