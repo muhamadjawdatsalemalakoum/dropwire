@@ -217,6 +217,27 @@ fn reveal_path(path: String) {
     let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
 }
 
+/// Open a web link in the user's default browser. Only http(s)/mailto are allowed;
+/// the URLs come from the app's own UI (credits, source, profile).
+#[tauri::command]
+fn open_external(url: String) {
+    if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(&url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+}
+
+/// The app version (from the crate/workspace version, kept in sync with tauri.conf).
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -248,7 +269,9 @@ pub fn run() {
             start_receive_selected,
             send_control,
             cancel_transfer,
-            reveal_path
+            reveal_path,
+            open_external,
+            app_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dropwire");

@@ -428,6 +428,13 @@ if ($('#copy-id')) $('#copy-id').addEventListener('click', () => {
   }
 });
 if ($('#change-folder')) $('#change-folder').addEventListener('click', async () => { const dir = await invoke('pick_dest_dir').catch(() => null); if (dir) { localStorage.setItem('dropwire-default-dir', dir); const l = $('#default-folder-label'); l.textContent = dir; l.title = dir; } });
+// External links (credit + About): open in the real browser, never inside the webview.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('.js-ext');
+  if (!a) return;
+  e.preventDefault();
+  invoke('open_external', { url: a.dataset.url }).catch(() => {});
+});
 
 /* ------------------------------- HISTORY ------------------------------- */
 function histGlyph(dir) {
@@ -488,6 +495,7 @@ if (HAS_TAURI && TAURI.webview && TAURI.webview.getCurrentWebview) {
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => moveIndicator($('.nav-item.is-active')));
   const dd = localStorage.getItem('dropwire-default-dir'); if (dd) { const l = $('#default-folder-label'); l.textContent = dd; l.title = dd; }
   try { DEFAULT_DEST = await invoke('default_dest_dir'); } catch (_) {}
+  try { const v = await invoke('app_version'); if (v) $('#app-version').textContent = 'v' + v; } catch (_) {}
   try { const eid = await invoke('my_endpoint_id'); const el = $('#endpoint-id'); el.textContent = eid; el.title = eid; }
   catch (_) { $('#endpoint-id').textContent = HAS_TAURI ? '(starting…)' : '(preview — run inside the app)'; }
 })();

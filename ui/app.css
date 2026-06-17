@@ -110,7 +110,14 @@ a{color:var(--wire); text-underline-offset:2px}
   box-shadow:0 0 8px var(--wire-glow); animation:breathe 3s ease-in-out infinite}
 
 /* --------------------------------- main ---------------------------------- */
-.main{overflow-y:auto; padding:32px 40px}
+.main{overflow-y:auto; padding:32px 40px 48px}
+/* persistent author/source credit — pinned bottom-right, unobtrusive, click-through gaps */
+.app-credit{position:fixed; right:14px; bottom:10px; z-index:30; display:flex; align-items:center; gap:8px;
+  font-size:11px; color:var(--text-faint); pointer-events:none}
+.app-credit > *{pointer-events:auto}
+.app-credit a{display:inline-flex; align-items:center; color:var(--text-faint);
+  transition:color var(--dur-1) var(--ease-out)}
+.app-credit a:hover{color:var(--wire)}
 .view{display:none; max-width:640px; margin:0 auto}
 .view.is-active{display:block}
 .view-head h1{font-family:var(--font-display); font-size:28px; font-weight:600; letter-spacing:-.8px;
@@ -254,6 +261,8 @@ a{color:var(--wire); text-underline-offset:2px}
 .mono{font-family:var(--font-mono); font-size:13px; word-break:break-all; user-select:text; color:var(--text-muted)}
 .setting-control{display:flex; align-items:center; gap:8px; max-width:62%; justify-content:flex-end}
 .setting-control .val{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.setting a{text-decoration:none}
+.setting a:hover{color:var(--wire); text-decoration:underline}
 .btn-quiet.sm,.btn-ghost.sm{height:30px; padding:0 12px; font-size:13px}
 .seg{display:inline-flex; background:var(--surface-2); border-radius:var(--r-2); padding:2px; gap:2px}
 .seg-btn{height:28px; padding:0 14px; border:0; background:transparent; color:var(--text-muted); font-size:13px; font-weight:500;
