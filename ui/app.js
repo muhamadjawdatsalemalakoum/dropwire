@@ -57,7 +57,19 @@ $$('.nav-item').forEach((b) => b.addEventListener('click', () => switchView(b.da
 function applyTheme(mode) {
   if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', mode);
-  $$('.seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.themeSet === mode));
+  $$('.seg-btn').forEach((b) => {
+    const on = b.dataset.themeSet === mode;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  syncThemeToggleLabel();
+}
+// Keep the rail theme-toggle's label describing the action it will perform.
+function syncThemeToggleLabel() {
+  const attr = document.documentElement.getAttribute('data-theme');
+  const isDark = attr === 'dark' || (!attr && matchMedia('(prefers-color-scheme: dark)').matches);
+  const tt = $('#theme-toggle');
+  if (tt) tt.setAttribute('aria-label', isDark ? 'Switch to light theme' : 'Switch to dark theme');
 }
 (function initTheme() {
   applyTheme(localStorage.getItem('dropwire-theme') || 'auto');
@@ -72,18 +84,6 @@ function applyTheme(mode) {
 })();
 
 /* --------------------------- the wire progress -------------------------- */
-function setBar(barSel, pctSel, done, total) {
-  const fill = $(barSel);
-  const p = total > 0 ? Math.min(1, done / total) : 0;
-  if (fill) {
-    fill.style.strokeDashoffset = String(1 - p);
-    const svg = fill.closest('svg');
-    const clip = svg && svg.querySelector('.lit-clip');
-    if (clip) clip.setAttribute('width', String(60 + p * 480)); // lit region: x=60..540
-  }
-  const pe = $(pctSel);
-  if (pe) pe.textContent = Math.round(p * 100) + '%';
-}
 // A bright pulse races across the wire (the "connection established" moment).
 function firePulse(svg) {
   if (!canAnim || !svg) return;
@@ -101,8 +101,8 @@ function igniteNode(svg, sel) {
 }
 function doneSpark(svg) {
   if (!svg) return;
-  const self = svg.querySelector('.w-node.self') || svg.querySelector('.w-node.peer');
-  if (self) self.classList.add('done', 'live');
+  svg.classList.add('done');
+  svg.querySelectorAll('.w-node').forEach((n) => n.classList.add('done', 'live'));
   if (!canAnim) return;
   const spark = svg.querySelector('.w-spark');
   if (spark) {
@@ -140,6 +140,14 @@ function setBarEl(fill, svg, pctEl, done, total) {
   }
   if (pctEl) pctEl.textContent = Math.round(p * 100) + '%';
 }
+// Set a route badge's text / color / aria from a route value ('direct' | 'relayed' | else).
+function setRouteBadge(el, route) {
+  if (!el || !route) return;
+  const label = route === 'direct' ? 'direct' : route === 'relayed' ? 'relayed · a bit slower' : 'connected';
+  el.textContent = label;
+  el.className = 'route-badge ' + (route === 'direct' ? 'direct' : route === 'relayed' ? 'relayed' : '');
+  el.setAttribute('aria-label', 'Connection: ' + label);
+}
 function removeCard(card) {
   if (!card) return;
   if (canAnim) {
@@ -163,6 +171,7 @@ async function startSend(path) {
     status: card.querySelector('.js-status'), copy: card.querySelector('.js-copy'),
     cancel: card.querySelector('.js-cancel'), fill: card.querySelector('.w-fill'),
     pct: card.querySelector('.wire-pct'), svg: card.querySelector('svg.wire'),
+    route: card.querySelector('.route-badge'),
   };
   els.code.textContent = '…'; els.status.textContent = 'Preparing…';
   let id = null;
@@ -180,7 +189,7 @@ async function startSend(path) {
   try {
     const ch = makeChannel(); ch.onmessage = (m) => onSendMsg(m, els, card);
     id = await invoke('start_send', { path, onEvent: ch });
-  } catch (e) { els.status.textContent = String(e); }
+  } catch (e) { els.status.textContent = "Couldn't start the transfer. Try again."; console.warn(e); }
 }
 function onSendMsg(m, els, card) {
   switch (m.kind) {
@@ -190,6 +199,8 @@ function onSendMsg(m, els, card) {
       els.status.textContent = "Ready — share this code. Keep the app open until it's received.";
       invoke('qr_svg', { text: m.ticket }).then((svg) => {
         els.qr.innerHTML = svg;
+        els.qr.setAttribute('role', 'img');
+        els.qr.setAttribute('aria-label', 'QR code — scan with the receiving device');
         if (canAnim) els.qr.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_OUT, delay: 80 });
       }).catch(() => {});
       if (canAnim) els.code.animate([{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], { duration: 380, easing: EASE_OUT });
@@ -200,14 +211,18 @@ function onSendMsg(m, els, card) {
       break;
     case 'transferring':
       setBarEl(els.fill, els.svg, els.pct, m.offset, m.total);
+      setRouteBadge(els.route, m.route);
       els.status.textContent = `Sending… ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
       break;
     case 'done':
       setBarEl(els.fill, els.svg, els.pct, 1, 1);
       if (els.svg) doneSpark(els.svg);
-      els.status.textContent = 'Sent ✓'; els.cancel.textContent = 'Done';
+      els.status.textContent = 'Sent ✓'; els.cancel.textContent = 'Dismiss';
       break;
-    case 'error': els.status.textContent = 'Error: ' + m.message; break;
+    case 'error':
+      els.status.setAttribute('aria-live', 'assertive');
+      els.status.textContent = m.message ? `Couldn't send — ${m.message}` : "Couldn't send.";
+      break;
     case 'cancelled': removeCard(card); break;
   }
 }
@@ -222,19 +237,23 @@ $('#pick-folder').addEventListener('click', async () => {
 
 /* ------------------------------- RECEIVE ------------------------------- */
 let recvDest = null;
+let DEFAULT_DEST = null; // engine's default save folder (Downloads/Dropwire), fetched at init
 $('#recv-code-input').addEventListener('input', (e) => {
   const v = e.target.value.trim();
   $('#recv-start').disabled = v.length === 0;
   const glyph = $('.code-input-glyph circle'); if (glyph) glyph.setAttribute('fill', v ? 'var(--wire)' : 'var(--wire-dim)');
 });
+$('#recv-code-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); if (!$('#recv-start').disabled) $('#recv-start').click(); }
+});
 $('#pick-dest').addEventListener('click', async () => {
   const dir = await invoke('pick_dest_dir').catch(() => null);
-  if (dir) { recvDest = dir; $('#recv-dest-label').innerHTML = `Save to: <em>${dir}</em>`; }
+  if (dir) { recvDest = dir; const l = $('#recv-dest-label'); l.innerHTML = 'Save to: <em>' + esc(dir) + '</em>'; l.title = dir; }
 });
 async function beginReceive(ticket, dest, selected) {
   $('#recv-error').textContent = '';
   switchView('receive');
-  const myDest = dest || null;
+  const myDest = dest || DEFAULT_DEST;
   const card = makeCard('tpl-recv', 'recv-list');
   const els = {
     name: card.querySelector('.js-name'), route: card.querySelector('.route-badge'),
@@ -255,7 +274,8 @@ async function beginReceive(ticket, dest, selected) {
       : await invoke('start_receive', { ticket, dest: myDest, onEvent: ch });
   } catch (e) {
     removeCard(card);
-    $('#recv-error').textContent = String(e);
+    $('#recv-error').textContent = "That code doesn't look right. Check it and try again.";
+    console.warn(e);
     const input = $('#recv-code-input'); if (input) { input.classList.add('shake'); setTimeout(() => input.classList.remove('shake'), 400); }
   }
 }
@@ -271,16 +291,30 @@ let previewTicket = null, previewDest = null, lastFocus = null, previewFileCount
 function showModal() {
   const scrim = $('#recv-preview');
   lastFocus = document.activeElement;
-  scrim.classList.remove('hidden'); scrim.setAttribute('aria-hidden', 'false');
+  scrim.classList.remove('hidden');
+  const app = document.querySelector('.app'); if (app) app.setAttribute('inert', '');
+  const sheet = scrim.querySelector('.modal-sheet');
+  // Trap Tab inside the sheet (focusable set changes as Accept enables / files load).
+  scrim._trap = (e) => {
+    if (e.key !== 'Tab') return;
+    const f = [...sheet.querySelectorAll('button:not([disabled]),input,[href],[tabindex]:not([tabindex="-1"])')]
+      .filter((el) => el.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  document.addEventListener('keydown', scrim._trap);
   if (canAnim) {
     scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
-    const sheet = scrim.querySelector('.modal-sheet');
     sheet.animate([{ opacity: 0, transform: 'translateY(12px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE_POP });
   }
 }
 function closeModal() {
   const scrim = $('#recv-preview');
-  scrim.classList.add('hidden'); scrim.setAttribute('aria-hidden', 'true');
+  scrim.classList.add('hidden');
+  if (scrim._trap) { document.removeEventListener('keydown', scrim._trap); scrim._trap = null; }
+  const app = document.querySelector('.app'); if (app) app.removeAttribute('inert'); // before focus restore
   previewTicket = null; previewDest = null; previewLoaded = false;
   if (lastFocus && lastFocus.focus) lastFocus.focus();
 }
@@ -293,11 +327,11 @@ function updateAcceptState() {
   $('#preview-accept').disabled = checkedIndices().length === 0;
 }
 function fillPreview(p) {
-  const rb = $('#preview-route'); const r = p.route;
-  rb.textContent = r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed · a bit slower' : 'connected';
-  rb.className = 'route-badge ' + (r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed' : '');
+  const rb = $('#preview-route');
+  setRouteBadge(rb, p.route);
   previewFileCount = (p.files || []).length;
-  $('#preview-summary').textContent = `They want to send you ${previewFileCount} file${previewFileCount === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)}`;
+  // Route folded into the aria-live summary so it's announced (the badge isn't live).
+  $('#preview-summary').textContent = `${previewFileCount} file${previewFileCount === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)} · ${rb.textContent}`;
   const ul = $('#preview-files'); ul.innerHTML = '';
   (p.files || []).forEach((f, i) => {
     const li = document.createElement('li'); li.className = 'file-row';
@@ -327,10 +361,11 @@ async function openPreview(ticket, dest) {
     if (previewTicket !== ticket) return; // modal closed/replaced while inspecting
     fillPreview(p);
     previewLoaded = true;
+    decline.textContent = 'Decline';
     accept.focus();
   } catch (e) {
     if (previewTicket !== ticket) return;
-    $('#preview-summary').textContent = 'Sender offline, or this link has expired.';
+    $('#preview-summary').textContent = 'Sender offline, or this code has expired.';
     $('#preview-note').textContent = "We couldn't reach the sender. They need to be online — and the code still valid — for the transfer to start.";
     accept.classList.add('hidden');
     decline.textContent = 'Close';
@@ -360,34 +395,39 @@ function onRecvMsg(m, els, card) {
   switch (m.kind) {
     case 'transferring': {
       if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); els.name.textContent = 'Receiving…'; }
-      const r = m.route;
-      els.route.textContent = r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed · a bit slower' : 'transferring';
-      els.route.className = 'route-badge ' + (r === 'direct' ? 'direct' : r === 'relayed' ? 'relayed' : '');
-      els.route.setAttribute('aria-label', 'Connection: ' + els.route.textContent);
+      setRouteBadge(els.route, m.route);
       setBarEl(els.fill, els.svg, els.pct, m.offset, m.total);
-      els.status.textContent = `· ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
+      els.status.textContent = `${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
       break;
     }
     case 'done':
+      if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
       setBarEl(els.fill, els.svg, els.pct, 1, 1);
       if (els.svg) doneSpark(els.svg);
       els.name.textContent = 'Received ✓';
-      els.status.textContent = `· ${fmtBytes(m.stats && m.stats.bytes)} in ${((m.stats && m.stats.seconds) || 0).toFixed(1)}s`;
+      els.status.textContent = `${fmtBytes(m.stats && m.stats.bytes)} in ${((m.stats && m.stats.seconds) || 0).toFixed(1)}s`;
       els.open.classList.remove('hidden'); els.another.classList.remove('hidden'); els.cancel.classList.add('hidden');
       if (canAnim) els.open.animate([{ opacity: 0, transform: 'translateY(8px) scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: EASE_POP });
       break;
     case 'error': {
       const offline = /reach the sender|offline|link expired|unreachable/i.test(m.message || '');
+      els.status.setAttribute('aria-live', 'assertive');
       els.name.textContent = offline ? 'Sender offline or link expired' : 'Failed';
-      els.status.textContent = offline ? '' : (m.message || '');
+      els.status.textContent = offline ? 'Ask for a fresh code and try again.' : (m.message || '');
       els.cancel.textContent = 'Dismiss';
       break;
     }
     case 'cancelled': removeCard(card); break;
   }
 }
-if ($('#copy-id')) $('#copy-id').addEventListener('click', () => { const id = $('#endpoint-id').textContent; if (navigator.clipboard && id) navigator.clipboard.writeText(id); });
-if ($('#change-folder')) $('#change-folder').addEventListener('click', async () => { const dir = await invoke('pick_dest_dir').catch(() => null); if (dir) { localStorage.setItem('dropwire-default-dir', dir); $('#default-folder-label').textContent = dir; } });
+if ($('#copy-id')) $('#copy-id').addEventListener('click', () => {
+  const id = $('#endpoint-id').textContent;
+  if (navigator.clipboard && id) {
+    navigator.clipboard.writeText(id);
+    const b = $('#copy-id'); b.textContent = 'Copied ✓'; setTimeout(() => { b.textContent = 'Copy'; }, 1400);
+  }
+});
+if ($('#change-folder')) $('#change-folder').addEventListener('click', async () => { const dir = await invoke('pick_dest_dir').catch(() => null); if (dir) { localStorage.setItem('dropwire-default-dir', dir); const l = $('#default-folder-label'); l.textContent = dir; l.title = dir; } });
 
 /* ------------------------------- HISTORY ------------------------------- */
 function histGlyph(dir) {
@@ -396,6 +436,7 @@ function histGlyph(dir) {
   const rx = send ? 'var(--text-faint)' : 'var(--wire)';
   return `<svg class="hist-dir" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="${lx}"/><circle cx="34" cy="12" r="3.5" fill="${rx}"/></svg>`;
 }
+const STATUS_LABEL = { active: 'In progress', done: 'Done', error: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' };
 async function loadHistory() {
   const list = $('#history-list'), empty = $('#history-empty');
   let items = [];
@@ -413,7 +454,7 @@ async function loadHistory() {
     if (resumable) right = `<button class="btn-quiet sm" data-resume="1">Resume</button>`;
     else if (resendable) right = `<button class="btn-quiet sm" data-resend="1">Resend</button>`;
     else right = `<div class="hist-meta">${dir === 'send' ? 'Sent' : 'Received'}</div>`;
-    el.innerHTML = `${histGlyph(dir)}<div><div class="hist-name">${esc(t.name || 'transfer')}</div><div class="hist-meta">${fmtBytes(t.total_bytes)} · ${esc(t.status || '')}</div></div>${right}`;
+    el.innerHTML = `${histGlyph(dir)}<div><div class="hist-name">${esc(t.name || 'transfer')}</div><div class="hist-meta">${fmtBytes(t.total_bytes)} · ${STATUS_LABEL[t.status] || esc(t.status || '')}</div></div>${right}`;
     if (resumable) el.querySelector('[data-resume]').addEventListener('click', () => beginReceive(t.ticket, t.dest));
     if (resendable) el.querySelector('[data-resend]').addEventListener('click', () => { switchView('send'); startSend(t.source); });
     list.appendChild(el);
@@ -430,16 +471,23 @@ if (HAS_TAURI && TAURI.webview && TAURI.webview.getCurrentWebview) {
     else if (t === 'leave') dz.classList.remove('dragover');
     else if (t === 'drop') {
       dz.classList.remove('dragover');
-      if (canAnim) dz.animate([{ transform: 'scale(1.015)' }, { transform: 'scale(.99)' }, { transform: 'scale(1)' }], { duration: 240, easing: EASE_POP });
-      const p = event.payload.paths || []; if (p.length) startSend(p[0]);
+      const p = event.payload.paths || [];
+      if (p.length) {
+        if (curView !== 'send') switchView('send'); // surface the new send card
+        if (canAnim) dz.animate([{ transform: 'scale(1.015)' }, { transform: 'scale(.99)' }, { transform: 'scale(1)' }], { duration: 240, easing: EASE_POP });
+        startSend(p[0]);
+      }
     }
   }).catch(() => {});
 }
 
 /* --------------------------------- init -------------------------------- */
 (async function init() {
-  moveIndicator($('.nav-item.is-active'));
-  const dd = localStorage.getItem('dropwire-default-dir'); if (dd) $('#default-folder-label').textContent = dd;
-  try { $('#endpoint-id').textContent = await invoke('my_endpoint_id'); }
+  // Defer the first indicator measure past layout/font settling so it lands centered.
+  requestAnimationFrame(() => moveIndicator($('.nav-item.is-active')));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => moveIndicator($('.nav-item.is-active')));
+  const dd = localStorage.getItem('dropwire-default-dir'); if (dd) { const l = $('#default-folder-label'); l.textContent = dd; l.title = dd; }
+  try { DEFAULT_DEST = await invoke('default_dest_dir'); } catch (_) {}
+  try { const eid = await invoke('my_endpoint_id'); const el = $('#endpoint-id'); el.textContent = eid; el.title = eid; }
   catch (_) { $('#endpoint-id').textContent = HAS_TAURI ? '(starting…)' : '(preview — run inside the app)'; }
 })();

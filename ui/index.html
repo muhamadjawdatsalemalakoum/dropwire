@@ -38,8 +38,8 @@
         </button>
       </nav>
       <div class="sidebar-foot">
-        <button id="theme-toggle" class="ghost-btn" type="button" aria-label="Toggle theme"></button>
-        <span class="net-badge" title="Discovery via the public DHT; free relay only as fallback">serverless</span>
+        <button id="theme-toggle" class="ghost-btn" type="button" aria-label="Switch theme"></button>
+        <span class="net-badge" role="img" aria-label="Serverless — peers via the public DHT, free relay only as fallback" title="Discovery via the public DHT; free relay only as fallback">serverless</span>
       </div>
     </aside>
 
@@ -49,7 +49,7 @@
       <section class="view is-active" id="view-send" role="region" aria-label="Send">
         <header class="view-head"><h1>Send</h1><p class="sub">Pick a file or folder. Share the code — it goes straight to them.</p></header>
 
-        <div id="send-pick" class="dropzone" tabindex="0">
+        <div id="send-pick" class="dropzone">
           <div>
             <svg class="dz-glyph" viewBox="0 0 120 60" aria-hidden="true">
               <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -73,7 +73,7 @@
                 <p class="hint js-status" aria-live="polite">Preparing…</p>
               </div>
               <div class="qr-block">
-                <div class="qr-lens"><div class="qr js-qr" aria-label="QR code for this transfer"></div></div>
+                <div class="qr-lens"><div class="qr js-qr"></div></div>
                 <p class="hint">Scan to receive</p>
               </div>
             </div>
@@ -89,7 +89,7 @@
                 <circle class="w-node self live" cx="60" cy="60" r="8"/>
                 <circle class="w-node peer" cx="540" cy="60" r="8"/>
               </svg>
-              <div class="wire-readout"><span class="wire-pct"></span></div>
+              <div class="wire-readout"><span class="wire-pct">0%</span><span class="route-badge connecting">connecting</span></div>
             </div>
           </div>
         </template>
@@ -97,13 +97,13 @@
 
       <!-- ----- RECEIVE ----- -->
       <section class="view" id="view-receive" role="region" aria-label="Receive">
-        <header class="view-head"><h1>Receive</h1><p class="sub">Enter the code you were given. Choose where to save it.</p></header>
+        <header class="view-head"><h1>Receive</h1><p class="sub">Enter the code you were given, then choose where to save the files.</p></header>
 
         <div id="recv-pick" class="panel">
           <label class="field-label" for="recv-code-input">Transfer code</label>
           <div class="code-input-wrap">
             <svg class="code-input-glyph" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="var(--wire-dim)"/><circle cx="34" cy="12" r="3.5" fill="var(--text-faint)"/></svg>
-            <input id="recv-code-input" class="code-input" type="text" spellcheck="false" autocomplete="off" placeholder="blob…" />
+            <input id="recv-code-input" class="code-input" type="text" spellcheck="false" autocomplete="off" placeholder="Paste code (starts with blob…)" />
           </div>
           <div class="recv-dest"><span class="hint" id="recv-dest-label">Save to: <em>Downloads</em></span><button class="btn-ghost" id="pick-dest">Choose folder…</button></div>
           <button class="btn btn-block" id="recv-start" style="margin-top:16px" disabled>Receive</button>
@@ -155,19 +155,19 @@
             <span class="setting-control"><span class="val" id="default-folder-label">Downloads</span><button class="btn-ghost sm" id="change-folder">Change…</button></span>
           </div>
           <div class="setting"><span class="label">Theme</span>
-            <div class="seg" role="group" aria-label="Theme">
-              <button class="seg-btn" data-theme-set="auto">Auto</button><button class="seg-btn" data-theme-set="light">Light</button><button class="seg-btn" data-theme-set="dark">Dark</button>
+            <div class="seg" role="radiogroup" aria-label="Theme">
+              <button class="seg-btn" role="radio" aria-checked="false" data-theme-set="auto">Auto</button><button class="seg-btn" role="radio" aria-checked="false" data-theme-set="light">Light</button><button class="seg-btn" role="radio" aria-checked="false" data-theme-set="dark">Dark</button>
             </div>
           </div>
           <div class="setting"><span class="label">Connection</span><span class="val">Serverless — peers via the public DHT, free relay only as fallback. No account, no tracking.</span></div>
-          <div class="setting"><span class="label">About</span><span class="val">Dropwire · free &amp; open source · built on iroh · <a href="#" id="about-link">dropwire.app</a></span></div>
+          <div class="setting"><span class="label">About</span><span class="val">Dropwire · free &amp; open source · built on iroh · dropwire.app</span></div>
         </div>
       </section>
     </main>
   </div>
 
   <!-- ===== preview / accept modal (shown before any download) ===== -->
-  <div id="recv-preview" class="modal-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="preview-title" aria-hidden="true">
+  <div id="recv-preview" class="modal-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="preview-title">
     <div class="modal-sheet" role="document">
       <h2 class="modal-title" id="preview-title">Incoming transfer</h2>
       <p class="modal-sub" id="preview-summary" aria-live="polite">Connecting to sender to preview…</p>

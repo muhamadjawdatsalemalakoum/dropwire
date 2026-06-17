@@ -127,6 +127,13 @@ fn dest_or_default(dest: Option<String>) -> PathBuf {
     }
 }
 
+/// The default save folder (Downloads/Dropwire). The UI shows this and uses it as
+/// the path to reveal when a receive used the default destination.
+#[tauri::command]
+fn default_dest_dir() -> String {
+    dest_or_default(None).to_string_lossy().into_owned()
+}
+
 /// Pump a transfer's progress stream to the UI channel.
 fn pump(mut stream: irohcore::ProgressStream, on_event: Channel<Progress>) {
     tauri::async_runtime::spawn(async move {
@@ -233,6 +240,7 @@ pub fn run() {
             list_transfers,
             pick_paths,
             pick_dest_dir,
+            default_dest_dir,
             qr_svg,
             start_send,
             inspect_ticket,
