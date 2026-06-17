@@ -854,3 +854,34 @@ img, svg { max-width: 100%; }
   .lightbox[open] .lightbox-img { animation: lb-in 0.2s ease both; }
   @keyframes lb-in { from { opacity: 0; transform: scale(0.97); } }
 }
+
+/* --------------------------- Guides / articles ------------------------- */
+.article { padding-block: clamp(2rem, 5vw, 3.5rem); }
+.crumbs { font-size: 0.85rem; color: var(--ink-faint); margin-bottom: 1.5rem; }
+.crumbs a { color: var(--ink-soft); }
+.crumbs span { margin: 0 0.4rem; }
+.article h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); margin-bottom: 1rem; }
+.article > p { font-size: 1.06rem; line-height: 1.7; }
+.article h2 { font-size: clamp(1.35rem, 3vw, 1.8rem); margin-top: 2.5rem; }
+.article h3 { font-size: 1.15rem; margin-top: 1.75rem; }
+.article ul, .article ol { padding-left: 1.4rem; }
+.article li { margin-bottom: 0.5rem; line-height: 1.65; }
+.article p a, .article li a, .article td a {
+  color: var(--link); font-weight: 500; text-decoration: underline; text-underline-offset: 2px;
+}
+.article table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.94rem; display: block; overflow-x: auto; }
+.article th, .article td { border: 1px solid var(--surface-border); padding: 0.55rem 0.75rem; text-align: left; vertical-align: top; }
+.article thead th { background: var(--bg-muted); font-weight: 600; white-space: nowrap; }
+.article code { font-family: var(--font-mono); font-size: 0.9em; background: var(--bg-muted); padding: 0.1em 0.35em; border-radius: 5px; }
+.article blockquote { border-left: 3px solid var(--accent); margin: 1.5rem 0; padding: 0.25rem 0 0.25rem 1rem; color: var(--ink-soft); }
+.article-note { font-size: 0.9rem; color: var(--ink-faint); font-style: italic; margin-top: -0.5rem; }
+.article-faq { margin-top: 3rem; }
+.article-faq h2 { margin-bottom: 1rem; }
+.article-cta { margin-top: 3rem; padding: clamp(1.5rem, 4vw, 2.5rem); background: var(--bg-muted); border: 1px solid var(--surface-border); border-radius: var(--radius); text-align: center; }
+.article-cta h2 { margin-top: 0; }
+.article-cta p { color: var(--ink-soft); max-width: 48ch; margin: 0 auto 1.25rem; }
+.guides-list { display: grid; gap: 1.25rem; }
+.guide-card { display: block; background: var(--bg-elevated); border: 1px solid var(--surface-border); border-radius: var(--radius); padding: 1.5rem; box-shadow: var(--shadow-sm); transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.guide-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--accent) 40%, var(--surface-border)); text-decoration: none; }
+.guide-card h2 { font-size: 1.25rem; margin: 0 0 0.4rem; color: var(--ink); }
+.guide-card p { margin: 0; color: var(--ink-soft); font-size: 0.98rem; }

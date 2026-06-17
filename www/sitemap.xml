@@ -6,4 +6,34 @@
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
+  <url>
+    <loc>https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/</loc>
+    <lastmod>2026-06-17</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/send-large-files-free.html</loc>
+    <lastmod>2026-06-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/free-wetransfer-alternatives.html</loc>
+    <lastmod>2026-06-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/share-files-between-mac-and-windows.html</loc>
+    <lastmod>2026-06-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/what-is-peer-to-peer-file-transfer.html</loc>
+    <lastmod>2026-06-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
 </urlset>

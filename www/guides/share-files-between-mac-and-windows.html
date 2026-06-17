@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How to share files between Mac, Windows &amp; Linux</title>
+  <meta name="description" content="Compare AirDrop alternatives and cross-platform file-sharing methods — cloud, USB, LAN tools, and internet-based P2P for Mac, Windows, and Linux." />
+  <link rel="canonical" href="https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/share-files-between-mac-and-windows.html" />
+  <meta name="color-scheme" content="light dark" />
+  <meta property="og:type" content="article" />
+  <meta property="og:site_name" content="Dropwire" />
+  <meta property="og:title" content="How to share files between Mac, Windows &amp; Linux" />
+  <meta property="og:description" content="Compare AirDrop alternatives and cross-platform file-sharing methods — cloud, USB, LAN tools, and internet-based P2P for Mac, Windows, and Linux." />
+  <meta property="og:url" content="https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/share-files-between-mac-and-windows.html" />
+  <meta property="og:image" content="https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="How to share files between Mac, Windows &amp; Linux" />
+  <meta name="twitter:description" content="Compare AirDrop alternatives and cross-platform file-sharing methods — cloud, USB, LAN tools, and internet-based P2P for Mac, Windows, and Linux." />
+  <meta name="twitter:image" content="https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230E1116'/%3E%3Cpath d='M17 36h11l4-8 4 8h11' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17' cy='36' r='6' fill='%23D2FF3A'/%3E%3Ccircle cx='47' cy='36' r='5' fill='%23F2F5EF'/%3E%3C/svg%3E" />
+  <meta name="theme-color" id="meta-theme-color" content="#f7f9f5" />
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("dropwire-theme");
+        if (saved === "light" || saved === "dark") {
+          document.documentElement.setAttribute("data-theme", saved);
+          var m = document.getElementById("meta-theme-color");
+          if (m) m.content = saved === "dark" ? "#0e1116" : "#f7f9f5";
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="../styles.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": "How to share files between Mac, Windows, and Linux",
+    "description": "AirDrop works only for Apple devices. This guide compares cloud, LAN tools, and internet-based peer-to-peer methods for sharing files across Mac, Windows, and Linux.",
+    "image": "https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png",
+    "datePublished": "2026-06-17",
+    "dateModified": "2026-06-17",
+    "author": { "@type": "Person", "name": "Muhamad J. Akoum", "url": "https://www.linkedin.com/in/akoum/" },
+    "publisher": { "@type": "Organization", "name": "Dropwire", "logo": { "@type": "ImageObject", "url": "https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png" } },
+    "mainEntityOfPage": { "@type": "WebPage", "@id": "https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/share-files-between-mac-and-windows.html" },
+    "keywords": "share files between mac and windows, airdrop for windows, airdrop alternative cross platform, cross platform file transfer, send files mac to pc"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type":"Question","name":"Can I use AirDrop to send files from Mac to Windows?","acceptedAnswer":{"@type":"Answer","text":"No. AirDrop is Apple-exclusive and only works between Mac, iPad, and iPhone. For cross-platform sharing, use cloud services (WeTransfer), local-network tools (LocalSend), or internet P2P (Dropwire or magic-wormhole)."}},
+      {"@type":"Question","name":"What's the fastest way to send large files between Mac and Windows?","acceptedAnswer":{"@type":"Answer","text":"If both devices are on the same Wi-Fi, LocalSend is fastest — unlimited file sizes, no server latency, instant transfer. If they're on different networks, Dropwire or magic-wormhole use direct P2P encryption without a server, which is faster than uploading to and downloading from cloud storage."}},
+      {"@type":"Question","name":"Is WeTransfer or Send Anywhere free for large files?","acceptedAnswer":{"@type":"Answer","text":"Partially. WeTransfer's free tier caps transfers at a few GB with monthly limits; Send Anywhere's free tier allows up to about 10 GB with a roughly 48-hour expiry. Both require files to touch their servers. For no size limits and no server, use P2P tools like Dropwire or LocalSend."}},
+      {"@type":"Question","name":"Can LocalSend send files across the internet, or only on local Wi-Fi?","acceptedAnswer":{"@type":"Answer","text":"LocalSend is designed to work over the local Wi-Fi network. For internet-based P2P without a server, Dropwire is built specifically for cross-network transfer."}}
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="../" aria-label="Dropwire home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">
+            <rect width="64" height="64" rx="14" fill="#0e1116" />
+            <path d="M17 36h11l4-8 4 8h11" fill="none" stroke="#d2ff3a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="17" cy="36" r="6" fill="#d2ff3a" />
+            <circle cx="47" cy="36" r="5" fill="#f2f5ef" />
+          </svg>
+        </span>
+        <span class="brand-name">Dropwire</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="../#how">How it works</a>
+        <a href="../#why">Why Dropwire</a>
+        <a href="./">Guides</a>
+        <a class="nav-github" href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">GitHub</a>
+      </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor" /><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="2.5" x2="12" y2="5" /><line x1="12" y1="19" x2="12" y2="21.5" /><line x1="2.5" y1="12" x2="5" y2="12" /><line x1="19" y1="12" x2="21.5" y2="12" /><line x1="5.1" y1="5.1" x2="6.9" y2="6.9" /><line x1="17.1" y1="17.1" x2="18.9" y2="18.9" /><line x1="5.1" y1="18.9" x2="6.9" y2="17.1" /><line x1="17.1" y1="6.9" x2="18.9" y2="5.1" /></g></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="currentColor" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <article class="article container container-narrow">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Home</a><span>&rsaquo;</span><a href="./">Guides</a></nav>
+      <h1>How to share files between Mac, Windows, and Linux</h1>
+
+<p>File sharing across Mac, Windows, and Linux is surprisingly complicated. Each ecosystem has its own quick-transfer tools — AirDrop on Apple devices, Quick Share on Android, Nearby Sharing on Windows — but they don't talk to each other. If you're a household with mixed devices, a team with different OS preferences, or someone who simply needs to move a file from a Mac to a Windows PC (or vice versa), you're left choosing between clunky workarounds and cloud services.</p>
+
+<p>This guide compares the real methods available in 2026, from old-school USB to modern internet-based P2P, with honest trade-offs for each.</p>
+
+<h2>The problem with built-in sharing tools</h2>
+
+<p><strong>AirDrop (Apple-only).</strong> AirDrop is fast, elegant, and works across all Apple devices on the same Wi-Fi network. But if one person has a Windows PC or Linux machine, AirDrop is useless — it's closed to non-Apple hardware.</p>
+
+<p><strong>Windows Nearby Sharing (Windows-only).</strong> Windows 11 has Nearby Sharing as an AirDrop-style feature, but it works between Windows PCs (and, increasingly, Android). There's no native support for Mac or Linux.</p>
+
+<p><strong>Android Quick Share (Android-only).</strong> Similar story — works among Android devices and Chromebooks, but not cross-platform to Mac or Linux.</p>
+
+<p>For true mixed-device households or workplaces, you need to step outside these walled gardens.</p>
+
+<h2>Method 1: Cloud storage (simplest, slowest)</h2>
+
+<p>Upload to a shared cloud folder — Google Drive, Dropbox, OneDrive, iCloud Drive — and the other person downloads. No software to install, works anywhere you have internet.</p>
+
+<p><strong>Pros:</strong> instant access from any device, automatic versioning, files persist for later reference.</p>
+
+<p><strong>Cons:</strong> files sit on someone's server (privacy concern), upload and download eat bandwidth, slower than a direct transfer, and large transfers may need a paid plan.</p>
+
+<p><strong>Good for:</strong> documents, non-urgent files, teams already using a cloud service. <strong>Not for:</strong> large files, sensitive data, speed-critical workflows.</p>
+
+<h2>Method 2: Cloud transfer services (no accounts)</h2>
+
+<p>Services like WeTransfer, Send Anywhere, or Smash let you upload a file once and generate a download link — no accounts required on either end.</p>
+
+<p><strong>Rough free-tier limits (verify current terms):</strong></p>
+
+<ul>
+<li><strong>WeTransfer:</strong> a few GB per transfer on the free tier, with monthly limits and links that expire after a few days. Paid plans offer higher limits and longer retention.</li>
+<li><strong>Send Anywhere:</strong> up to around 10 GB free per transfer, with links that expire after roughly 48 hours. Paid tiers support larger transfers.</li>
+<li><strong>Snapdrop / PairDrop:</strong> the original snapdrop.net is now a LimeWire product that uploads files to servers; PairDrop is the maintained open-source fork that keeps the browser-based, local-network, peer-to-peer approach.</li>
+</ul>
+
+<p><strong>Pros:</strong> no account needed, simple link sharing, works cross-platform and cross-network. <strong>Cons:</strong> files touch a server, size limits and expiry timers, you wait for upload and download.</p>
+
+<h2>Method 3: Local network file sharing (LAN-only, fast)</h2>
+
+<p><strong>PairDrop and LocalSend</strong> are popular tools for peer-to-peer transfer over a local network (same Wi-Fi). Both are open-source and cross-platform.</p>
+
+<p><strong>LocalSend (recommended for LAN):</strong></p>
+
+<ul>
+<li>Free, open-source, supports Windows, macOS, Linux, Android, and iOS.</li>
+<li>No file-size limits, manual approval for each transfer, encrypted.</li>
+<li>Lightweight and privacy-respecting — files never touch a server.</li>
+</ul>
+
+<p><strong>PairDrop (open-source, browser-based):</strong></p>
+
+<ul>
+<li>The maintained open-source fork of Snapdrop; runs in the browser, peer-to-peer on the local network, no install needed.</li>
+<li>Note: the original snapdrop.net is now a LimeWire product that uploads files to its servers.</li>
+</ul>
+
+<p><strong>Pros:</strong> instant transfer (no server latency), unlimited file sizes, privacy-first (files stay local). <strong>Cons:</strong> both devices must be on the same Wi-Fi network; doesn't work across the internet or different networks.</p>
+
+<h2>Method 4: USB drive or external storage (oldest, still useful)</h2>
+
+<p>Plug in a USB drive, copy the file, hand it over. Zero setup, no internet required.</p>
+
+<p><strong>Pros:</strong> works everywhere, no privacy leak, no data limits, no software. <strong>Cons:</strong> physical handoff required, slow for huge files, risk of loss. <strong>Good for:</strong> in-person transfer, airgapped systems, no internet.</p>
+
+<h2>Method 5: Internet-based P2P (best for distance)</h2>
+
+<p>Direct peer-to-peer tools like magic-wormhole or <strong>Dropwire</strong> connect two devices directly over the internet, without storing your file on a server.</p>
+
+<p><strong>How it works:</strong> You run a tool on both devices, generate a code or short passphrase, and the two machines locate each other and transfer the file directly — encrypted end-to-end via QUIC/TLS 1.3. No account, no upload server, no expiry timer.</p>
+
+<p><strong>Magic-wormhole (CLI-based):</strong> open-source command-line tool that works on Mac, Windows, and Linux. Generates a code like "7-purple-finch" that you share with the recipient. Minimal, Unix-style.</p>
+
+<p><strong>Dropwire (desktop app):</strong> free, open-source P2P desktop app for Windows, macOS, and Linux. Works on the same local network or across the internet using iroh's routing. No accounts, no servers holding your files. End-to-end encrypted. Preview files before accepting. Resumable transfers.</p>
+
+<p><strong>Pros:</strong> true P2P (no server trust required), cross-platform and cross-network, unlimited file sizes, no expiry, encrypted throughout. <strong>Cons:</strong> both parties install and run the software, and both devices need to connect around the same time.</p>
+
+<h2>Comparison table</h2>
+
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Cross-platform</th>
+<th>Cross-network</th>
+<th>File-size limit</th>
+<th>Setup</th>
+<th>Privacy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cloud storage (Drive, Dropbox)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Uses your storage quota</td>
+<td>Account required</td>
+<td>Files on vendor's servers</td>
+</tr>
+<tr>
+<td>Cloud transfer (WeTransfer, Send Anywhere)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>A few to ~10 GB free</td>
+<td>No account; link-based</td>
+<td>Files on vendor's servers, temporary</td>
+</tr>
+<tr>
+<td>LocalSend / PairDrop (LAN)</td>
+<td>Yes</td>
+<td>No (LAN only)</td>
+<td>None</td>
+<td>Install app / open browser</td>
+<td>High (P2P, no server)</td>
+</tr>
+<tr>
+<td>USB or external drive</td>
+<td>Yes</td>
+<td>No (physical only)</td>
+<td>Drive capacity</td>
+<td>None</td>
+<td>High (fully offline)</td>
+</tr>
+<tr>
+<td>Dropwire (internet P2P)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>None</td>
+<td>Install app on both devices</td>
+<td>High (P2P, encrypted, no server)</td>
+</tr>
+<tr>
+<td>Magic-wormhole (CLI P2P)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>None</td>
+<td>Install CLI; code-based pairing</td>
+<td>High (P2P, encrypted, no server)</td>
+</tr>
+</tbody>
+</table>
+
+<p class="article-note">Free-tier limits change often; treat these as rough guidance and check each service for current terms.</p>
+
+<h2>Which method should you choose?</h2>
+
+<p><strong>For a one-time file share:</strong> WeTransfer or Send Anywhere. No account, instant link, works anywhere.</p>
+
+<p><strong>For a household or team on the same Wi-Fi:</strong> LocalSend. Fast, no server, open-source, instant approval.</p>
+
+<p><strong>For remote teams or frequent file exchange:</strong> Dropwire or magic-wormhole. True P2P over the internet, no accounts, no servers.</p>
+
+<p><strong>For sensitive or confidential files:</strong> Dropwire, magic-wormhole, or USB (offline). Avoid cloud services.</p>
+
+<p><strong>For casual documents you want to keep accessible:</strong> Google Drive or Dropbox.</p>
+
+<h2>Sending Mac to Windows (or any mix) with Dropwire</h2>
+
+<p>Here's how cross-platform P2P sharing works with Dropwire:</p>
+
+<ol>
+<li>Download and install Dropwire on your Mac and the Windows PC (or Linux machine) from the <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire/releases">releases page</a>.</li>
+<li>On the sender, open Dropwire, choose Send, and pick your file or folder.</li>
+<li>Dropwire gives you a one-time transfer code and a QR code.</li>
+<li>Share that code with the other device (paste it into a message, or scan the QR).</li>
+<li>On the receiving device, paste the code or scan the QR. Dropwire shows a preview — names, sizes, and count — before anything downloads.</li>
+<li>Accept, and the file transfers directly, encrypted end-to-end, whether the devices are on the same Wi-Fi or across the internet.</li>
+<li>If the connection drops, the transfer resumes where it left off.</li>
+</ol>
+
+<p>No accounts. No links to a server. Entirely between the two machines.</p>
+
+<h2>The honest take</h2>
+
+<p>The ideal tool depends on your constraints: speed, network setup, privacy, and whether both parties are available at the same time. Cloud services are convenient but involve a third party. LAN tools are fast and private but local-only. Internet P2P tools like Dropwire and magic-wormhole offer privacy, no limits, and cross-platform reach — but both parties need the software installed and running.</p>
+
+<p>Want to try a modern P2P approach? <a href="../">Dropwire</a> is free and works across all three major operating systems.</p>
+
+      <section class="article-faq">
+        <h2>FAQ</h2>
+        <div class="faq-list">
+          <details class="faq-item"><summary><span>Can I use AirDrop to send files from Mac to Windows?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>No. AirDrop is Apple-exclusive and only works between Mac, iPad, and iPhone. For cross-platform sharing, use cloud services (WeTransfer), local-network tools (LocalSend), or internet P2P (Dropwire or magic-wormhole).</p></div></details>
+          <details class="faq-item"><summary><span>What's the fastest way to send large files between Mac and Windows?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>If both devices are on the same Wi-Fi, LocalSend is fastest — unlimited file sizes, no server latency. If they're on different networks, Dropwire or magic-wormhole use direct P2P encryption without a server, which is faster than uploading to and downloading from cloud storage.</p></div></details>
+          <details class="faq-item"><summary><span>Is WeTransfer or Send Anywhere free for large files?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Partially. WeTransfer's free tier caps transfers at a few GB with monthly limits; Send Anywhere's free tier allows up to about 10 GB with a roughly 48-hour expiry. Both require files to touch their servers. For no size limits and no server, use P2P tools like Dropwire or LocalSend.</p></div></details>
+          <details class="faq-item"><summary><span>Can LocalSend send files across the internet, or only on local Wi-Fi?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>LocalSend is designed to work over the local Wi-Fi network. For internet-based P2P without a server, Dropwire is built specifically for cross-network transfer.</p></div></details>
+        </div>
+      </section>
+
+      <aside class="article-cta">
+        <h2>Try Dropwire</h2>
+        <p>Cross-platform, peer-to-peer file transfer for Windows, macOS &amp; Linux — on the same Wi-Fi or across the internet. Free and open source.</p>
+        <a class="btn btn-primary" href="../#download">Get Dropwire</a>
+      </aside>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-bottom">
+      <p class="made-with">Made with <a href="https://www.iroh.computer/" rel="noopener">iroh</a> &middot; Built by <a href="https://www.linkedin.com/in/akoum/" rel="noopener">Muhamad J. Akoum</a>.</p>
+      <p class="privacy-note"><a href="../">Dropwire</a> &mdash; private, direct file transfer. Free &amp; open source.</p>
+    </div>
+  </footer>
+
+  <script src="../script.js"></script>
+</body>
+</html>
