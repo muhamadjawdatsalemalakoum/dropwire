@@ -1,0 +1,56 @@
+name: Bug report
+description: Something didn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Dropwire! 🙏
+        **Security issue?** Please don't file it here — report it privately via
+        [GitHub Security Advisories](../../security/advisories/new) (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Dropwire version
+      description: See Settings → About (e.g. 0.2.3)
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type (if this is a transfer problem)
+      description: The badge shown on the transfer card.
+      options:
+        - Direct
+        - Relayed
+        - Not sure / didn't get that far
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, errors, or screenshots
+      description: Anything from the app or console that might help.

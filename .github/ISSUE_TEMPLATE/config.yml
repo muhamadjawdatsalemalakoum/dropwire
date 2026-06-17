@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new
+    about: Report security issues privately via GitHub Security Advisories — not public issues.
+  - name: Questions & ideas
+    url: https://github.com/muhamadjawdatsalemalakoum/dropwire/discussions
+    about: For general questions and discussion. (Enable Discussions in repo Settings to use this.)

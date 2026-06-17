@@ -31,6 +31,7 @@ transfers.json
 # (comment these out if you want them in version control)
 _research_synthesis.md
 _spec_specifics.md
+_launch.md
 
 # Dev-only self-contained UI preview (snapshot of ui/index.html + app.css for the
 # preview panel / browser double-click; the real app loads the separate files)
