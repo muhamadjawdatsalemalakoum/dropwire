@@ -6,18 +6,18 @@ pkarr_put_rate_limit = "smart"
 
 [https]
 port = 443
-domains = ["dns.dropwire.app"]          # <-- the discovery origin domain
+domains = ["dns.example.org"]          # <-- the discovery origin domain
 cert_mode = "lets_encrypt"
 letsencrypt_prod = true
 
 [dns]
 port = 53
-default_soa = "dns1.dropwire.app hostmaster.dropwire.app 0 10800 3600 604800 3600"
+default_soa = "dns1.example.org hostmaster.example.org 0 10800 3600 604800 3600"
 default_ttl = 30
 # MUST equal CoreConfig::Infra::SelfHosted.origin_domain in the app.
-origins = ["dns.dropwire.app", "."]
+origins = ["dns.example.org", "."]
 rr_a  = "REPLACE_WITH_DNS_HOST_IPV4"    # this host's public IPv4
-rr_ns = "ns1.dropwire.app."
+rr_ns = "ns1.example.org."
 
 [mainline]
 enabled = false                          # private app network: do NOT bridge to the public DHT

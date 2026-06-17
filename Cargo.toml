@@ -11,7 +11,7 @@ version = "0.2.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/muhamadjawdatsalemalakoum/dropwire"
-homepage = "https://dropwire.app"
+homepage = "https://muhamadjawdatsalemalakoum.github.io/dropwire/"
 authors = ["Dropwire contributors"]
 rust-version = "1.82"
 

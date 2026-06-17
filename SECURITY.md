@@ -4,9 +4,11 @@ Dropwire is a security- and privacy-sensitive product. We take reports seriously
 
 ## Reporting a vulnerability
 
-**Please do not open public issues for security problems.** Email **security@dropwire.app**
-with details and, if possible, a proof of concept. We'll acknowledge within a few days and keep
-you updated through to a fix and coordinated disclosure.
+**Please do not open public issues for security problems.** Report privately through
+**[GitHub Security Advisories](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new)**
+(the repo's *Security → Report a vulnerability* button) with details and, if possible, a proof of
+concept. We'll acknowledge within a few days and keep you updated through to a fix and coordinated
+disclosure.
 
 ## What Dropwire guarantees
 

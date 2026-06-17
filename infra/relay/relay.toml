@@ -9,10 +9,10 @@ enable_metrics = true
 # metrics_bind_addr = "0.0.0.0:9090"   # restrict to localhost/VPN in production
 
 [tls]
-hostname  = ["relay.dropwire.app"]      # <-- A record must point here
+hostname  = ["relay.example.org"]      # <-- A record must point here
 cert_mode = "LetsEncrypt"               # Manual | LetsEncrypt | Reloading
 prod_tls  = true                        # false = LetsEncrypt staging CA (for testing)
-contact   = "security@dropwire.app"
+contact   = "security@example.org"
 cert_dir  = "/data/certs"
 
 # Access control: lock the relay to the Dropwire app.
