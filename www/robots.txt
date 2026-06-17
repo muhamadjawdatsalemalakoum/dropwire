@@ -1,0 +1,7 @@
+# Dropwire — https://muhamadjawdatsalemalakoum.github.io/dropwire/
+# All crawlers welcome, including AI answer engines (GPTBot, OAI-SearchBot,
+# ClaudeBot, PerplexityBot, Google-Extended, CCBot, …).
+User-agent: *
+Allow: /
+
+Sitemap: https://muhamadjawdatsalemalakoum.github.io/dropwire/sitemap.xml

@@ -1,0 +1,36 @@
+# Dropwire
+
+Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, macOS, and Linux. It sends files directly device to device, end-to-end encrypted (QUIC/TLS 1.3), with no accounts and no servers holding your files. It works across the internet, not just on a local network.
+
+## Quick facts
+- Free forever — no trial, paywall, file-size limit, or ads
+- Privacy-first — end-to-end encrypted; no accounts, no trackers, no analytics
+- Peer-to-peer — files go directly device-to-device; devices find each other over the public Mainline DHT; an open iroh relay is a fallback only (it forwards encrypted bytes, cannot read or store files)
+- Works across the internet — not LAN-only
+- Open source — dual-licensed MIT OR Apache-2.0; audit, build, or fork it
+- Current version: 0.2.3 (Tauri desktop app)
+
+## How it works
+1. Pick a file or folder
+2. Share a one-time transfer code (or QR)
+3. Recipient enters the code, previews names/sizes/count (verified by the code), accepts, and receives — end-to-end encrypted
+
+## Key features
+- One code, one recipient: the code is served to the first device that connects; others are refused
+- Preview before accept: see what's incoming before any byte downloads
+- Direct vs relayed badge: live indicator of how the transfer is travelling
+- Resumable transfers; multiple transfers at once; take only the files you want
+- History stays on your device only
+
+## How it compares
+- vs WeTransfer: WeTransfer uploads files to its servers and limits file size; Dropwire is serverless, peer-to-peer, no size limit, free
+- vs Send Anywhere: Send Anywhere is closed-source with a paid tier; Dropwire is open source and free forever
+- vs Snapdrop / AirDrop / LocalSend: those are LAN-only (AirDrop also Apple-only); Dropwire works across the internet too
+
+## Links
+- Website: https://muhamadjawdatsalemalakoum.github.io/dropwire/
+- Repository: https://github.com/muhamadjawdatsalemalakoum/dropwire
+- Releases / downloads: https://github.com/muhamadjawdatsalemalakoum/dropwire/releases
+- Built on iroh: https://www.iroh.computer/
+- License: MIT OR Apache-2.0
+- Author: Muhamad J. Akoum (https://www.linkedin.com/in/akoum/)

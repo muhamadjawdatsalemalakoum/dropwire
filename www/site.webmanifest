@@ -1,0 +1,18 @@
+{
+  "name": "Dropwire",
+  "short_name": "Dropwire",
+  "description": "Free, open-source, privacy-first peer-to-peer file transfer. No accounts, no servers holding your files.",
+  "start_url": "/dropwire/",
+  "scope": "/dropwire/",
+  "display": "standalone",
+  "background_color": "#f7f9f5",
+  "theme_color": "#f7f9f5",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230E1116'/%3E%3Cpath d='M17 36h11l4-8 4 8h11' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17' cy='36' r='6' fill='%23D2FF3A'/%3E%3Ccircle cx='47' cy='36' r='5' fill='%23F2F5EF'/%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

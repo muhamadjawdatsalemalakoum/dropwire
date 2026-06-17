@@ -3,25 +3,32 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dropwire — Private, direct file transfer</title>
-  <meta name="description" content="Dropwire is a free, open-source, privacy-first file transfer app. Send files directly device to device, end-to-end encrypted, no accounts, no servers holding your data. Works across the internet, not just your LAN." />
+  <title>Dropwire — Free P2P File Transfer, No Account Needed</title>
+  <meta name="description" content="Dropwire: free, open-source peer-to-peer file transfer for Windows, Mac &amp; Linux. Send files directly, end-to-end encrypted, no account, no servers. A privacy-first WeTransfer alternative that works across the internet." />
   <meta name="color-scheme" content="light dark" />
+  <link rel="canonical" href="https://muhamadjawdatsalemalakoum.github.io/dropwire/" />
 
   <!-- Open Graph / social -->
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Dropwire — Private, direct file transfer" />
-  <meta property="og:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer. No accounts. No servers holding your files." />
-  <meta property="og:url" content="https://dropwire.app/" />
-  <meta property="og:image" content="https://dropwire.app/og.png" />
+  <meta property="og:site_name" content="Dropwire" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:title" content="Dropwire — Free P2P File Transfer, No Account Needed" />
+  <meta property="og:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer for Windows, Mac &amp; Linux. No accounts. No servers holding your files." />
+  <meta property="og:url" content="https://muhamadjawdatsalemalakoum.github.io/dropwire/" />
+  <meta property="og:image" content="https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png" />
+  <meta property="og:image:type" content="image/png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Dropwire — send files directly, encrypted, device to device. No accounts. No servers." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Dropwire — Private, direct file transfer" />
-  <meta name="twitter:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer. No accounts. No servers holding your files." />
-  <meta name="twitter:image" content="https://dropwire.app/og.png" />
+  <meta name="twitter:title" content="Dropwire — Free P2P File Transfer, No Account Needed" />
+  <meta name="twitter:description" content="Free, open-source, end-to-end encrypted, peer-to-peer file transfer for Windows, Mac &amp; Linux. No accounts. No servers holding your files." />
+  <meta name="twitter:image" content="https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png" />
 
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230E1116'/%3E%3Cpath d='M17 36h11l4-8 4 8h11' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17' cy='36' r='6' fill='%23D2FF3A'/%3E%3Ccircle cx='47' cy='36' r='5' fill='%23F2F5EF'/%3E%3C/svg%3E" />
   <meta name="theme-color" id="meta-theme-color" content="#f7f9f5" />
+  <link rel="manifest" href="site.webmanifest" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230E1116'/%3E%3Cpath d='M17 36h11l4-8 4 8h11' fill='none' stroke='%23D2FF3A' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='17' cy='36' r='6' fill='%23D2FF3A'/%3E%3Ccircle cx='47' cy='36' r='5' fill='%23F2F5EF'/%3E%3C/svg%3E" />
 
   <!-- Prevent theme flash: set theme before first paint -->
   <script>
@@ -38,6 +45,70 @@
   </script>
 
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- Structured data (schema.org) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Dropwire",
+    "description": "Free, open-source, peer-to-peer file transfer app. Send files directly device to device, end-to-end encrypted (QUIC/TLS 1.3), no accounts, no servers holding your files. Works across the internet, not just LAN. For Windows, macOS, and Linux.",
+    "url": "https://muhamadjawdatsalemalakoum.github.io/dropwire/",
+    "image": "https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": ["Windows", "macOS", "Linux"],
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "isAccessibleForFree": true,
+    "softwareVersion": "0.2.3",
+    "downloadUrl": "https://github.com/muhamadjawdatsalemalakoum/dropwire/releases",
+    "codeRepository": "https://github.com/muhamadjawdatsalemalakoum/dropwire",
+    "license": "https://github.com/muhamadjawdatsalemalakoum/dropwire#license",
+    "isBasedOn": "https://www.iroh.computer/",
+    "keywords": "file transfer, peer-to-peer, p2p, end-to-end encrypted, privacy, no accounts, open source, WeTransfer alternative, AirDrop alternative",
+    "sameAs": "https://github.com/muhamadjawdatsalemalakoum/dropwire",
+    "author": { "@type": "Person", "name": "Muhamad J. Akoum", "url": "https://www.linkedin.com/in/akoum/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type":"Question","name":"Is it really free?","acceptedAnswer":{"@type":"Answer","text":"Yes — genuinely free, and open source. There's no paid tier, no file-size paywall, and no ads. Because your files travel directly between devices, there's no storage bill to pass on to you."}},
+      {"@type":"Question","name":"How is it private?","acceptedAnswer":{"@type":"Answer","text":"Transfers are end-to-end encrypted using QUIC over TLS 1.3. The connection is authenticated and encrypted between the two devices, so only the sender and receiver can read the contents. You don't create an account, and there's no profile or contact list to harvest. Treat the share code like a one-time key: it's served to the first device that connects, and others are refused — so share it with the person you mean to."}},
+      {"@type":"Question","name":"What if a direct connection can't be made?","acceptedAnswer":{"@type":"Answer","text":"Most transfers connect directly, device to device. When a network (some strict firewalls or mobile carriers) won't allow that, Dropwire falls back to a free, shared relay from the open iroh network so the transfer still completes — we don't run any servers ourselves. The relay only forwards already-encrypted data — it cannot read your files, and it doesn't store them. You'll see a clear 'direct' or 'relayed' badge so you always know how a transfer is travelling."}},
+      {"@type":"Question","name":"What if the sender is offline or the code has expired?","acceptedAnswer":{"@type":"Answer","text":"You won't be left waiting. If the sender isn't online or the code is no longer being shared, Dropwire tells you clearly instead of spinning forever — so you know to ask for a fresh code rather than wonder if it's stuck."}},
+      {"@type":"Question","name":"Do I need an account?","acceptedAnswer":{"@type":"Answer","text":"No. There's nothing to sign up for, no email, no password. Install Dropwire, pick a file, share the code. That's the whole flow on both ends."}},
+      {"@type":"Question","name":"Is my data stored anywhere?","acceptedAnswer":{"@type":"Answer","text":"No. Dropwire doesn't upload your files to a cloud or keep copies. The data moves directly from your device to the recipient's. Even in the relay-fallback case, the relay only passes encrypted bytes through in transit — nothing is retained after the transfer finishes."}},
+      {"@type":"Question","name":"How is Dropwire different from WeTransfer?","acceptedAnswer":{"@type":"Answer","text":"WeTransfer uploads your files to its servers during transfer and limits file size on the free tier. Dropwire sends files peer-to-peer, directly from your device to theirs — nothing is uploaded to anyone's cloud, there's no size limit, and it's free and open source. WeTransfer is web-based; Dropwire is a desktop app for Windows, macOS, and Linux."}},
+      {"@type":"Question","name":"Is there an AirDrop alternative for Windows and Linux?","acceptedAnswer":{"@type":"Answer","text":"Yes — Dropwire. AirDrop is Apple-only and works on the local network. Tools like Snapdrop and LocalSend add Windows, Linux, and Android but stay LAN-only. Dropwire works across all those desktops and over the internet, so you can send to someone on a different network entirely — no shared Wi-Fi required."}},
+      {"@type":"Question","name":"How is Dropwire different from Send Anywhere?","acceptedAnswer":{"@type":"Answer","text":"Send Anywhere is free to use but closed-source and runs its own servers, with a paid tier for more. Dropwire is open source and peer-to-peer — we run no servers ourselves; the open iroh relay is only a fallback and can't read your encrypted data. Dropwire is free forever, and you can audit or modify the code."}}
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Dropwire",
+    "url": "https://muhamadjawdatsalemalakoum.github.io/dropwire/",
+    "logo": "https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png",
+    "description": "Free, open-source, privacy-first peer-to-peer file transfer.",
+    "sameAs": ["https://github.com/muhamadjawdatsalemalakoum/dropwire", "https://www.linkedin.com/in/akoum/"],
+    "founder": { "@type": "Person", "name": "Muhamad J. Akoum", "url": "https://www.linkedin.com/in/akoum/" },
+    "contactPoint": { "@type": "ContactPoint", "contactType": "technical support", "url": "https://github.com/muhamadjawdatsalemalakoum/dropwire/issues" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Dropwire",
+    "url": "https://muhamadjawdatsalemalakoum.github.io/dropwire/",
+    "description": "Private, direct file transfer. Free and open source.",
+    "publisher": { "@type": "Organization", "name": "Dropwire" }
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -102,7 +173,9 @@
         <p class="subhead">
           Dropwire is a free, private, peer-to-peer file transfer app. Your files travel
           <strong>directly</strong> from your device to theirs &mdash; encrypted end to end,
-          with no account to create and no server holding your data.
+          with no account to create and no server holding your data. Think of it as AirDrop
+          for Windows, Mac, and Linux &mdash; but it works across the internet, not just the
+          same Wi-Fi.
         </p>
 
         <div class="cta-row">
@@ -177,7 +250,7 @@
           <figure class="shot-row">
             <div class="shot-media">
               <img src="screenshots/send.png" width="1500" height="986" loading="lazy"
-                alt="Dropwire Send screen showing a one-time transfer code and a QR code ready to share" />
+                alt="Dropwire file transfer app: sender screen with a one-time transfer code and QR code ready to share" />
             </div>
             <figcaption class="shot-copy">
               <h3>Pick a file &mdash; get a code &amp; QR</h3>
@@ -188,7 +261,7 @@
           <figure class="shot-row reverse">
             <div class="shot-media">
               <img src="screenshots/preview.png" width="1500" height="625" loading="lazy"
-                alt="Dropwire preview dialog showing an incoming file's name and size, marked verified by the code, before accepting" />
+                alt="Dropwire peer-to-peer transfer preview: recipient verifies file name and size before accepting an encrypted transfer" />
             </div>
             <figcaption class="shot-copy">
               <h3>See what&rsquo;s coming &mdash; before you accept</h3>
@@ -199,7 +272,7 @@
           <figure class="shot-row">
             <div class="shot-media">
               <img src="screenshots/received.png" width="1500" height="600" loading="lazy"
-                alt="Dropwire transfer complete at 100 percent with a direct connection badge" />
+                alt="Dropwire transfer complete at 100% with a 'direct' connection badge, end-to-end encrypted" />
             </div>
             <figcaption class="shot-copy">
               <h3>Straight there &mdash; direct and verified</h3>
@@ -232,7 +305,7 @@
       <div class="container">
         <div class="section-head">
           <h2 id="how-title">How it works</h2>
-          <p class="section-sub">Three steps. No sign-up, no upload to anyone&rsquo;s cloud.</p>
+          <p class="section-sub">Three steps. No sign-up, no upload to anyone&rsquo;s cloud &mdash; peer-to-peer, encrypted end to end.</p>
         </div>
 
         <ol class="steps">
@@ -260,7 +333,7 @@
       <div class="container">
         <div class="section-head">
           <h2 id="why-title">Why Dropwire</h2>
-          <p class="section-sub">Built privacy-first, from the wire up.</p>
+          <p class="section-sub">Free, open-source, and truly private &mdash; no servers, no tracking, peer-to-peer by design.</p>
         </div>
 
         <div class="cards">
@@ -437,6 +510,45 @@
               through in transit &mdash; nothing is retained after the transfer finishes.</p>
             </div>
           </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>How is Dropwire different from WeTransfer?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>WeTransfer uploads your files to its servers during transfer and limits file size on the free
+              tier. Dropwire sends files peer-to-peer, directly from your device to theirs &mdash; nothing is
+              uploaded to anyone&rsquo;s cloud, there&rsquo;s no size limit, and it&rsquo;s free and open source.
+              WeTransfer is web-based; Dropwire is a desktop app for Windows, macOS, and Linux.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>Is there an AirDrop alternative for Windows and Linux?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Yes &mdash; Dropwire. AirDrop is Apple-only and works on the local network. Tools like Snapdrop
+              and LocalSend add Windows, Linux, and Android but stay LAN-only. Dropwire works across all those
+              desktops <strong>and over the internet</strong>, so you can send to someone on a different network
+              entirely &mdash; no shared Wi-Fi required.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>How is Dropwire different from Send Anywhere?</span>
+              <span class="chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="faq-body">
+              <p>Send Anywhere is free to use but closed-source and runs its own servers, with a paid tier for
+              more. Dropwire is open source and peer-to-peer &mdash; we run no servers ourselves; the open iroh
+              relay is only a fallback and can&rsquo;t read your encrypted data. Dropwire is free forever, and
+              you can audit or modify the code.</p>
+            </div>
+          </details>
         </div>
       </div>
     </section>
@@ -444,14 +556,13 @@
     <!-- ======================= DOWNLOAD CTA ======================= -->
     <section id="download" class="section download" aria-labelledby="download-title">
       <div class="container container-narrow download-inner">
-        <h2 id="download-title">Get Dropwire</h2>
-        <p class="section-sub">Free and open source. Prebuilt installers are on the way &mdash; for now, build it from source.</p>
+        <h2 id="download-title">Download Dropwire &mdash; free &amp; open source</h2>
+        <p class="section-sub">For Windows, macOS &amp; Linux. Grab the latest build from GitHub, or build it from source &mdash; it&rsquo;s quick.</p>
         <div class="download-buttons">
-          <a class="btn btn-primary" href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">Build from source</a>
+          <a class="btn btn-primary" href="https://github.com/muhamadjawdatsalemalakoum/dropwire/releases" rel="noopener">Get Dropwire on GitHub</a>
         </div>
-        <p class="platforms">Windows &middot; macOS &middot; Linux</p>
-        <p class="cta-note">Prefer to build it yourself? Grab the source on
-          <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">GitHub</a>.</p>
+        <p class="platforms">Windows &middot; macOS &middot; Linux &middot; Open source &middot; No account</p>
+        <p class="cta-note">Building from source? The <a href="https://github.com/muhamadjawdatsalemalakoum/dropwire#readme" rel="noopener">README</a> walks you through it.</p>
       </div>
     </section>
   </main>
