@@ -20,7 +20,7 @@ resumable, and open source.
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3DA35D)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-2C333D)
 ![Built with iroh](https://img.shields.io/badge/built%20with-iroh-D2FF3A?labelColor=0E1116)
-![Status](https://img.shields.io/badge/status-pre--alpha-E0A93A)
+![Status](https://img.shields.io/badge/status-alpha-E0A93A)
 
 [**Download**](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases) ·
 [Architecture](ARCHITECTURE.md) ·
@@ -31,8 +31,10 @@ resumable, and open source.
 
 ---
 
-> **Status:** early development (pre-alpha). The transfer engine and desktop app are
-> being built now. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design and
+> **Status:** alpha. The transfer engine and desktop app work end to end on Windows,
+> macOS, and Linux — send a file or folder, preview before accepting, download only the
+> files you want, resume an interrupted transfer, and run several at once. Polishing
+> toward a public release. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design and
 > [`docs/BUSINESS.md`](docs/BUSINESS.md) for the sustainability model.
 
 ## Why Dropwire
@@ -51,15 +53,24 @@ your files through their servers with size caps and ads. Dropwire is the missing
   direct connection isn't possible, it falls back to an encrypted relay that still can't
   read a single byte.
 - **Works across the internet** — not just your local network.
-- **Resumable.** A dropped connection picks up where it left off.
+- **Resumable.** A dropped connection picks up where it left off — only the missing
+  pieces are re-sent, verified end to end as they arrive.
+- **Take only what you want.** Receiving a folder? Untick the files you don't need —
+  only what you choose is transferred.
+- **One code, one recipient.** A code isn't a public link: it's served to the first
+  device that connects, and others are refused.
+- **Several at once.** Run multiple sends and receives in parallel, each with its own
+  live progress and a direct-vs-relayed badge.
 - **Open source.** Dual-licensed MIT / Apache-2.0. Audit it, fork it, self-host it.
 
 ## How it works
 
 1. **Pick** a file or folder.
-2. **Share** the short code (or QR) Dropwire gives you.
-3. The other person enters the code, **sees exactly what's being sent and accepts** — then it runs
-   **directly, device to device.**
+2. **Share** the one-time transfer code or QR Dropwire gives you — copy it into any chat,
+   or have them scan the QR.
+3. The other person enters the code, **previews exactly what's being sent — names, sizes,
+   and count — and accepts** (or declines, and you're told instantly). Then it runs
+   **directly, device to device**, with a live direct-vs-relayed badge.
 
 Under the hood: each device has a stable cryptographic identity (you "dial a key, not an
 IP"); peers find each other via DNS/DHT discovery; the connection is QUIC with TLS 1.3;
@@ -69,11 +80,12 @@ content is verified end-to-end with BLAKE3 so resume and integrity come for free
 
 ```
 core/          # `irohcore` — the transfer engine (the only crate that imports iroh/iroh-blobs)
-src-tauri/     # desktop app shell (Tauri v2)            [added in M2]
+src-tauri/     # desktop app shell (Tauri v2)
+ui/            # the desktop app's frontend (plain HTML/CSS/JS — no build step)
 www/           # static landing page
-docs/          # BUSINESS.md and other docs
+docs/          # BUSINESS.md, PRIVACY.md, DEVELOPING.md, and other docs
 branding/      # brand identity + assets
-infra/         # self-hosted relay + DNS server configs and deploy scripts  [M4]
+infra/         # self-hosted relay + DNS server configs and deploy scripts
 ARCHITECTURE.md
 ```
 
@@ -96,7 +108,7 @@ Full developer guide: [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Design: [`ARCH
 Dropwire collects nothing. There are no accounts, no analytics, and no phone-home. Your
 node identity and transfer history live only on your machine. The only network services
 involved are discovery and the relay fallback — and the relay only ever forwards encrypted
-packets it cannot decrypt. See [`docs/PRIVACY.md`](docs/PRIVACY.md) (coming with M5).
+packets it cannot decrypt. See [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## License
 
