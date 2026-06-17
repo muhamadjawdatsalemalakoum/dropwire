@@ -36,8 +36,8 @@ infra/
 ## Why two hosts
 
 Both services want port **443** (LetsEncrypt TLS), so the simplest correct layout is **one small
-VPS each** (≈ $5/mo each on a flat-egress host like Hetzner — the egress matters, see
-[`../docs/BUSINESS.md`](../docs/BUSINESS.md)). They can be co-located behind a reverse proxy, but
+VPS each** (≈ $5/mo each on a flat-egress host like Hetzner — flat/unmetered egress
+matters most for the relay). They can be co-located behind a reverse proxy, but
 the relay's QUIC (UDP 9889) and the DNS server's UDP/TCP 53 don't proxy cleanly, so separate hosts
 keep it simple and robust. Start here; scale the relay horizontally on bandwidth later.
 

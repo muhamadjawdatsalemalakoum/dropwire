@@ -2,7 +2,7 @@
    Dropwire — landing site styles
    Vanilla CSS, no build step. Responsive, light + dark, accessible.
 
-   PALETTE: reconciled with BRAND.md (2026-06-16). Brand accent is "Live Wire"
+   PALETTE: Brand accent is "Live Wire"
    lime (#C6F032 light / #D2FF3A dark) on "Wire Black" #0E1116, with faintly
    warm-green neutrals. Lime is a *fill* color — text on it is always Wire
    Black ink (--accent-contrast), never white (lime + white fails contrast).
@@ -10,7 +10,7 @@
 
 /* ---------------------------- Design tokens ---------------------------- */
 :root {
-  /* Brand accent — "Live Wire" lime (BRAND.md §5). Lime is a FILL color:
+  /* Brand accent — "Live Wire" lime. Lime is a FILL color:
      text/icons on top are always Wire Black ink (--accent-contrast). */
   --accent: #c6f032;
   --accent-strong: #a8d616;

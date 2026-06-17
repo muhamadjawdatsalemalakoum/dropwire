@@ -9,8 +9,8 @@ This is the **human-gate checklist** — the steps that need *your* domain, serv
 ## 0. Prerequisites
 
 - A domain you control (e.g. `example.org`).
-- Two small Linux VPSes with public IPv4 (flat/unmetered egress strongly preferred — see
-  [`../docs/BUSINESS.md`](../docs/BUSINESS.md)). Call them **RELAY_HOST** and **DNS_HOST**.
+- Two small Linux VPSes with public IPv4 (flat/unmetered egress strongly preferred,
+  since the relay forwards bytes for transfers that can't connect directly). Call them **RELAY_HOST** and **DNS_HOST**.
 - Docker + Docker Compose on each.
 - A relay token: `openssl rand -hex 32`.
 

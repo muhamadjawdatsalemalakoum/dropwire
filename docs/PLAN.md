@@ -166,7 +166,7 @@ the facts among that description are un-spoofable.
   ```jsonc
   {
     "v": 1,                       // schema version — receiver rejects unknown major versions
-    "from": "Keon's Laptop",      // CLAIM (display only)
+    "from": "Alex's Laptop",      // CLAIM (display only)
     "note": "vacation photos",    // CLAIM (display only, plain text)
     "created_at": 1718539200,
     "count": 2,

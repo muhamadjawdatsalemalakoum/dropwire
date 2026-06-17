@@ -2,7 +2,7 @@
 
 > Status: **design v1 (next-gen redesign)**, 2026-06-16. Owner: product design / design engineering.
 > Scope: the **desktop** app UI/UX (Tauri WebView2/Chromium, ~980×680, resizable, **dark-first**).
-> Pairs with [`BRAND.md`](../branding/BRAND.md) (identity), [`ARCHITECTURE.md`](../ARCHITECTURE.md) (the build),
+> Pairs with [`ARCHITECTURE.md`](../ARCHITECTURE.md) (the build),
 > and the current shipping UI in [`ui/`](../ui/) (`index.html`, `app.css`, `app.js`).
 >
 > **Hard contract preserved.** This redesign changes *pixels and motion only*. It keeps the exact flow
@@ -39,7 +39,7 @@ spine of the entire product: it is the logo, it is the loading state, it is the 
 success animation, it is the navigation indicator. **One signature object, used everywhere, that the user
 learns to read in three seconds.** When nothing is happening the wire is dim and still. When a peer connects,
 it *ignites*. When bytes flow, current visibly travels along it. When the transfer completes, the current
-reaches the far node and the node *sparks*. The metaphor in BRAND.md ("a private wire between your devices")
+reaches the far node and the node *sparks*. The brand metaphor ("a private wire between your devices")
 stops being a tagline and becomes the literal interface.
 
 This is the ownable thing. Nobody else in the category (WeTransfer, AirDrop, Snapdrop, LocalSend) has a
@@ -100,7 +100,7 @@ ever need."*
 ## 2. Design system — tokens
 
 Dark-first. The dark theme is the *design target*; light is a faithful port. Drop this straight into `:root`.
-All colors trace back to BRAND.md §5; new tokens (surface ladder, glows, motion) are additive and on-brand.
+All colors trace back to the brand palette; new tokens (surface ladder, glows, motion) are additive and on-brand.
 
 ### 2.1 Color tokens
 
@@ -568,7 +568,7 @@ A pill that tells the truth about the path (BRAND: never hide a relay).
 - Connection: the serverless status with the same dot as the rail; a one-line plain explanation.
 - Controls (default download folder, theme): use ghost buttons / a segmented control (Auto/Light/Dark) sized
   at 28px height, `--surface-2` track, lime active segment text.
-- About: "Dropwire · free & open source · built on iroh" + link to dropwire.app (link color `--wire-press` on
+- About: "Dropwire · free & open source · built on iroh" + link to the project site (link color `--wire-press` on
   light, `--wire` on dark — links are the one inline lime-text exception, and only as links).
 
 ---
@@ -802,7 +802,7 @@ Window ~980×680. Layout = **64px nav rail** + fluid content. Content is centere
 - Title + sub "Dropwire keeps nothing in the cloud. Everything below lives on this device."
 - One panel, `.setting` rows: **This device's ID** (mono, copy), **Default download folder** (path + Change),
   **Connection** (serverless status dot + plain explanation), **Theme** (Auto/Light/Dark segmented),
-  **About** (free & open source · built on iroh · dropwire.app link).
+  **About** (free & open source · built on iroh · project-site link).
 
 ---
 

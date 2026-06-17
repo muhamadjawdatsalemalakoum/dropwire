@@ -34,8 +34,7 @@ resumable, and open source.
 > **Status:** alpha. The transfer engine and desktop app work end to end on Windows,
 > macOS, and Linux — send a file or folder, preview before accepting, download only the
 > files you want, resume an interrupted transfer, and run several at once. Polishing
-> toward a public release. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design and
-> [`docs/BUSINESS.md`](docs/BUSINESS.md) for the sustainability model.
+> toward a public release. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design.
 
 ## Why Dropwire
 
@@ -83,8 +82,8 @@ core/          # `irohcore` — the transfer engine (the only crate that imports
 src-tauri/     # desktop app shell (Tauri v2)
 ui/            # the desktop app's frontend (plain HTML/CSS/JS — no build step)
 www/           # static landing page
-docs/          # BUSINESS.md, PRIVACY.md, DEVELOPING.md, and other docs
-branding/      # brand identity + assets
+docs/          # PRIVACY.md, DEVELOPING.md, and other docs
+branding/      # brand assets (logo, wordmark, icons)
 infra/         # self-hosted relay + DNS server configs and deploy scripts
 ARCHITECTURE.md
 ```

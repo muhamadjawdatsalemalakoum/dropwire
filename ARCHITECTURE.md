@@ -299,7 +299,7 @@ hash** — a sender cannot show one manifest then deliver different bytes. It ri
 // .dropwire/manifest.json (v1) — Dropwire-owned schema, NOT iroh's CollectionMeta
 {
   "v": 1,
-  "from": "Keon's Laptop",          // sender-authored claim — display only
+  "from": "Alex's Laptop",          // sender-authored claim — display only
   "note": "vacation photos",        // sender-authored claim — display only
   "created_at": 1718539200,
   "count": 2,

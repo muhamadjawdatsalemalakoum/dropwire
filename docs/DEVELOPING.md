@@ -8,7 +8,7 @@ src-tauri/   the desktop app shell (Tauri v2): commands, window, config, icons
 ui/          the app frontend (vanilla HTML/CSS/JS; loaded by Tauri as frontendDist)
 infra/       OPTIONAL self-hosted relay + DNS (not needed — the app is serverless by default)
 www/         marketing landing page (static)
-docs/        BUSINESS.md, PRIVACY.md, this file
+docs/        PRIVACY.md, this file, and other docs
 ```
 
 The golden rule: **`iroh` / `iroh-blobs` types never appear outside `core/`.** The shell and UI
