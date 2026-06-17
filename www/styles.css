@@ -784,6 +784,16 @@ img, svg { max-width: 100%; }
   font-weight: 600;
   color: var(--ink-faint);
 }
+.install-note { margin: 1.3rem 0 0; font-size: 0.9rem; color: var(--ink-soft); }
+.install-note code { font-family: var(--font-mono); font-size: 0.85em; }
+.platforms {
+  margin: 1.1rem 0 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
 
 @media (max-width: 760px) {
   .shot-row { grid-template-columns: 1fr; gap: 1.1rem; }
