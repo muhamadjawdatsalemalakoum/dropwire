@@ -116,3 +116,33 @@
     lbImg.removeAttribute("src");
   });
 })();
+
+/* =========================================================================
+   Demo video — click-to-load. Nothing from YouTube loads until the visitor
+   presses play, so the page stays tracker-free on load. Swaps in the
+   privacy-friendly youtube-nocookie player only on click.
+   ========================================================================= */
+(function () {
+  "use strict";
+  var wraps = document.querySelectorAll(".video-embed[data-yt]");
+  if (!wraps.length) return;
+  Array.prototype.forEach.call(wraps, function (wrap) {
+    var btn = wrap.querySelector(".video-embed-btn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var id = wrap.getAttribute("data-yt");
+      if (!id) return;
+      var iframe = document.createElement("iframe");
+      iframe.src =
+        "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&rel=0";
+      iframe.title = "Dropwire demo video";
+      iframe.allow =
+        "autoplay; encrypted-media; picture-in-picture; web-share; fullscreen";
+      iframe.setAttribute("allowfullscreen", "");
+      iframe.loading = "lazy";
+      wrap.innerHTML = "";
+      wrap.appendChild(iframe);
+      iframe.focus();
+    });
+  });
+})();
