@@ -674,6 +674,24 @@ img, svg { max-width: 100%; }
 .made-with a { color: var(--link); font-weight: 600; }
 .privacy-note { max-width: 480px; }
 
+/* Product Hunt badge (hero, below the CTA) */
+.ph-badge {
+  display: inline-flex;
+  line-height: 0;
+  border-radius: 8px;
+  margin-top: 1.5rem;
+}
+.ph-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ph-badge-img { display: block; width: 250px; height: 54px; }
+/* Show the badge that matches the active theme (mirrors the sun/moon toggle) */
+.ph-badge-dark { display: none; }
+:root[data-theme="dark"] .ph-badge-light { display: none; }
+:root[data-theme="dark"] .ph-badge-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ph-badge-light { display: none; }
+  :root:not([data-theme="light"]) .ph-badge-dark { display: block; }
+}
+
 /* --------------------------- Responsive ------------------------------- */
 @media (max-width: 860px) {
   .steps { grid-template-columns: 1fr; }
