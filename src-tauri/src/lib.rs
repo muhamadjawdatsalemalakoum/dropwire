@@ -6,9 +6,11 @@
 
 use std::path::PathBuf;
 
-use irohcore::{Core, CoreConfig, CtrlMsg, Progress, TransferId, TransferPreview, TransferRecord};
+use irohcore::{
+    Core, CoreConfig, CtrlMsg, NearbyDevice, Progress, TransferId, TransferPreview, TransferRecord,
+};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_stream::StreamExt;
 
@@ -27,6 +29,87 @@ fn fp_to_string(fp: tauri_plugin_dialog::FilePath) -> Option<String> {
 #[tauri::command]
 fn my_endpoint_id(state: State<'_, AppState>) -> String {
     state.core.endpoint_id()
+}
+
+/// This device's short human-checkable fingerprint (pairing dialogs).
+#[tauri::command]
+fn my_fingerprint(state: State<'_, AppState>) -> String {
+    state.core.fingerprint()
+}
+
+/// Start the nearby session: advertise on the LAN + browse for peers, and
+/// spawn the two event pumps (offers in → window events; nothing out needs a
+/// pump since offer updates stream through their own channels).
+#[tauri::command]
+async fn nearby_start(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.core.start_nearby().await.map_err(|e| e.to_string())?;
+    spawn_offer_pump(&app, &state);
+    Ok(())
+}
+
+/// Stop the nearby session (peers see us leave within their TTL).
+#[tauri::command]
+async fn nearby_stop(state: State<'_, AppState>) -> Result<(), String> {
+    state.core.stop_nearby().await;
+    Ok(())
+}
+
+/// Live snapshot of nearby Dropwire devices.
+#[tauri::command]
+async fn nearby_list(state: State<'_, AppState>) -> Result<Vec<NearbyDevice>, String> {
+    Ok(state.core.nearby_devices().await)
+}
+
+/// Offer the active send to a nearby device. Streams `OfferUpdate`s back over
+/// the channel; the final update is Accepted / Declined / Failed{reason}.
+#[tauri::command]
+async fn nearby_offer(
+    endpoint_id: String,
+    on_update: Channel<irohcore::OfferUpdate>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let (_id, mut stream) = state
+        .core
+        .offer_nearby(endpoint_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn(async move {
+        while let Some(u) = stream.next().await {
+            let _ = on_update.send(u);
+        }
+    });
+    // The engine's offer id is internal; the UI keys off its own card id.
+    Ok(String::new())
+}
+
+/// Answer an incoming offer (both-sides consent: this is the receiver half).
+#[tauri::command]
+async fn nearby_respond(
+    offer_id: String,
+    accept: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .core
+        .respond_offer(offer_id, accept)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Forward every incoming offer to the webview as `nearby-offer` events.
+/// One long-lived pump per app run (guarded so repeated nearby_start is cheap).
+fn spawn_offer_pump(app: &AppHandle, state: &State<'_, AppState>) {
+    static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if STARTED.set(()).is_err() {
+        return;
+    }
+    let mut rx = state.core.subscribe_offers();
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Ok(offer) = rx.recv().await {
+            let _ = handle.emit("nearby-offer", offer);
+        }
+    });
 }
 
 /// Local transfer history (newest first).
@@ -244,11 +327,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // App data dir: identity (node.key), blob store, transfer catalog.
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("dropwire");
+            // DROPWIRE_DATA_DIR overrides it — lets a second instance run side-
+            // by-side on one machine for testing the nearby flow end-to-end.
+            let data_dir = match std::env::var("DROPWIRE_DATA_DIR") {
+                Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+                _ => app
+                    .path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("dropwire"),
+            };
             // Build the engine inside Tauri's tokio runtime. Serverless by default:
             // DHT discovery + n0 free relay fallback.
             let core =
@@ -258,6 +346,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             my_endpoint_id,
+            my_fingerprint,
+            nearby_start,
+            nearby_stop,
+            nearby_list,
+            nearby_offer,
+            nearby_respond,
             list_transfers,
             pick_paths,
             pick_dest_dir,

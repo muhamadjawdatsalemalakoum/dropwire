@@ -375,6 +375,59 @@ opt-in and clearly "downloading a preview" — and symmetric "sender offers X / 
 
 So selective download, range-grab, the sender accept gate, allow-list, and TTL are all on confirmed ground.
 
+### 5.8 Nearby devices — mDNS discovery + two-sided consent (shipped)
+
+> Implements issue #2. LAN (mDNS/DNS-SD) is live; Bluetooth is planned as a
+> fallback *discovery/bootstrap* transport behind the same consent flow.
+
+**Discovery (`core/src/discover.rs`).** While "Nearby sharing" is on, each
+instance advertises `_dropwire._udp.local.` via `mdns-sd` with TXT records
+`dw_eid` (hex EndpointId) + `dw_name` (display name), SRV port = the engine's
+real QUIC port, `addr_auto` across interfaces; a browse loop folds
+Resolved/Removed events into a peer table (30 s TTL) keyed by endpoint id.
+The UI polls `nearby_devices()` snapshots (~2.5 s). Discovery grants nothing
+by itself — see consent below.
+
+**Consent (`core/src/offer.rs`).** The handshake rides the existing control
+ALPN as new `Frame`s:
+
+```
+SENDER                                   RECEIVER
+  offer_nearby(eid) ── Offer{ticket,…} ──► route_offer → IncomingOffer event
+  (connection parks on the                (UI modal: count/size/fingerprint)
+   verdict wait-list)                     respond_offer(id, accept?)
+  ◄═══ OfferAccept | OfferDecline ═══════ (in-band on the parked connection)
+  Accepted → receiver downloads via the normal blobs path
+```
+
+- The verdict returns **in-band on the sender's own offer connection**: the
+  control handler registers an answer channel *before* surfacing the offer,
+  then parks until `respond_offer` resolves it (or ~115 s lapses → automatic
+  decline). No dial-back address is ever needed; the flow works over relayed
+  paths too.
+- **One-to-one binds at offer time:** `bound[hash] = peer` is set when the
+  offer goes out, so only the consenting neighbor can pull between consent and
+  download; declined/failed offers release the binding and stop serving.
+- **Identity:** offers carry the sender's hex EndpointId (authenticated by the
+  QUIC handshake — `Connection::remote_id()`), display name (a claim), and a
+  short base32 **pairing fingerprint** (9 chars, 3 groups) both UIs show for
+  human verification. File count/size come from the catalog record; the
+  authoritative names/sizes remain BLAKE3-bound in the ticket manifest (§5.7).
+- **Visibility gate:** with nearby mode ON, incoming offers from endpoints not
+  currently visible over mDNS are auto-declined (defense in depth); OFF means
+  invisible (no advertisement, no browsing).
+
+**Shell/UI surface.** Commands `nearby_start/stop/list`, `nearby_offer`
+(streams `OfferUpdate`: waiting → accepted|declined|failed), `nearby_respond`,
+`my_fingerprint`; offers push to the webview as `nearby-offer` events. The
+Send view gains a "Nearby devices" panel (share toggle, radar animation,
+device rows); receivers get the consent modal with a compare-your-fingerprints
+step before accept.
+
+**Tests.** `core/tests/nearby.rs` (hermetic, `test-utils`): accept→transfer
+end-to-end, decline-blocks-transfer (+ nothing written to disk), presence
+frames still flowing, offer-without-send errors cleanly.
+
 **Build plan:** the full milestone-by-milestone, test-first implementation plan lives in [`docs/PLAN.md`](docs/PLAN.md).
 
 ---

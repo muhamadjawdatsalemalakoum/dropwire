@@ -100,6 +100,7 @@ async fn run_send(
     }
 
     // 3. Bundle into a Collection (a HashSeq) — uniform for single file or folder.
+    let files_count = entries.len();
     let collection: Collection = entries.into_iter().collect();
     let collection_tag = collection.store(store).await.context("store collection")?;
     let hash = collection_tag.hash();
@@ -133,6 +134,7 @@ async fn run_send(
             hash_key.clone(),
             None,
             Some(path.to_string_lossy().to_string()),
+            files_count,
             total,
         ));
     }

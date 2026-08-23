@@ -164,6 +164,9 @@ function makeCard(tplId, listId) {
 }
 
 /* -------------------------------- SEND --------------------------------- */
+// The most recent send card that reached Ready (and hasn't finished) — this is
+// the transfer "Send here" offers to the chosen nearby device.
+let liveSend = null;
 async function startSend(path) {
   const card = makeCard('tpl-send', 'send-list');
   const els = {
@@ -196,7 +199,8 @@ function onSendMsg(m, els, card) {
     case 'importing': els.status.textContent = `Preparing… ${fmtBytes(m.done)} / ${fmtBytes(m.total)}`; break;
     case 'ready':
       els.code.textContent = m.ticket;
-      els.status.textContent = "Ready — share this code. Keep the app open until it's received.";
+      els.status.textContent = "Ready — share this code, or tap a nearby device below.";
+      liveSend = { card, els, ticket: m.ticket };
       invoke('qr_svg', { text: m.ticket }).then((svg) => {
         els.qr.innerHTML = svg;
         els.qr.setAttribute('role', 'img');
@@ -218,10 +222,12 @@ function onSendMsg(m, els, card) {
       setBarEl(els.fill, els.svg, els.pct, 1, 1);
       if (els.svg) doneSpark(els.svg);
       els.status.textContent = 'Sent ✓'; els.cancel.textContent = 'Dismiss';
+      if (liveSend && liveSend.card === card) liveSend = null;
       break;
     case 'error':
       els.status.setAttribute('aria-live', 'assertive');
       els.status.textContent = m.message ? `Couldn't send — ${m.message}` : "Couldn't send.";
+      if (liveSend && liveSend.card === card) liveSend = null;
       break;
     case 'cancelled': removeCard(card); break;
   }
@@ -498,4 +504,208 @@ if (HAS_TAURI && TAURI.webview && TAURI.webview.getCurrentWebview) {
   try { const v = await invoke('app_version'); if (v) $('#app-version').textContent = 'v' + v; } catch (_) {}
   try { const eid = await invoke('my_endpoint_id'); const el = $('#endpoint-id'); el.textContent = eid; el.title = eid; }
   catch (_) { $('#endpoint-id').textContent = HAS_TAURI ? '(starting…)' : '(preview — run inside the app)'; }
+})();
+
+/* ===================== NEARBY: discovery + two-sided consent ============ */
+/* mDNS discovery (LAN) with a Bluetooth fallback planned at the engine level.
+ * Being discoverable never means being reachable: every transfer needs BOTH
+ * sides to confirm. With the toggle off, this device is invisible. */
+const nearby = {
+  on: localStorage.getItem('dropwire-nearby') !== 'off', // opt-out, remembered
+  started: false,
+  devices: new Map(),   // endpoint_id -> device snapshot from the engine
+  offers: new Map(),    // offer_id -> IncomingOffer
+  poll: null,
+};
+const nearbyEls = () => ({
+  panel: $('#nearby-panel'), toggle: $('#nearby-toggle'), radar: $('#nearby-radar'),
+  status: $('#nearby-status'), list: $('#nearby-devices'),
+});
+
+function nearbySetSwitch(on) {
+  const { toggle, radar } = nearbyEls();
+  if (toggle) toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+  if (radar) radar.classList.toggle('on', on);
+}
+function nearbyStatus(text) {
+  const el = $('#nearby-status'); if (el) el.textContent = text;
+}
+function deviceRow(d) {
+  const tpl = document.getElementById('tpl-device');
+  const row = tpl.content.firstElementChild.cloneNode(true);
+  row.dataset.eid = d.endpointId;
+  row.querySelector('.js-name').textContent = d.name || 'Dropwire device';
+  const fp = row.querySelector('.js-fp');
+  fp.textContent = d.fingerprint || '';
+  fp.title = 'Pairing code for ' + (d.name || 'this device') + ' — compare before accepting';
+  row.querySelector('.js-send').addEventListener('click', () => offerToDevice(d, row));
+  return row;
+}
+function renderDevices() {
+  const { list } = nearbyEls();
+  if (!list) return;
+  const seen = new Set();
+  for (const d of nearby.devices.values()) {
+    seen.add(d.endpointId);
+    if (!list.querySelector('[data-eid="' + d.endpointId + '"]')) {
+      const row = deviceRow(d);
+      row.classList.add('entering');
+      list.appendChild(row);
+      setTimeout(() => row.classList.remove('entering'), 500);
+    }
+  }
+  list.querySelectorAll('.device-row').forEach((row) => {
+    if (!seen.has(row.dataset.eid)) {
+      if (canAnim) {
+        const a = row.animate([{ opacity: 1 }, { opacity: 0, transform: 'translateY(-4px)' }], { duration: 180, easing: EASE_OUT });
+        a.onfinish = () => row.remove();
+      } else row.remove();
+    }
+  });
+  const empty = list.querySelector('.device-empty');
+  if (!seen.size && !empty) {
+    const el = document.createElement('div');
+    el.className = 'device-empty';
+    el.textContent = 'No Dropwire devices found yet — they appear here automatically while both apps are open.';
+    list.appendChild(el);
+  } else if (seen.size && empty) empty.remove();
+}
+async function nearbyPoll() {
+  try {
+    const devs = await invoke('nearby_list');
+    nearby.devices.clear();
+    for (const d of devs || []) nearby.devices.set(d.endpointId, d);
+    renderDevices();
+    const n = nearby.devices.size;
+    if (!n) nearbyStatus('Looking on this network…');
+    else nearbyStatus(n === 1 ? '1 device nearby' : n + ' devices nearby');
+  } catch (_) { /* preview mode outside the app */ }
+}
+async function nearbyStart() {
+  if (nearby.started) return;
+  nearby.started = true;
+  nearbySetSwitch(true);
+  try { await invoke('nearby_start'); } catch (_) {}
+  await nearbyPoll();
+  nearby.poll = setInterval(nearbyPoll, 2500);
+}
+function nearbyStop() {
+  nearbySetSwitch(false);
+  if (nearby.poll) { clearInterval(nearby.poll); nearby.poll = null; }
+  nearby.devices.clear(); renderDevices();
+  nearbyStatus('Nearby sharing is off — this device is invisible.');
+  if (nearby.started) invoke('nearby_stop').catch(() => {});
+  nearby.started = false;
+}
+
+/* ---- outgoing: tap a device to offer the live send ---- */
+function offerToDevice(d, row) {
+  if (!liveSend) {
+    switchView('send');
+    nearbyStatus('Pick something to send first, then tap a device.');
+    const dz = $('#send-pick');
+    if (dz && canAnim) dz.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.01)' }, { transform: 'scale(1)' }], { duration: 300, easing: EASE_POP });
+    return;
+  }
+  const card = liveSend.card, els = liveSend.els;
+  row && row.classList.add('busy');
+  els.status.textContent = 'Asking ' + (d.name || 'device') + '… waiting for them to accept.';
+  if (els.route) setRouteBadge(els.route, 'connected');
+  const ch = makeChannel();
+  ch.onmessage = (u) => {
+    switch (u.kind) {
+      case 'waiting': break;
+      case 'accepted':
+        row && row.classList.remove('busy');
+        els.status.textContent = (d.name || 'They') + ' accepted — sending…';
+        if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
+        break;
+      case 'declined':
+        row && row.classList.remove('busy');
+        els.status.setAttribute('aria-live', 'assertive');
+        els.status.textContent = (d.name || 'They') + ' declined.';
+        if (liveSend && liveSend.card === card) liveSend = null;
+        break;
+      case 'failed':
+        row && row.classList.remove('busy');
+        els.status.setAttribute('aria-live', 'assertive');
+        els.status.textContent = "Couldn't reach " + (d.name || 'them') + ' — ' + (u.reason || 'try again') + '.';
+        if (liveSend && liveSend.card === card) liveSend = null;
+        break;
+    }
+  };
+  invoke('nearby_offer', { endpointId: d.endpointId, onUpdate: ch }).catch((e) => {
+    row && row.classList.remove('busy');
+    els.status.textContent = "Couldn't start the nearby offer.";
+    console.warn(e);
+  });
+}
+
+/* ---- incoming: the consent modal ---- */
+let offerState = null, offerLastFocus = null;
+function showOfferModal(offer) {
+  if (!offer || !offer.offerId) return;
+  nearby.offers.set(offer.offerId, offer);
+  offerState = offer;
+  offerLastFocus = document.activeElement;
+  $('#offer-device').textContent = offer.deviceName || 'A nearby device';
+  $('#offer-count').textContent = offer.fileCount + ' file' + (offer.fileCount === 1 ? '' : 's');
+  $('#offer-size').textContent = fmtBytes(offer.totalBytes);
+  $('#offer-fp').textContent = offer.fingerprint || '···';
+  invoke('my_fingerprint').then((fp) => { $('#offer-my-fp').textContent = fp; }).catch(() => {});
+  const scrim = $('#nearby-offer-modal');
+  scrim.classList.remove('hidden');
+  const app = document.querySelector('.app'); if (app) app.setAttribute('inert', '');
+  const sheet = scrim.querySelector('.modal-sheet');
+  if (canAnim) {
+    scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
+    sheet.animate([{ opacity: 0, transform: 'translateY(12px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE_POP });
+  }
+  $('#offer-decline').focus();
+}
+function closeOfferModal() {
+  const scrim = $('#nearby-offer-modal');
+  scrim.classList.add('hidden');
+  const app = document.querySelector('.app'); if (app) app.removeAttribute('inert');
+  offerState = null;
+  if (offerLastFocus && offerLastFocus.focus) offerLastFocus.focus();
+}
+$('#offer-accept').addEventListener('click', async () => {
+  const offer = offerState; if (!offer) return;
+  const acceptBtn = $('#offer-accept');
+  acceptBtn.disabled = true; acceptBtn.textContent = 'Connecting…';
+  try { await invoke('nearby_respond', { offerId: offer.offerId, accept: true }); } catch (_) {}
+  acceptBtn.disabled = false; acceptBtn.textContent = 'Accept & receive';
+  closeOfferModal();
+  beginReceive(offer.ticket, null, null);
+});
+$('#offer-decline').addEventListener('click', async () => {
+  const offer = offerState; if (!offer) { closeOfferModal(); return; }
+  try { await invoke('nearby_respond', { offerId: offer.offerId, accept: false }); } catch (_) {}
+  closeOfferModal();
+});
+$('#nearby-offer-modal').addEventListener('click', (e) => {
+  // Scrim click = dismiss without answering; an unanswered offer declines
+  // itself on the sender's side after its wait lapses.
+  if (e.target.id === 'nearby-offer-modal') closeOfferModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#nearby-offer-modal').classList.contains('hidden')) closeOfferModal();
+});
+
+/* ---- wiring: toggle + listen for incoming offers ---- */
+(function initNearby() {
+  const { panel } = nearbyEls();
+  if (!panel) return; // page without the panel
+  if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
+    TAURI.event.listen('nearby-offer', (ev) => showOfferModal(ev.payload)).catch(() => {});
+  }
+  const toggle = $('#nearby-toggle');
+  toggle.addEventListener('click', () => {
+    nearby.on = !nearby.on;
+    localStorage.setItem('dropwire-nearby', nearby.on ? 'on' : 'off');
+    if (nearby.on) { switchView('send'); nearbyStart(); } else nearbyStop();
+  });
+  if (nearby.on) nearbyStart();
+  else { nearbySetSwitch(false); nearbyStatus('Nearby sharing is off — flip the switch to be visible.'); }
 })();

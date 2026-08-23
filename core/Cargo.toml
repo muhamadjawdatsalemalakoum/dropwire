@@ -37,6 +37,11 @@ walkdir.workspace = true
 uuid.workspace = true
 data-encoding.workspace = true
 url.workspace = true
+# Nearby-device discovery (mDNS/DNS-SD). Runtime-threaded (no async runtime
+# coupling), pure Rust, works on Windows/macOS/Linux.
+mdns-sd = "0.21"
+# OS hostname → default device display name.
+hostname = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
@@ -46,9 +51,15 @@ tokio-stream = { workspace = true }
 # (an in-process relay). Dev-only: the shipped binary never sees this feature.
 iroh = { workspace = true, features = ["test-utils"] }
 
-# The relay/resume tests need an in-process relay, so they only build under the
-# `test-utils` feature. All other integration tests stay feature-free.
+# The relay/resume tests need an in-process relay, and the nearby consent tests
+# need explicit dial-address helpers, so they only build under `test-utils`.
+# All other integration tests stay feature-free.
 [[test]]
 name = "relay"
 path = "tests/relay.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "nearby"
+path = "tests/nearby.rs"
 required-features = ["test-utils"]

@@ -16,9 +16,11 @@
 mod catalog;
 mod config;
 mod control;
+mod discover;
 mod endpoint;
 mod error;
 mod identity;
+mod offer;
 mod progress;
 mod receive;
 mod send;
@@ -38,13 +40,17 @@ use tokio_util::sync::CancellationToken;
 pub use catalog::{Status, TransferRecord};
 pub use config::{CoreConfig, Infra};
 pub use control::CtrlMsg;
+pub use discover::NearbyDevice;
 pub use error::{CoreError, Result};
+pub use offer::{IncomingOffer, OfferUpdate};
 pub use progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
     TransferStats,
 };
 
 use catalog::Catalog;
+use discover::NearbyState;
+use offer::ConsentCtx;
 
 /// A handle to the running Dropwire engine. Cheap to clone (internally `Arc`).
 #[derive(Clone)]
@@ -70,6 +76,12 @@ pub(crate) struct Inner {
     pub(crate) bound: Mutex<HashMap<String, iroh::EndpointId>>,
     /// Broadcast of control messages received from peers (see [`control`]).
     pub(crate) ctrl_tx: broadcast::Sender<control::CtrlMsg>,
+    /// Nearby (mDNS) discovery session: advertisement + live peer table.
+    pub(crate) nearby: Mutex<NearbyState>,
+    /// UDP port our mDNS announcement points at (the engine's QUIC socket).
+    pub(crate) nearby_port: u16,
+    /// Two-sided consent state for nearby transfers (see [`offer`]).
+    pub(crate) consent: ConsentCtx,
 }
 
 impl Core {
@@ -97,15 +109,39 @@ impl Core {
             },
         );
         let blobs = iroh_blobs::BlobsProtocol::new(&store, Some(events));
-        // A second ALPN for the free peer-to-peer control channel (presence,
-        // instant decline, chat) — additive; it never touches the blobs path.
+
+        // Control plane (presence/chat + nearby consent frames).
         let (ctrl_tx, _) = broadcast::channel(64);
+        let (offer_tx, _) = broadcast::channel(64);
+
+        // Nearby discovery session. The mDNS SRV record points at this
+        // endpoint's real QUIC port so peers can dial straight over the LAN.
+        let self_eid = endpoint.id().to_string();
+        let nearby = NearbyState::new(self_eid, discover::default_device_name());
+        let nearby_port = endpoint
+            .bound_sockets()
+            .iter()
+            .find_map(|s| match s {
+                std::net::SocketAddr::V4(v4) => Some(v4.port()),
+                _ => None,
+            })
+            .unwrap_or(0);
+
+        let consent = offer::ConsentCtx {
+            ctrl_tx: ctrl_tx.clone(),
+            offer_tx,
+            incoming_offers: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            nearby_peers: nearby.peers.clone(),
+            nearby_running: nearby.running_flag(),
+            verdict_waiters: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        };
+
         let router = Router::builder(endpoint)
             .accept(store::BLOBS_ALPN, blobs)
             .accept(
                 control::CTRL_ALPN,
                 control::Ctrl {
-                    tx: ctrl_tx.clone(),
+                    core_ctx: consent.clone(),
                 },
             )
             .spawn();
@@ -123,6 +159,9 @@ impl Core {
             conns: Mutex::new(HashMap::new()),
             bound: Mutex::new(HashMap::new()),
             ctrl_tx,
+            nearby: Mutex::new(nearby),
+            nearby_port,
+            consent,
         });
         let core = Core { inner };
         tokio::spawn(send::consume_provider_events(core.clone(), ev_rx));
@@ -132,6 +171,11 @@ impl Core {
     /// This device's stable public identity (`EndpointId`), as a string.
     pub fn endpoint_id(&self) -> String {
         self.inner.router.endpoint().id().to_string()
+    }
+
+    /// The short human-checkable fingerprint of THIS device (for pairing UIs).
+    pub fn fingerprint(&self) -> String {
+        discover::NearbyDevice::fingerprint_for(&self.endpoint_id())
     }
 
     /// Cancel an in-flight transfer (no-op if it already finished).
@@ -148,6 +192,7 @@ impl Core {
 
     /// Gracefully shut down the engine.
     pub async fn shutdown(self) -> Result<()> {
+        self.stop_nearby().await;
         let _ = self.inner.router.shutdown().await;
         // VERIFY (ARCHITECTURE.md §13): FsStore::shutdown() shape on 0.103.
         let _ = self.inner.store.shutdown().await;

@@ -7,6 +7,23 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Nearby devices with two-sided consent** (issue #2): Dropwire instances on
+  the same network discover each other automatically over mDNS/DNS-SD and are
+  offered as one-tap transfer targets. Nothing moves until BOTH sides confirm —
+  the sender picks a device ("Send here") and waits, the receiver gets a consent
+  dialog showing file count, total size, and a pairing fingerprint to compare.
+  Declining notifies the sender instantly; with Nearby sharing off, the device
+  is invisible to others. Bluetooth discovery/bootstrap is planned as the next
+  transport behind the same flow.
+- Engine: `irohcore` nearby module — mDNS advertise/browse (`_dropwire._udp.`),
+  consent handshake over the control channel (`Offer`/`OfferAccept`/
+  `OfferDecline` frames on the offer's own connection), one-to-one binding at
+  offer time, and self-decline when an offer goes unanswered.
+- Shell: `my_fingerprint`, `nearby_start`, `nearby_stop`, `nearby_list`,
+  `nearby_offer`, `nearby_respond` commands + incoming-offer event pump.
+- UI: "Nearby devices" panel (radar animation, device rows with pairing
+  codes, share toggle) and the incoming-offer modal with a verify-your-pairing-
+  code step between offer and accept.
 - "See it in action" showcase with real Windows + macOS product screenshots,
   and a tap-to-zoom lightbox.
 - Equal billing for Linux across the site (showcase, platform line, and

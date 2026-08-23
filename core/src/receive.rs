@@ -259,6 +259,7 @@ async fn run_receive(
             hash.to_string(),
             Some(dest.to_string_lossy().to_string()),
             None,
+            0, // file count is learned from the preview; not needed for resume
             total,
         ));
     }
