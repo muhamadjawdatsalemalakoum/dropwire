@@ -41,6 +41,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
+      "infoPlist": "installer/Info.plist",
       "dmg": {
         "background": "icons/dmg-background.png",
         "windowSize": { "width": 660, "height": 440 },
@@ -62,7 +63,8 @@
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
         "headerImage": "installer/header.bmp",
-        "sidebarImage": "installer/sidebar.bmp"
+        "sidebarImage": "installer/sidebar.bmp",
+        "installerHooks": "installer/hooks.nsi"
       }
     }
   }

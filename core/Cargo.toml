@@ -15,9 +15,12 @@ unsafe_code = "forbid"
 
 [features]
 # Test-only: exposes the in-process relay path (`Infra::LocalRelay`) used by the
-# single-machine relay/resume integration tests in `tests/relay.rs`. Pulls
-# nothing into shipped builds — `cargo build` leaves it off.
-test-utils = []
+# single-machine relay/resume integration tests in `tests/relay.rs`, plus the
+# explicit dial-address helper used by the nearby consent tests. Forwards to
+# iroh's own `test-utils` so `CaTlsConfig::insecure_skip_verify` (needed to
+# trust the in-process relay's self-signed cert) is available to the lib too.
+# Pulls nothing into shipped builds — `cargo build` leaves it off.
+test-utils = ["iroh/test-utils"]
 
 [dependencies]
 iroh.workspace = true

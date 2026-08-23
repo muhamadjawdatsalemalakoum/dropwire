@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Merged into Dropwire's Info.plist at bundle time.
+     Nearby-device discovery uses mDNS (UDP 5353 multicast) + direct QUIC on
+     the local network; macOS Sequoia+ requires these declarations or it
+     silently blocks the traffic. -->
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Dropwire finds nearby devices on your network so you can send files directly to them. Your files are only shared after you confirm each transfer.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_dropwire._udp</string>
+  </array>
+</dict>
+</plist>
