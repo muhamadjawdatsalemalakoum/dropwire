@@ -514,7 +514,10 @@ const nearby = {
   on: localStorage.getItem('dropwire-nearby') !== 'off', // opt-out, remembered
   started: false,
   devices: new Map(),   // endpoint_id -> device snapshot from the engine
-  offers: new Map(),    // offer_id -> IncomingOffer
+  offers: new Map(),    // offer_id -> IncomingOffer (currently shown / queued)
+  queue: [],            // offers waiting while another modal is open
+  offering: false,      // an outgoing offer is in flight (one at a time)
+  offerTimer: null,     // auto-expire timer for the visible consent modal
   poll: null,
 };
 const nearbyEls = () => ({
@@ -586,7 +589,13 @@ async function nearbyStart() {
   nearby.started = true;
   nearbySetSwitch(true);
   try { await invoke('nearby_start'); } catch (_) {}
+  // The user may have toggled Nearby off while the awaits above were in flight
+  // (nearbyStop ran, cleared state, set the off status). Bail before touching
+  // the UI or arming a poll interval nothing would ever clear.
+  if (!nearby.started || !nearby.on) return;
   await nearbyPoll();
+  if (!nearby.started || !nearby.on) return;
+  if (nearby.poll) clearInterval(nearby.poll);
   nearby.poll = setInterval(nearbyPoll, 2500);
 }
 function nearbyStop() {
@@ -599,6 +608,11 @@ function nearbyStop() {
 }
 
 /* ---- outgoing: tap a device to offer the live send ---- */
+function setOffering(on) {
+  nearby.offering = on;
+  const { list } = nearbyEls();
+  if (list) list.classList.toggle('offering', on); // dims every "Send here"
+}
 function offerToDevice(d, row) {
   if (!liveSend) {
     switchView('send');
@@ -607,27 +621,36 @@ function offerToDevice(d, row) {
     if (dz && canAnim) dz.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.01)' }, { transform: 'scale(1)' }], { duration: 300, easing: EASE_POP });
     return;
   }
+  // One offer at a time. A pending offer holds the single live send; issuing a
+  // second one would rebind that send to another device and let the first
+  // offer's (later) auto-decline cancel a transfer the second device accepted.
+  if (nearby.offering) {
+    nearbyStatus('Waiting on the last offer — cancel it first to pick another device.');
+    return;
+  }
   const card = liveSend.card, els = liveSend.els;
+  setOffering(true);
   row && row.classList.add('busy');
   els.status.textContent = 'Asking ' + (d.name || 'device') + '… waiting for them to accept.';
   if (els.route) setRouteBadge(els.route, 'connected');
+  const done = () => { setOffering(false); row && row.classList.remove('busy'); };
   const ch = makeChannel();
   ch.onmessage = (u) => {
     switch (u.kind) {
       case 'waiting': break;
       case 'accepted':
-        row && row.classList.remove('busy');
+        done();
         els.status.textContent = (d.name || 'They') + ' accepted — sending…';
         if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
         break;
       case 'declined':
-        row && row.classList.remove('busy');
+        done();
         els.status.setAttribute('aria-live', 'assertive');
         els.status.textContent = (d.name || 'They') + ' declined.';
         if (liveSend && liveSend.card === card) liveSend = null;
         break;
       case 'failed':
-        row && row.classList.remove('busy');
+        done();
         els.status.setAttribute('aria-live', 'assertive');
         els.status.textContent = "Couldn't reach " + (d.name || 'them') + ' — ' + (u.reason || 'try again') + '.';
         if (liveSend && liveSend.card === card) liveSend = null;
@@ -635,7 +658,7 @@ function offerToDevice(d, row) {
     }
   };
   invoke('nearby_offer', { endpointId: d.endpointId, onUpdate: ch }).catch((e) => {
-    row && row.classList.remove('busy');
+    done();
     els.status.textContent = "Couldn't start the nearby offer.";
     console.warn(e);
   });
@@ -643,8 +666,30 @@ function offerToDevice(d, row) {
 
 /* ---- incoming: the consent modal ---- */
 let offerState = null, offerLastFocus = null;
-function showOfferModal(offer) {
+// Roughly the sender's self-decline window (ANSWER_WAIT ≈ 115s); auto-dismiss a
+// hair earlier so a stale dialog can't linger with an Accept button that would
+// start a doomed download.
+const OFFER_TTL_MS = 112000;
+function anyModalOpen() {
+  return !$('#nearby-offer-modal').classList.contains('hidden')
+    || !$('#recv-preview').classList.contains('hidden');
+}
+// Entry point for every 'nearby-offer' event. Never clobber a modal that's
+// already up (an attacker could otherwise swap the dialog under the user's
+// cursor between reading and clicking): queue it and show it when the current
+// one is answered.
+function enqueueOffer(offer) {
   if (!offer || !offer.offerId) return;
+  if (nearby.offers.has(offer.offerId)) return; // duplicate event
+  if (offerState || anyModalOpen()) { nearby.queue.push(offer); return; }
+  showOfferModal(offer);
+}
+function showNextOffer() {
+  if (offerState || anyModalOpen()) return;
+  const next = nearby.queue.shift();
+  if (next) showOfferModal(next);
+}
+function showOfferModal(offer) {
   nearby.offers.set(offer.offerId, offer);
   offerState = offer;
   offerLastFocus = document.activeElement;
@@ -652,6 +697,8 @@ function showOfferModal(offer) {
   $('#offer-count').textContent = offer.fileCount + ' file' + (offer.fileCount === 1 ? '' : 's');
   $('#offer-size').textContent = fmtBytes(offer.totalBytes);
   $('#offer-fp').textContent = offer.fingerprint || '···';
+  const note = $('#offer-note'); if (note) note.textContent = 'Nothing is received until you accept. Declining tells them instantly.';
+  const acceptBtn = $('#offer-accept'); acceptBtn.disabled = false; acceptBtn.textContent = 'Accept & receive';
   invoke('my_fingerprint').then((fp) => { $('#offer-my-fp').textContent = fp; }).catch(() => {});
   const scrim = $('#nearby-offer-modal');
   scrim.classList.remove('hidden');
@@ -661,23 +708,39 @@ function showOfferModal(offer) {
     scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
     sheet.animate([{ opacity: 0, transform: 'translateY(12px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE_POP });
   }
+  if (nearby.offerTimer) clearTimeout(nearby.offerTimer);
+  nearby.offerTimer = setTimeout(() => expireOfferModal(offer.offerId), OFFER_TTL_MS);
   $('#offer-decline').focus();
 }
+function expireOfferModal(offerId) {
+  if (!offerState || offerState.offerId !== offerId) return;
+  const note = $('#offer-note'); if (note) note.textContent = 'This offer expired — ask them to send again.';
+  $('#offer-accept').disabled = true;
+  setTimeout(() => { if (offerState && offerState.offerId === offerId) closeOfferModal(); }, 1600);
+}
 function closeOfferModal() {
+  if (nearby.offerTimer) { clearTimeout(nearby.offerTimer); nearby.offerTimer = null; }
+  if (offerState) nearby.offers.delete(offerState.offerId);
   const scrim = $('#nearby-offer-modal');
   scrim.classList.add('hidden');
   const app = document.querySelector('.app'); if (app) app.removeAttribute('inert');
   offerState = null;
   if (offerLastFocus && offerLastFocus.focus) offerLastFocus.focus();
+  showNextOffer(); // surface the next queued offer, if any
 }
 $('#offer-accept').addEventListener('click', async () => {
   const offer = offerState; if (!offer) return;
   const acceptBtn = $('#offer-accept');
   acceptBtn.disabled = true; acceptBtn.textContent = 'Connecting…';
-  try { await invoke('nearby_respond', { offerId: offer.offerId, accept: true }); } catch (_) {}
-  acceptBtn.disabled = false; acceptBtn.textContent = 'Accept & receive';
+  let ok = true;
+  try { await invoke('nearby_respond', { offerId: offer.offerId, accept: true }); } catch (_) { ok = false; }
+  const ticket = offer.ticket;
   closeOfferModal();
-  beginReceive(offer.ticket, null, null);
+  // Route through the SAME verified preview the code-share flow uses: the file
+  // names and sizes come from the transfer manifest (committed by the code),
+  // not the sender's claim in the offer, and nothing is written until the user
+  // confirms them. If the offer already lapsed, openPreview surfaces that.
+  if (ok) openPreview(ticket, null);
 });
 $('#offer-decline').addEventListener('click', async () => {
   const offer = offerState; if (!offer) { closeOfferModal(); return; }
@@ -698,7 +761,7 @@ document.addEventListener('keydown', (e) => {
   const { panel } = nearbyEls();
   if (!panel) return; // page without the panel
   if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
-    TAURI.event.listen('nearby-offer', (ev) => showOfferModal(ev.payload)).catch(() => {});
+    TAURI.event.listen('nearby-offer', (ev) => enqueueOffer(ev.payload)).catch(() => {});
   }
   const toggle = $('#nearby-toggle');
   toggle.addEventListener('click', () => {

@@ -311,6 +311,8 @@ a{color:var(--wire); text-underline-offset:2px}
 /* ----------------------- preview / accept modal ------------------------- */
 .modal-scrim{position:fixed; inset:0; background:var(--scrim); display:flex; align-items:center;
   justify-content:center; padding:24px; z-index:50}
+/* Consent dialog always sits above the receive-preview modal if both appear. */
+#nearby-offer-modal{z-index:60}
 .modal-sheet{width:100%; max-width:440px; max-height:82vh; display:flex; flex-direction:column;
   background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
   box-shadow:var(--elev-pop); padding:var(--sp-6)}
@@ -378,6 +380,8 @@ a{color:var(--wire); text-underline-offset:2px}
 .device-fp{font-size:11.5px; letter-spacing:.5px; white-space:nowrap}
 .device-row .js-send{margin-left:auto; height:34px; padding:0 14px; font-size:13px}
 .device-row.busy .js-send{opacity:.55; pointer-events:none}
+/* While one offer is in flight, no other device is tappable (one offer at a time). */
+#nearby-devices.offering .js-send{opacity:.55; pointer-events:none}
 .device-empty{padding:18px 12px; text-align:center; color:var(--text-muted); font-size:13px;
   border:1px dashed var(--hairline); border-radius:var(--r-3)}
 .nearby-foot{margin-top:var(--sp-3)}
