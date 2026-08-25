@@ -38,9 +38,6 @@ pub(crate) const NEARBY_SERVICE: &str = "_dropwire._udp.local.";
 const TXT_EID: &str = "dw_eid";
 const TXT_NAME: &str = "dw_name";
 
-/// How long a peer stays listed after its last announcement.
-const PEER_TTL: u64 = 30;
-
 /// One nearby Dropwire instance seen on the local network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,29 +56,42 @@ pub struct NearbyDevice {
     pub seen_at: u64,
 }
 
+/// How many base32 chars the human fingerprint carries. 12 chars = 60 bits.
+/// The old design emitted 9 chars straight off the *hex string* of the id,
+/// which left only ~21 effective bits (a hex char carries 4 bits and its ASCII
+/// high nibble is fixed), so an attacker could grind an Ed25519 keypair to a
+/// matching fingerprint in minutes and defeat the human compare step. Hashing
+/// the identity first spreads every key bit across the output; 60 bits makes
+/// grinding a collision (≈2^60 keygens) infeasible.
+const FP_CHARS: usize = 12;
+
 impl NearbyDevice {
-    /// Build the short human fingerprint: nine base32 chars from the raw key
-    /// bytes, grouped in threes (`abc def ghi`). Same algorithm runs on both
-    /// sides, so two humans can compare the groups aloud before accepting.
+    /// Build the short human fingerprint: [`FP_CHARS`] base32 chars derived from
+    /// a BLAKE3 hash of the identity, grouped in threes (`abc def ghi jkl`). The
+    /// hash is what makes every bit of the key matter; the same algorithm runs
+    /// on both sides, so two humans can compare the groups aloud before accepting.
     pub fn fingerprint_for(endpoint_id: &str) -> String {
-        let mut groups: Vec<String> = Vec::new();
+        // Hash first: BLAKE3 over the identity so the fingerprint depends on the
+        // whole key, not a grindable prefix of its hex form.
+        let digest = iroh_blobs::Hash::new(endpoint_id.as_bytes());
+        let mut chars: Vec<char> = Vec::with_capacity(FP_CHARS);
         let mut acc: u32 = 0;
         let mut bits = 0u32;
-        for b in endpoint_id.as_bytes() {
+        for b in digest.as_bytes() {
             acc = (acc << 8) | *b as u32;
             bits += 8;
-            if bits >= 5 {
+            while bits >= 5 && chars.len() < FP_CHARS {
                 bits -= 5;
                 let idx = ((acc >> bits) & 0x1f) as usize;
-                groups.push(BASE32[idx..idx + 1].to_string());
-                if groups.len() == 9 {
-                    break;
-                }
+                chars.push(BASE32.as_bytes()[idx] as char);
+            }
+            if chars.len() == FP_CHARS {
+                break;
             }
         }
-        groups
+        chars
             .chunks(3)
-            .map(|c| c.concat())
+            .map(|c| c.iter().collect::<String>())
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -102,6 +112,10 @@ fn now_secs() -> u64 {
 pub(crate) struct PeerEntry {
     pub(crate) device: NearbyDevice,
     pub(crate) sock: Option<SocketAddr>,
+    /// Full mDNS instance name we resolved this peer from, so a `ServiceRemoved`
+    /// event can be matched to the exact peer that left (never a prefix of some
+    /// other peer's id — see the removal handler).
+    pub(crate) instance: String,
 }
 
 /// Peer tables subscribed to mDNS events (each `NearbyState.peers`).
@@ -151,12 +165,17 @@ fn ensure_browse() {
             };
             let tables = subscribers
                 .lock()
-                .expect("subscribers poisoned")
+                .unwrap_or_else(poisoned)
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>();
             for table in tables {
-                apply_event(&table, &event);
+                // Never let a malformed packet abort the process (panic = abort):
+                // fold each event under catch_unwind so a parse panic in this or
+                // a dependency only skips that one event, not the whole app.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    apply_event(&table, &event);
+                }));
             }
         })
         .ok();
@@ -188,34 +207,39 @@ fn apply_event(peers: &PeerTable, event: &ServiceEvent) {
                     seen_at: now_secs(),
                 },
                 sock,
+                instance: info.get_fullname().to_string(),
             };
             peers
                 .lock()
-                .expect("peers poisoned")
+                .unwrap_or_else(poisoned)
                 .insert(other_eid, entry);
         }
         ServiceEvent::ServiceRemoved(_ty, full_name) => {
-            // Instance names embed the first 8 hex chars of the eid as the
-            // final `-`-separated segment.
-            let suffix = format!(".{NEARBY_SERVICE}");
-            let stripped = full_name.strip_suffix(&suffix).unwrap_or(full_name);
-            let Some(short) = stripped.rsplit('-').next() else {
-                return;
-            };
-            if short.len() >= 8 {
-                let mut guard = peers.lock().expect("peers poisoned");
-                let gone: Vec<String> = guard
-                    .keys()
-                    .filter(|k| k.starts_with(short))
-                    .cloned()
-                    .collect();
-                for k in gone {
-                    guard.remove(&k);
-                }
+            // Remove the ONE peer resolved from this exact instance name. The
+            // earlier version matched any stored id that *started with* the
+            // instance's 8-hex suffix, so a crafted or colliding instance name
+            // could evict a different peer (a LAN denial-of-visibility). Match
+            // the full instance string instead: unambiguous, unspoofable-against
+            // a third party.
+            let mut guard = peers.lock().unwrap_or_else(poisoned);
+            let gone: Vec<String> = guard
+                .iter()
+                .filter(|(_, e)| &e.instance == full_name)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for k in gone {
+                guard.remove(&k);
             }
         }
         _ => {}
     }
+}
+
+/// Recover a mutex guard even if a previous holder panicked. A poisoned lock
+/// must never cascade into a second panic (fatal under `panic = "abort"`); the
+/// peer table is plain data, so reading through the poison is safe.
+fn poisoned<T>(e: std::sync::PoisonError<T>) -> T {
+    e.into_inner()
 }
 
 /// Live state of the nearby session: what we advertise + who we can see.
@@ -255,7 +279,7 @@ impl Drop for SubscriptionSlot {
         if let Some(subscribers) = SUBSCRIBERS.get() {
             subscribers
                 .lock()
-                .expect("subscribers poisoned")
+                .unwrap_or_else(poisoned)
                 .retain(|t| !Arc::ptr_eq(t, &self.table));
         }
     }
@@ -323,7 +347,7 @@ impl NearbyState {
         let wrapped: PeerTable = Arc::new(StdMutex::new(HashMap::new()));
         subscribers
             .lock()
-            .expect("subscribers poisoned")
+            .unwrap_or_else(poisoned)
             .push(wrapped.clone());
         let self_eid = self.self_eid.clone();
         self.peers = wrapped;
@@ -348,19 +372,22 @@ impl NearbyState {
             }
         }
         self._slot = None; // unsubscribe
-        self.peers.lock().expect("peers poisoned").clear();
+        self.peers.lock().unwrap_or_else(poisoned).clear();
     }
 
-    /// Snapshot of live peers (fresh within [`PEER_TTL`]), by display name.
-    /// Self-announcements are filtered here (see `start`).
+    /// Snapshot of live peers, by display name. Self-announcements are filtered
+    /// here (see `start`). Presence is driven by mDNS add/remove events, not a
+    /// client-side age-out: mdns-sd refreshes a live peer's records before they
+    /// expire and only emits `ServiceResolved` on genuine changes, so a stable
+    /// peer would never refresh its `seen_at` and a time-based cutoff used to
+    /// drop it ~30s after discovery while it was still present. A departed peer
+    /// is removed on the `ServiceRemoved` event (goodbye packet or cache expiry).
     pub(crate) fn list(&self) -> Vec<NearbyDevice> {
-        let cutoff = now_secs().saturating_sub(PEER_TTL);
         let mut devs: Vec<NearbyDevice> = self
             .peers
             .lock()
-            .expect("peers poisoned")
+            .unwrap_or_else(poisoned)
             .values()
-            .filter(|e| e.device.seen_at >= cutoff)
             .filter(|e| e.device.endpoint_id != self.self_eid)
             .map(|e| e.device.clone())
             .collect();
@@ -375,7 +402,7 @@ impl NearbyState {
         }
         self.peers
             .lock()
-            .expect("peers poisoned")
+            .unwrap_or_else(poisoned)
             .get(eid_hex)
             .and_then(|e| e.sock)
     }
