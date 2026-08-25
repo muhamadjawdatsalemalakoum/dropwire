@@ -54,11 +54,15 @@ pub(crate) enum Frame {
     },
     // ---- nearby consent ----
     /// Sender → receiver: "may I send you this?"
+    ///
+    /// No fingerprint travels in the frame: the receiver derives it from the
+    /// TLS-authenticated remote id, so a sender cannot claim someone else's
+    /// pairing code. (`device_name`/`title`/counts remain sender-authored hints
+    /// — the receiver's verified preview, not these fields, gates the download.)
     Offer {
         offer_id: String,
         ticket: String,
         device_name: String,
-        fingerprint: String,
         title: String,
         file_count: usize,
         total_bytes: u64,
@@ -150,9 +154,10 @@ pub(crate) struct ConsentCtx {
     pub(crate) ctrl_tx: broadcast::Sender<CtrlMsg>,
     pub(crate) offer_tx: broadcast::Sender<IncomingOffer>,
     pub(crate) incoming_offers: Arc<StdMutex<HashMap<String, IncomingOffer>>>,
-    /// Live mDNS peers — the visibility boundary for incoming offers.
-    pub(crate) nearby_peers: Arc<StdMutex<HashMap<String, crate::discover::PeerEntry>>>,
-    /// Shared "discovery mode ON" flag; when off, consent is open (code flow).
+    /// Shared "nearby sharing is ON" flag. When it is off, incoming offers are
+    /// declined without ever reaching the user — the UI promise that the device
+    /// is "invisible" while off must actually hold at the consent layer, not
+    /// just for mDNS advertising.
     pub(crate) nearby_running: Arc<std::sync::atomic::AtomicBool>,
     /// Verdict wait-list: offer_id → a oneshot the UI's answer is sent down.
     /// The control handler parks the sender's offer connection here until the
@@ -165,7 +170,7 @@ impl ConsentCtx {
     pub(crate) fn add_verdict_waiter(&self, offer_id: &str, tx: mpsc::UnboundedSender<Frame>) {
         self.verdict_waiters
             .lock()
-            .expect("verdict waiters poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .insert(offer_id.to_string(), tx);
     }
 
@@ -174,12 +179,26 @@ impl ConsentCtx {
         let waiter = self
             .verdict_waiters
             .lock()
-            .expect("verdict waiters poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .remove(offer_id);
         match waiter {
             Some(tx) => tx.send(frame).is_ok(),
             None => false,
         }
+    }
+
+    /// Forget an offer that lapsed unanswered (its parked connection timed out).
+    /// Clears both maps so the pending-offer list can't grow without bound and a
+    /// late `respond_offer` finds nothing to accept (reported as expired).
+    pub(crate) fn expire_offer(&self, offer_id: &str) {
+        self.verdict_waiters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(offer_id);
+        self.incoming_offers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(offer_id);
     }
 }
 
@@ -273,7 +292,6 @@ impl Core {
         let frame = Frame::Offer {
             offer_id: Uuid::new_v4().to_string(),
             ticket: record.ticket.clone(),
-            fingerprint: NearbyDevice::fingerprint_for(&self.endpoint_id()),
             device_name,
             title: record.name.clone(),
             file_count: record.file_count,
@@ -298,6 +316,7 @@ impl Core {
         let core = self.clone();
         let hash_key = record.hash.clone();
         let transfer_id = record.id;
+        let offer_peer = peer;
         tokio::spawn(async move {
             let _ = upd_tx.send(OfferUpdate::Waiting).await;
 
@@ -308,10 +327,17 @@ impl Core {
 
             // Declined or undeliverable → release the early one-to-one binding
             // (a manual code-share of this content must still work) and stop
-            // serving the offer (the user can simply send again).
+            // serving the offer (the user can simply send again) — but ONLY if
+            // this offer still owns the binding. If a newer offer for the same
+            // send replaced it (or that send is now streaming to another
+            // neighbor), tearing it down here would abort a live transfer.
             if matches!(update, OfferUpdate::Declined | OfferUpdate::Failed { .. }) {
-                core.inner.bound.lock().await.remove(&hash_key);
-                core.cancel(transfer_id).await;
+                let mut bound = core.inner.bound.lock().await;
+                if bound.get(&hash_key) == Some(&offer_peer) {
+                    bound.remove(&hash_key);
+                    drop(bound);
+                    core.cancel(transfer_id).await;
+                }
             }
             let _ = upd_tx.send(update).await;
         });
@@ -328,7 +354,7 @@ impl Core {
             .consent
             .incoming_offers
             .lock()
-            .expect("offers poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .get(&offer_id)
             .cloned()
             .ok_or_else(|| CoreError::NotFound(offer_id.clone()))?;
@@ -346,18 +372,26 @@ impl Core {
 
         // Wake the parked control-connection task with the verdict.
         let delivered = self.inner.consent.resolve_verdict(&offer_id, frame);
-        if !delivered {
-            // The offering device vanished before answering — nothing to do;
-            // the caller's UI already shows the terminal state either way.
-            tracing::warn!(%offer_id, "offer connection already gone");
-        }
 
+        // Whether or not it was delivered, this offer is now spent — drop it so
+        // it can't be answered twice and the map can't leak.
         self.inner
             .consent
             .incoming_offers
             .lock()
-            .expect("offers poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .remove(&offer_id);
+
+        if !delivered {
+            // The offering connection is already gone (it timed out after
+            // ANSWER_WAIT, or the sender left). Report that so the UI shows
+            // "this offer expired" instead of starting a download the sender
+            // has already abandoned.
+            tracing::warn!(%offer_id, "offer connection already gone");
+            return Err(CoreError::Other(anyhow::anyhow!(
+                "this offer expired before you answered"
+            )));
+        }
         Ok(())
     }
 
@@ -366,6 +400,17 @@ impl Core {
     #[cfg(feature = "test-utils")]
     pub fn test_dial_addr(&self) -> iroh::EndpointAddr {
         self.inner.router.endpoint().addr()
+    }
+
+    /// TEST-ONLY: flip the "nearby sharing on" flag that gates incoming offers,
+    /// without standing up the real mDNS daemon. Production sets this via
+    /// [`Core::start_nearby`] / [`Core::stop_nearby`].
+    #[cfg(feature = "test-utils")]
+    pub fn test_set_nearby_running(&self, on: bool) {
+        self.inner
+            .consent
+            .nearby_running
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -421,7 +466,6 @@ pub(crate) fn route_offer(
         offer_id,
         ticket,
         device_name,
-        fingerprint,
         title,
         file_count,
         total_bytes,
@@ -430,6 +474,23 @@ pub(crate) fn route_offer(
     else {
         return;
     };
+
+    // Nearby sharing off ⇒ invisible. The control ALPN is always registered (it
+    // also carries presence + the receive-by-code decline), so a peer that
+    // knows our endpoint id can still open a connection even when the user has
+    // turned Nearby off — including over the relay/WAN, since every ticket we
+    // ever shared embeds this id. Decline such offers immediately: the user is
+    // never shown a dialog (the "invisible while off" promise holds) and the
+    // sender gets a prompt "no" instead of a 115s hang.
+    let running = ctx
+        .nearby_running
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if !running {
+        let frame = Frame::OfferDecline { offer_id };
+        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        return;
+    }
+
     // Validate the ticket up front so we never surface junk.
     let Ok(parsed) = BlobTicket::from_str(&ticket) else {
         // Unknown ticket shape → decline immediately so the sender isn't left
@@ -438,32 +499,16 @@ pub(crate) fn route_offer(
         ctx.resolve_verdict(&frame.offer_id_str(), frame);
         return;
     };
-    // When nearby mode is on, only devices we can currently see may offer
-    // (defense in depth: mDNS visibility is the boundary). With it off (plain
-    // code-share, tests), any ticket-holder may offer — the UI confirm gates.
-    let visible = ctx
-        .nearby_peers
-        .lock()
-        .expect("peers poisoned")
-        .contains_key(&remote.to_string());
-    let running = ctx
-        .nearby_running
-        .load(std::sync::atomic::Ordering::Relaxed);
-    // Defense in depth, softened deliberately: with nearby mode ON, an offer
-    // from an endpoint absent from our mDNS table is unusual — but multicast
-    // is frequently filtered (guest/corporate Wi-Fi, per-app firewalls) while
-    // the QUIC control path still works. Discovery is a convenience; the
-    // human confirm dialog is the actual trust gate, and the sender's identity
-    // is authenticated by the TLS handshake either way. So unknown senders
-    // still get asked, never auto-declined.
-    let _ = visible;
-    let _ = running;
+
     let offer = IncomingOffer {
         reply_transport: via,
         offer_id,
         from_endpoint_id: remote.to_string(),
         device_name,
-        fingerprint,
+        // Derive the pairing fingerprint from the TLS-AUTHENTICATED remote id,
+        // never from a sender-supplied field: an impostor cannot then present a
+        // victim's pairing code. This is the value the user compares aloud.
+        fingerprint: NearbyDevice::fingerprint_for(&remote.to_string()),
         ticket: parsed.to_string(),
         title,
         file_count,
@@ -471,7 +516,7 @@ pub(crate) fn route_offer(
     };
     ctx.incoming_offers
         .lock()
-        .expect("offers poisoned")
+        .unwrap_or_else(|e| e.into_inner())
         .insert(offer.offer_id.clone(), offer.clone());
     let _ = ctx.offer_tx.send(offer);
 }

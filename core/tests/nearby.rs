@@ -21,6 +21,9 @@ async fn nearby_offer_accept_transfers() {
     let dir2 = tempdir::dir();
     let sender = local_core(dir.path()).await;
     let receiver = local_core(dir2.path()).await;
+    // Incoming offers are gated on nearby being ON (invisible while off); enable
+    // it here without standing up a real mDNS daemon.
+    receiver.test_set_nearby_running(true);
 
     // Receiver subscribes BEFORE the offer is sent (no missed broadcasts).
     let mut offers = receiver.subscribe_offers();
@@ -88,6 +91,7 @@ async fn nearby_offer_decline_blocks_transfer() {
     let dir2 = tempdir::dir();
     let sender = local_core(dir.path()).await;
     let receiver = local_core(dir2.path()).await;
+    receiver.test_set_nearby_running(true);
     let mut offers = receiver.subscribe_offers();
 
     let src = dir.path().join("secret.txt");
@@ -144,6 +148,49 @@ async fn nearby_offer_decline_blocks_transfer() {
     assert!(stray.is_empty(), "declined transfer must not write files");
 }
 
+/// With nearby sharing OFF the device is invisible: an incoming offer is
+/// declined at the consent layer and never surfaces to the user, even though
+/// the control ALPN is reachable (a peer that knows our id can still dial).
+#[tokio::test]
+async fn offer_while_nearby_off_is_declined_silently() {
+    let dir = tempdir::dir();
+    let dir2 = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let receiver = local_core(dir2.path()).await;
+    // Receiver leaves nearby OFF (the default) — do NOT enable it.
+    let mut offers = receiver.subscribe_offers();
+
+    let src = dir.path().join("thing.bin");
+    std::fs::write(&src, make_payload(32 * 1024)).unwrap();
+    let (_id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(receiver.endpoint_id(), Some(receiver.test_dial_addr()))
+        .await
+        .expect("offer");
+
+    // Sender is told "no" promptly …
+    let update = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            match updates.next().await {
+                Some(OfferUpdate::Waiting) => continue,
+                other => return other.expect("offer stream ended"),
+            }
+        }
+    })
+    .await
+    .expect("no verdict in time");
+    assert_eq!(update, OfferUpdate::Declined);
+
+    // … and the receiver was never shown anything.
+    let surfaced = tokio::time::timeout(Duration::from_millis(500), offers.recv()).await;
+    assert!(
+        surfaced.is_err(),
+        "an offer must not surface while nearby is off"
+    );
+}
+
 /// Presence frames still flow through the shared control channel (the same
 /// ALPN carries consent), using an explicit dial address.
 #[tokio::test]
@@ -178,6 +225,31 @@ async fn offer_without_active_send_errors() {
         .await
         .expect_err("must fail without an active send");
     assert!(err.to_string().contains("no active send"));
+}
+
+/// The pairing fingerprint must depend on the WHOLE identity, not a short
+/// prefix of its hex form. The old algorithm ignored everything past ~6 hex
+/// chars, leaving ~21 grindable bits; the hashed one spreads every bit across
+/// a 12-char (60-bit) code.
+#[test]
+fn fingerprint_depends_on_whole_identity() {
+    use irohcore::NearbyDevice;
+    // Differ only in the LAST hex char — collided under the old scheme.
+    let a = "0000000000000000000000000000000000000000000000000000000000000001";
+    let b = "0000000000000000000000000000000000000000000000000000000000000002";
+    assert_ne!(
+        NearbyDevice::fingerprint_for(a),
+        NearbyDevice::fingerprint_for(b),
+        "late identity bits must change the fingerprint"
+    );
+    // Shape: 4 space-separated groups of 3 base32 chars.
+    let fp = NearbyDevice::fingerprint_for(a);
+    let groups: Vec<&str> = fp.split(' ').collect();
+    assert_eq!(groups.len(), 4, "expected 4 groups, got {fp:?}");
+    assert!(
+        groups.iter().all(|g| g.chars().count() == 3),
+        "3 chars/group: {fp:?}"
+    );
 }
 
 /// A tiny helper producing a unique temp dir per call (no external dev-dep).

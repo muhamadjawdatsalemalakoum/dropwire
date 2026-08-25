@@ -89,6 +89,12 @@ impl ProtocolHandler for Ctrl {
                         Ok(Some(frame)) => Some(frame),
                         _ => None, // timeout, waiter dropped, or channel gone
                     };
+                // Unanswered (timeout / user ignored the dialog): forget the
+                // offer so neither map leaks and a stale Accept is reported as
+                // expired rather than silently starting a doomed download.
+                if verdict.is_none() {
+                    self.core_ctx.expire_offer(&offer_id);
+                }
                 let answer = verdict.unwrap_or(offer::Frame::OfferDecline {
                     offer_id: offer_id.clone(),
                 });

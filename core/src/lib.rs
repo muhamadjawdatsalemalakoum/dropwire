@@ -131,7 +131,6 @@ impl Core {
             ctrl_tx: ctrl_tx.clone(),
             offer_tx,
             incoming_offers: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            nearby_peers: nearby.peers.clone(),
             nearby_running: nearby.running_flag(),
             verdict_waiters: Arc::new(std::sync::Mutex::new(HashMap::new())),
         };
