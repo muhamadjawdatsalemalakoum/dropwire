@@ -164,6 +164,9 @@ function makeCard(tplId, listId) {
 }
 
 /* -------------------------------- SEND --------------------------------- */
+// The most recent send card that reached Ready (and hasn't finished) — this is
+// the transfer "Send here" offers to the chosen nearby device.
+let liveSend = null;
 async function startSend(path) {
   const card = makeCard('tpl-send', 'send-list');
   const els = {
@@ -196,7 +199,8 @@ function onSendMsg(m, els, card) {
     case 'importing': els.status.textContent = `Preparing… ${fmtBytes(m.done)} / ${fmtBytes(m.total)}`; break;
     case 'ready':
       els.code.textContent = m.ticket;
-      els.status.textContent = "Ready — share this code. Keep the app open until it's received.";
+      els.status.textContent = "Ready — share this code, or tap a nearby device below.";
+      liveSend = { card, els, ticket: m.ticket };
       invoke('qr_svg', { text: m.ticket }).then((svg) => {
         els.qr.innerHTML = svg;
         els.qr.setAttribute('role', 'img');
@@ -218,12 +222,20 @@ function onSendMsg(m, els, card) {
       setBarEl(els.fill, els.svg, els.pct, 1, 1);
       if (els.svg) doneSpark(els.svg);
       els.status.textContent = 'Sent ✓'; els.cancel.textContent = 'Dismiss';
+      if (liveSend && liveSend.card === card) liveSend = null;
       break;
     case 'error':
       els.status.setAttribute('aria-live', 'assertive');
       els.status.textContent = m.message ? `Couldn't send — ${m.message}` : "Couldn't send.";
+      if (liveSend && liveSend.card === card) liveSend = null;
       break;
-    case 'cancelled': removeCard(card); break;
+    case 'cancelled':
+      removeCard(card);
+      // The send this offer was for is gone; release the nearby list so the
+      // user can pick a device again without waiting out the offer timeout.
+      if (liveSend && liveSend.card === card) liveSend = null;
+      setOffering(false);
+      break;
   }
 }
 $('#pick-file').addEventListener('click', async () => {
@@ -317,6 +329,8 @@ function closeModal() {
   const app = document.querySelector('.app'); if (app) app.removeAttribute('inert'); // before focus restore
   previewTicket = null; previewDest = null; previewLoaded = false;
   if (lastFocus && lastFocus.focus) lastFocus.focus();
+  // A nearby offer accepted into this preview parks the queue; resume it now.
+  showNextOffer();
 }
 function checkedIndices() {
   return [...document.querySelectorAll('#preview-files .file-check')]
@@ -498,4 +512,285 @@ if (HAS_TAURI && TAURI.webview && TAURI.webview.getCurrentWebview) {
   try { const v = await invoke('app_version'); if (v) $('#app-version').textContent = 'v' + v; } catch (_) {}
   try { const eid = await invoke('my_endpoint_id'); const el = $('#endpoint-id'); el.textContent = eid; el.title = eid; }
   catch (_) { $('#endpoint-id').textContent = HAS_TAURI ? '(starting…)' : '(preview — run inside the app)'; }
+})();
+
+/* ===================== NEARBY: discovery + two-sided consent ============ */
+/* mDNS discovery (LAN) with a Bluetooth fallback planned at the engine level.
+ * Being discoverable never means being reachable: every transfer needs BOTH
+ * sides to confirm. With the toggle off, this device is invisible. */
+const nearby = {
+  on: localStorage.getItem('dropwire-nearby') !== 'off', // opt-out, remembered
+  started: false,
+  devices: new Map(),   // endpoint_id -> device snapshot from the engine
+  offers: new Map(),    // offer_id -> IncomingOffer (currently shown / queued)
+  queue: [],            // offers waiting while another modal is open
+  offering: false,      // an outgoing offer is in flight (one at a time)
+  offerTimer: null,     // auto-expire timer for the visible consent modal
+  poll: null,
+};
+const nearbyEls = () => ({
+  panel: $('#nearby-panel'), toggle: $('#nearby-toggle'), radar: $('#nearby-radar'),
+  status: $('#nearby-status'), list: $('#nearby-devices'),
+});
+
+function nearbySetSwitch(on) {
+  const { toggle, radar } = nearbyEls();
+  if (toggle) toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+  if (radar) radar.classList.toggle('on', on);
+}
+function nearbyStatus(text) {
+  const el = $('#nearby-status'); if (el) el.textContent = text;
+}
+function deviceRow(d) {
+  const tpl = document.getElementById('tpl-device');
+  const row = tpl.content.firstElementChild.cloneNode(true);
+  row.dataset.eid = d.endpointId;
+  row.querySelector('.js-name').textContent = d.name || 'Dropwire device';
+  const fp = row.querySelector('.js-fp');
+  fp.textContent = d.fingerprint || '';
+  fp.title = 'Pairing code for ' + (d.name || 'this device') + ' — compare before accepting';
+  row.querySelector('.js-send').addEventListener('click', () => offerToDevice(d, row));
+  return row;
+}
+function renderDevices() {
+  const { list } = nearbyEls();
+  if (!list) return;
+  const seen = new Set();
+  for (const d of nearby.devices.values()) {
+    seen.add(d.endpointId);
+    if (!list.querySelector('[data-eid="' + d.endpointId + '"]')) {
+      const row = deviceRow(d);
+      row.classList.add('entering');
+      list.appendChild(row);
+      setTimeout(() => row.classList.remove('entering'), 500);
+    }
+  }
+  list.querySelectorAll('.device-row').forEach((row) => {
+    if (!seen.has(row.dataset.eid)) {
+      if (canAnim) {
+        const a = row.animate([{ opacity: 1 }, { opacity: 0, transform: 'translateY(-4px)' }], { duration: 180, easing: EASE_OUT });
+        a.onfinish = () => row.remove();
+      } else row.remove();
+    }
+  });
+  const empty = list.querySelector('.device-empty');
+  if (!seen.size && !empty) {
+    const el = document.createElement('div');
+    el.className = 'device-empty';
+    el.textContent = 'No Dropwire devices found yet — they appear here automatically while both apps are open.';
+    list.appendChild(el);
+  } else if (seen.size && empty) empty.remove();
+}
+async function nearbyPoll() {
+  try {
+    const devs = await invoke('nearby_list');
+    nearby.devices.clear();
+    for (const d of devs || []) nearby.devices.set(d.endpointId, d);
+    renderDevices();
+    const n = nearby.devices.size;
+    if (!n) nearbyStatus('Looking on this network…');
+    else nearbyStatus(n === 1 ? '1 device nearby' : n + ' devices nearby');
+  } catch (_) { /* preview mode outside the app */ }
+}
+async function nearbyStart() {
+  if (nearby.started) return;
+  nearby.started = true;
+  nearbySetSwitch(true);
+  try { await invoke('nearby_start'); } catch (_) {}
+  // The user may have toggled Nearby off while the awaits above were in flight
+  // (nearbyStop ran, cleared state, set the off status). Bail before touching
+  // the UI or arming a poll interval nothing would ever clear.
+  if (!nearby.started || !nearby.on) return;
+  await nearbyPoll();
+  if (!nearby.started || !nearby.on) return;
+  if (nearby.poll) clearInterval(nearby.poll);
+  nearby.poll = setInterval(nearbyPoll, 2500);
+}
+function nearbyStop() {
+  nearbySetSwitch(false);
+  if (nearby.poll) { clearInterval(nearby.poll); nearby.poll = null; }
+  nearby.devices.clear(); renderDevices();
+  nearbyStatus('Nearby sharing is off — this device is invisible.');
+  if (nearby.started) invoke('nearby_stop').catch(() => {});
+  nearby.started = false;
+}
+
+/* ---- outgoing: tap a device to offer the live send ---- */
+function setOffering(on) {
+  nearby.offering = on;
+  const { list } = nearbyEls();
+  if (list) list.classList.toggle('offering', on); // dims every "Send here"
+}
+function offerToDevice(d, row) {
+  if (!liveSend) {
+    switchView('send');
+    nearbyStatus('Pick something to send first, then tap a device.');
+    const dz = $('#send-pick');
+    if (dz && canAnim) dz.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.01)' }, { transform: 'scale(1)' }], { duration: 300, easing: EASE_POP });
+    return;
+  }
+  // One offer at a time. A pending offer holds the single live send; issuing a
+  // second one would rebind that send to another device and let the first
+  // offer's (later) auto-decline cancel a transfer the second device accepted.
+  if (nearby.offering) {
+    nearbyStatus('Waiting on the last offer — cancel it first to pick another device.');
+    return;
+  }
+  const card = liveSend.card, els = liveSend.els;
+  setOffering(true);
+  row && row.classList.add('busy');
+  els.status.textContent = 'Asking ' + (d.name || 'device') + '… waiting for them to accept.';
+  if (els.route) setRouteBadge(els.route, 'connected');
+  const done = () => { setOffering(false); row && row.classList.remove('busy'); };
+  const ch = makeChannel();
+  ch.onmessage = (u) => {
+    switch (u.kind) {
+      case 'waiting': break;
+      case 'accepted':
+        done();
+        els.status.textContent = (d.name || 'They') + ' accepted — sending…';
+        if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
+        break;
+      case 'declined':
+        done();
+        els.status.setAttribute('aria-live', 'assertive');
+        els.status.textContent = (d.name || 'They') + ' declined.';
+        if (liveSend && liveSend.card === card) liveSend = null;
+        break;
+      case 'failed':
+        done();
+        els.status.setAttribute('aria-live', 'assertive');
+        els.status.textContent = "Couldn't reach " + (d.name || 'them') + ' — ' + (u.reason || 'try again') + '.';
+        if (liveSend && liveSend.card === card) liveSend = null;
+        break;
+    }
+  };
+  invoke('nearby_offer', { endpointId: d.endpointId, onUpdate: ch }).catch((e) => {
+    done();
+    els.status.textContent = "Couldn't start the nearby offer.";
+    console.warn(e);
+  });
+}
+
+/* ---- incoming: the consent modal ---- */
+let offerState = null, offerLastFocus = null;
+// Roughly the sender's self-decline window (ANSWER_WAIT ≈ 115s); auto-dismiss a
+// hair earlier so a stale dialog can't linger with an Accept button that would
+// start a doomed download.
+const OFFER_TTL_MS = 112000;
+function anyModalOpen() {
+  return !$('#nearby-offer-modal').classList.contains('hidden')
+    || !$('#recv-preview').classList.contains('hidden');
+}
+// Entry point for every 'nearby-offer' event. Never clobber a modal that's
+// already up (an attacker could otherwise swap the dialog under the user's
+// cursor between reading and clicking): queue it and show it when the current
+// one is answered.
+function enqueueOffer(offer) {
+  if (!offer || !offer.offerId) return;
+  // Dedup against both the shown offer and the waiting queue.
+  if (nearby.offers.has(offer.offerId)) return;
+  if (nearby.queue.some((o) => o.offerId === offer.offerId)) return;
+  if (offerState || anyModalOpen()) { nearby.queue.push(offer); return; }
+  showOfferModal(offer);
+}
+function showNextOffer() {
+  if (offerState || anyModalOpen()) return;
+  const next = nearby.queue.shift();
+  if (next) showOfferModal(next);
+}
+function showOfferModal(offer) {
+  nearby.offers.set(offer.offerId, offer);
+  offerState = offer;
+  offerLastFocus = document.activeElement;
+  $('#offer-device').textContent = offer.deviceName || 'A nearby device';
+  $('#offer-count').textContent = offer.fileCount + ' file' + (offer.fileCount === 1 ? '' : 's');
+  $('#offer-size').textContent = fmtBytes(offer.totalBytes);
+  $('#offer-fp').textContent = offer.fingerprint || '···';
+  const note = $('#offer-note'); if (note) note.textContent = 'Nothing is received until you accept. Declining tells them instantly.';
+  const acceptBtn = $('#offer-accept'); acceptBtn.disabled = false; acceptBtn.textContent = 'Accept & receive';
+  invoke('my_fingerprint').then((fp) => { $('#offer-my-fp').textContent = fp; }).catch(() => {});
+  const scrim = $('#nearby-offer-modal');
+  scrim.classList.remove('hidden');
+  const app = document.querySelector('.app'); if (app) app.setAttribute('inert', '');
+  const sheet = scrim.querySelector('.modal-sheet');
+  if (canAnim) {
+    scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
+    sheet.animate([{ opacity: 0, transform: 'translateY(12px) scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE_POP });
+  }
+  if (nearby.offerTimer) clearTimeout(nearby.offerTimer);
+  nearby.offerTimer = setTimeout(() => expireOfferModal(offer.offerId), OFFER_TTL_MS);
+  $('#offer-decline').focus();
+}
+function expireOfferModal(offerId) {
+  if (!offerState || offerState.offerId !== offerId) return;
+  const note = $('#offer-note'); if (note) note.textContent = 'This offer expired — ask them to send again.';
+  $('#offer-accept').disabled = true;
+  setTimeout(() => { if (offerState && offerState.offerId === offerId) closeOfferModal(); }, 1600);
+}
+// `showNext` is false when the caller immediately opens another modal (the
+// accept path opens the verified preview): draining the queue here would put a
+// fresh consent dialog on screen at the same time as that preview.
+function closeOfferModal(showNext = true) {
+  if (nearby.offerTimer) { clearTimeout(nearby.offerTimer); nearby.offerTimer = null; }
+  if (offerState) nearby.offers.delete(offerState.offerId);
+  const scrim = $('#nearby-offer-modal');
+  scrim.classList.add('hidden');
+  const app = document.querySelector('.app'); if (app) app.removeAttribute('inert');
+  offerState = null;
+  if (offerLastFocus && offerLastFocus.focus) offerLastFocus.focus();
+  if (showNext) showNextOffer(); // surface the next queued offer, if any
+}
+$('#offer-accept').addEventListener('click', async () => {
+  const offer = offerState; if (!offer) return;
+  const acceptBtn = $('#offer-accept');
+  acceptBtn.disabled = true; acceptBtn.textContent = 'Connecting…';
+  let ok = true;
+  try { await invoke('nearby_respond', { offerId: offer.offerId, accept: true }); } catch (_) { ok = false; }
+  const ticket = offer.ticket;
+  if (!ok) {
+    // The engine rejects an answer whose offer already lapsed. Say so on the
+    // dialog rather than closing it silently under the user.
+    acceptBtn.textContent = 'Accept & receive';
+    expireOfferModal(offer.offerId);
+    return;
+  }
+  // Keep the queue paused: the preview modal opens right below, and draining a
+  // queued offer here would stack two dialogs at once.
+  closeOfferModal(false);
+  // Route through the SAME verified preview the code-share flow uses: the file
+  // names and sizes come from the transfer manifest (committed by the code),
+  // not the sender's claim in the offer, and nothing is written until the user
+  // confirms them.
+  openPreview(ticket, recvDest || localStorage.getItem('dropwire-default-dir') || null);
+});
+$('#offer-decline').addEventListener('click', async () => {
+  const offer = offerState; if (!offer) { closeOfferModal(); return; }
+  try { await invoke('nearby_respond', { offerId: offer.offerId, accept: false }); } catch (_) {}
+  closeOfferModal();
+});
+$('#nearby-offer-modal').addEventListener('click', (e) => {
+  // Scrim click = dismiss without answering; an unanswered offer declines
+  // itself on the sender's side after its wait lapses.
+  if (e.target.id === 'nearby-offer-modal') closeOfferModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#nearby-offer-modal').classList.contains('hidden')) closeOfferModal();
+});
+
+/* ---- wiring: toggle + listen for incoming offers ---- */
+(function initNearby() {
+  const { panel } = nearbyEls();
+  if (!panel) return; // page without the panel
+  if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
+    TAURI.event.listen('nearby-offer', (ev) => enqueueOffer(ev.payload)).catch(() => {});
+  }
+  const toggle = $('#nearby-toggle');
+  toggle.addEventListener('click', () => {
+    nearby.on = !nearby.on;
+    localStorage.setItem('dropwire-nearby', nearby.on ? 'on' : 'off');
+    if (nearby.on) { switchView('send'); nearbyStart(); } else nearbyStop();
+  });
+  if (nearby.on) nearbyStart();
+  else { nearbySetSwitch(false); nearbyStatus('Nearby sharing is off — flip the switch to be visible.'); }
 })();

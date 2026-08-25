@@ -7,7 +7,7 @@ resolver = "2"
 members = ["core", "src-tauri"]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/muhamadjawdatsalemalakoum/dropwire"
@@ -43,4 +43,9 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# Unwind, NOT abort. The nearby feature runs background native threads (the
+# mdns-sd daemon + our event pump) that parse untrusted LAN multicast from
+# launch; under `panic = "abort"` a panic in any of them takes down the whole
+# app. Unwinding contains such a panic to its own thread — discovery degrades,
+# the app survives — and the shell's panic hook logs a breadcrumb either way.
+panic = "unwind"

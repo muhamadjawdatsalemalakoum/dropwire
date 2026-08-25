@@ -15,9 +15,12 @@ unsafe_code = "forbid"
 
 [features]
 # Test-only: exposes the in-process relay path (`Infra::LocalRelay`) used by the
-# single-machine relay/resume integration tests in `tests/relay.rs`. Pulls
-# nothing into shipped builds — `cargo build` leaves it off.
-test-utils = []
+# single-machine relay/resume integration tests in `tests/relay.rs`, plus the
+# explicit dial-address helper used by the nearby consent tests. Forwards to
+# iroh's own `test-utils` so `CaTlsConfig::insecure_skip_verify` (needed to
+# trust the in-process relay's self-signed cert) is available to the lib too.
+# Pulls nothing into shipped builds — `cargo build` leaves it off.
+test-utils = ["iroh/test-utils"]
 
 [dependencies]
 iroh.workspace = true
@@ -37,6 +40,11 @@ walkdir.workspace = true
 uuid.workspace = true
 data-encoding.workspace = true
 url.workspace = true
+# Nearby-device discovery (mDNS/DNS-SD). Runtime-threaded (no async runtime
+# coupling), pure Rust, works on Windows/macOS/Linux.
+mdns-sd = "0.21"
+# OS hostname → default device display name.
+hostname = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
@@ -46,9 +54,15 @@ tokio-stream = { workspace = true }
 # (an in-process relay). Dev-only: the shipped binary never sees this feature.
 iroh = { workspace = true, features = ["test-utils"] }
 
-# The relay/resume tests need an in-process relay, so they only build under the
-# `test-utils` feature. All other integration tests stay feature-free.
+# The relay/resume tests need an in-process relay, and the nearby consent tests
+# need explicit dial-address helpers, so they only build under `test-utils`.
+# All other integration tests stay feature-free.
 [[test]]
 name = "relay"
 path = "tests/relay.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "nearby"
+path = "tests/nearby.rs"
 required-features = ["test-utils"]

@@ -40,6 +40,10 @@ pub struct TransferRecord {
     /// Source path for sends (lets a send be re-shared from history).
     #[serde(default)]
     pub source: Option<String>,
+    /// Number of files in the transfer (0 for records created before this
+    /// field existed). Surfaced in nearby-offer summaries.
+    #[serde(default)]
+    pub file_count: usize,
     pub total_bytes: u64,
     pub transferred: u64,
     pub status: Status,
@@ -130,6 +134,7 @@ impl Catalog {
         hash: String,
         dest: Option<String>,
         source: Option<String>,
+        file_count: usize,
         total_bytes: u64,
     ) -> TransferRecord {
         let now = now_secs();
@@ -141,6 +146,7 @@ impl Catalog {
             hash,
             dest,
             source,
+            file_count,
             total_bytes,
             transferred: 0,
             status: Status::Active,
