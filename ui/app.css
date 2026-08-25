@@ -69,8 +69,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 a{color:var(--wire); text-underline-offset:2px}
 :focus-visible{outline:none; box-shadow:var(--glow-focus)}
 
-/* --------------------------------- shell --------------------------------- */
-.app{display:grid; grid-template-columns:64px 1fr; height:100vh}
+/* --------------------------------- shell ---------------------------------
+   FIXED FRAME. This is a native desktop app, not a scrolling document: the
+   window is a fixed canvas and every view lays itself out inside it. Nothing
+   here may grow the page. Only explicitly bounded regions (the history list,
+   the transfer stack, a dialog's file list) scroll, each inside its own box.
+   Rule of thumb when adding UI: give it a height budget, or it does not ship.
+   -------------------------------------------------------------------------- */
+.app{display:grid; grid-template-columns:64px 1fr; height:100vh; overflow:hidden}
 
 /* rail nav */
 .sidebar{
@@ -109,8 +115,12 @@ a{color:var(--wire); text-underline-offset:2px}
 .net-badge{font-size:0; width:8px; height:8px; border-radius:var(--r-full); background:var(--wire);
   box-shadow:0 0 8px var(--wire-glow); animation:breathe 3s ease-in-out infinite}
 
-/* --------------------------------- main ---------------------------------- */
-.main{overflow-y:auto; padding:32px 40px 48px}
+/* --------------------------------- main ----------------------------------
+   The content pane never scrolls. It is a column: a fixed view header, then a
+   body that takes the remaining height (`min-height:0` so its children may
+   shrink and scroll internally instead of pushing the frame open).
+   -------------------------------------------------------------------------- */
+.main{min-height:0; overflow:hidden; padding:24px 32px 20px; display:flex; flex-direction:column}
 /* persistent author/source credit — pinned bottom-right, unobtrusive, click-through gaps */
 .app-credit{position:fixed; right:14px; bottom:10px; z-index:30; display:flex; align-items:center; gap:8px;
   font-size:11px; color:var(--text-faint); pointer-events:none}
@@ -118,11 +128,17 @@ a{color:var(--wire); text-underline-offset:2px}
 .app-credit a{display:inline-flex; align-items:center; color:var(--text-faint);
   transition:color var(--dur-1) var(--ease-out)}
 .app-credit a:hover{color:var(--wire)}
-.view{display:none; max-width:640px; margin:0 auto}
-.view.is-active{display:block}
-.view-head h1{font-family:var(--font-display); font-size:28px; font-weight:600; letter-spacing:-.8px;
-  line-height:1.15; margin:0 0 4px; view-transition-name:view-title}
-.view-head .sub{color:var(--text-muted); margin:0 0 24px; font-size:15px}
+/* A view fills the pane: fixed head + flexible body. Never taller than the frame. */
+.view{display:none; flex:1 1 auto; min-height:0; width:100%; max-width:1100px; margin:0 auto}
+.view.is-active{display:flex; flex-direction:column}
+.view-head{flex:none; margin-bottom:var(--sp-4)}
+.view-head h1{font-family:var(--font-display); font-size:24px; font-weight:600; letter-spacing:-.7px;
+  line-height:1.15; margin:0 0 2px; view-transition-name:view-title}
+.view-head .sub{color:var(--text-muted); margin:0; font-size:13.5px}
+/* The scrollable-by-exception region inside a view. */
+.view-body{flex:1 1 auto; min-height:0; display:flex; flex-direction:column}
+/* Single-column views keep a comfortable measure instead of stretching edge to edge. */
+.view-narrow .view-head,.view-narrow .view-body{max-width:620px; width:100%; margin-left:auto; margin-right:auto}
 
 /* -------------------------------- buttons -------------------------------- */
 .btn{height:40px; padding:0 18px; border:0; border-radius:var(--r-2); background:var(--wire);
@@ -146,43 +162,90 @@ a{color:var(--wire); text-underline-offset:2px}
 .panel{background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-3); padding:var(--sp-5);
   box-shadow:var(--elev-1)}
 .hidden{display:none !important}
-/* stack of concurrent transfer cards (multi-transfer) */
-.transfer-list{display:flex; flex-direction:column; gap:var(--sp-5); margin-top:var(--sp-5)}
-.transfer-list:empty{margin-top:0}
-/* once a send is live, shrink the big drop target so cards lead the view */
-.main:has(#send-list:not(:empty)) #send-pick{min-height:140px}
 
-/* ------------------------------- drop zone ------------------------------- */
-.dropzone{min-height:220px; border:2px dashed var(--hairline); border-radius:var(--r-4); background:var(--surface);
-  display:flex; align-items:center; justify-content:center; text-align:center; padding:var(--sp-7); outline:none;
+/* Stack of concurrent transfer cards. This is a bounded scroll region: the list
+   is genuinely unbounded (N transfers at once), so it scrolls INSIDE the column
+   rather than growing the frame. */
+.transfer-list{display:flex; flex-direction:column; gap:var(--sp-4); min-height:0;
+  overflow-y:auto; overscroll-behavior:contain}
+.transfer-list:not(:empty){flex:1 1 auto; margin-top:var(--sp-4)}
+/* Cards keep their natural height. Without this, flex-shrink squashes them to
+   fit the column and `overflow:hidden` silently clips the QR and the wire. */
+.transfer-list > *{flex:none}
+
+/* ------------------------------ send layout -------------------------------
+   Two columns: the transfer work on the left, nearby devices pinned on the
+   right. The nearby panel used to sit below the code card and fell off the
+   bottom of the window the moment a transfer started; now it is always on
+   screen and never competes for vertical space.
+   -------------------------------------------------------------------------- */
+.send-layout{flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 300px;
+  gap:var(--sp-5); align-items:stretch}
+.send-main{min-height:0; display:flex; flex-direction:column}
+.send-side{min-height:0; display:flex; flex-direction:column}
+/* Give the left column more room as the frame approaches its minimum width, so
+   the two-column layout still holds at minWidth (900) instead of collapsing. */
+@media (max-width:980px){.send-layout{grid-template-columns:minmax(0,1fr) 264px; gap:var(--sp-4)}}
+/* Last-resort stack, well BELOW the window's 900px minimum: only reachable if a
+   platform ignores minWidth. The breakpoint must stay under that minimum —
+   `max-width` is inclusive, so a 900px breakpoint would fire at the minimum size
+   and reintroduce exactly the stacked, scrolling layout this redesign removes. */
+@media (max-width:830px){
+  .send-layout{grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); overflow-y:auto}
+}
+
+/* ------------------------------- drop zone -------------------------------
+   Idle: fills the left column. Live: collapses to a slim bar (see below) so the
+   transfer cards get the room. Both states are height-bounded by the column.
+   -------------------------------------------------------------------------- */
+.dropzone{flex:1 1 auto; min-height:180px; border:2px dashed var(--hairline); border-radius:var(--r-4);
+  background:var(--surface); display:flex; align-items:center; justify-content:center; text-align:center;
+  padding:var(--sp-5); outline:none;
   transition:border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out)}
 .dropzone:hover,.dropzone:focus-visible{border-color:var(--wire-dim); background:var(--surface-2)}
 .dropzone.dragover{border-color:var(--wire); border-style:solid; background:color-mix(in srgb, var(--wire-glow-soft) 60%, var(--surface));
   transform:scale(1.015)}
-.dz-glyph{width:64px; height:34px; margin:0 auto 14px; display:block}
-.dz-title{font-family:var(--font-ui); font-weight:600; font-size:17px; letter-spacing:-.2px; margin:0 0 4px}
-.dz-sub{color:var(--text-faint); margin:6px 0; font-size:12px}
-.dz-actions{display:flex; gap:10px; justify-content:center; margin-top:16px}
+.dz-glyph{width:64px; height:34px; margin:0 auto 12px; display:block}
+.dz-title{font-family:var(--font-ui); font-weight:600; font-size:16px; letter-spacing:-.2px; margin:0 0 4px}
+.dz-sub{color:var(--text-faint); margin:4px 0; font-size:12px}
+.dz-actions{display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap}
+
+/* Live state: the drop target becomes a one-line bar pinned above the cards. */
+.send-main:has(#send-list:not(:empty)) .dropzone{flex:none; min-height:0; padding:var(--sp-3) var(--sp-4);
+  border-radius:var(--r-3); border-width:1px}
+.send-main:has(#send-list:not(:empty)) .dropzone > div{display:flex; align-items:center; gap:var(--sp-3); width:100%}
+.send-main:has(#send-list:not(:empty)) .dz-glyph{width:34px; height:18px; margin:0; flex:none}
+.send-main:has(#send-list:not(:empty)) .dz-title{font-size:13.5px; margin:0; white-space:nowrap}
+.send-main:has(#send-list:not(:empty)) .dz-sub{display:none}
+.send-main:has(#send-list:not(:empty)) .dz-actions{margin:0 0 0 auto; flex-wrap:nowrap}
+.send-main:has(#send-list:not(:empty)) .dz-actions .btn,
+.send-main:has(#send-list:not(:empty)) .dz-actions .btn-ghost{height:32px; padding:0 12px; font-size:13px}
 
 /* ----------------------- the share-code "ticket" card -------------------- */
 .code-card{position:relative; container-type:inline-size; background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
-  padding:var(--sp-6); box-shadow:var(--elev-2); overflow:hidden}
+  padding:var(--sp-5); box-shadow:var(--elev-2); overflow:hidden}
 .code-card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--wire);
   box-shadow:0 0 10px var(--wire-glow)}              /* the lit "wire spine" */
 :root[data-theme="light"] .code-card::before{background:var(--wire-press); box-shadow:0 0 6px var(--wire-glow)}
-.send-grid{display:grid; grid-template-columns:1fr auto; gap:var(--sp-6); align-items:center}
+.send-grid{display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--sp-5); align-items:center}
 /* on a narrow card, stack the code over the QR instead of crushing both */
-@container (max-width:440px){.send-grid{grid-template-columns:1fr} .qr-block{justify-self:start; text-align:left}}
-.label{font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase; color:var(--text-muted); margin:0 0 var(--sp-3)}
-.code{font-family:var(--font-mono); font-size:clamp(20px,4.6vw,30px); font-weight:600; letter-spacing:1.5px;
-  line-height:1.35; color:var(--text); background:var(--surface-2); border-radius:var(--r-3); padding:var(--sp-4);
-  box-shadow:inset 0 1px 0 var(--hairline-strong); word-break:break-all; user-select:all; caret-color:var(--wire)}
-.code-actions{display:flex; flex-wrap:wrap; gap:var(--sp-4); margin-top:var(--sp-4)}
-.hint{color:var(--text-muted); font-size:12px; margin:var(--sp-3) 0 0}
+@container (max-width:420px){.send-grid{grid-template-columns:minmax(0,1fr)} .qr-block{justify-self:start; text-align:left}}
+.label{font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase; color:var(--text-muted); margin:0 0 var(--sp-2)}
+/* The share code is ~330 characters. Rendered in full at display size it wrapped
+   to ~13 lines and single-handedly overflowed the window. Nobody reads it — they
+   press Copy or show the QR — so it lives on ONE truncated line. The full string
+   is still the element's text, so Copy and select-all get all of it. */
+.code{font-family:var(--font-mono); font-size:14px; font-weight:500; letter-spacing:.3px;
+  line-height:1.5; color:var(--text-muted); background:var(--surface-2); border-radius:var(--r-2);
+  padding:11px var(--sp-4); box-shadow:inset 0 1px 0 var(--hairline-strong);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; user-select:all; caret-color:var(--wire);
+  direction:ltr}
+.code-actions{display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-3)}
+.hint{color:var(--text-muted); font-size:12px; margin:var(--sp-2) 0 0}
 .qr-block{text-align:center}
-.qr{width:168px; height:168px; background:#fff; border-radius:var(--r-3); padding:12px; display:block}
+.qr{width:124px; height:124px; background:#fff; border-radius:var(--r-2); padding:9px; display:block}
 .qr svg{width:100%; height:100%; display:block}
-.qr-lens{border:1px solid var(--hairline); border-radius:var(--r-4); padding:4px; background:var(--surface); display:inline-block}
+.qr-lens{border:1px solid var(--hairline); border-radius:var(--r-3); padding:4px; background:var(--surface); display:inline-block}
 
 /* ------------------------------- inputs ---------------------------------- */
 .field-label{display:block; font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase;
@@ -195,13 +258,18 @@ a{color:var(--wire); text-underline-offset:2px}
 .code-input-glyph{position:absolute; left:14px; width:20px; height:12px; pointer-events:none}
 .code-input.shake{animation:shake var(--dur-3) var(--ease-in-out)}
 .recv-dest{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:var(--sp-4)}
-.recv-dest .hint{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.recv-dest .hint{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0}
 .recv-dest .btn-ghost{flex:none}
-.error{color:var(--error); font-size:12px; min-height:1em; margin:var(--sp-3) 0 0}
+#recv-start{margin-top:var(--sp-4)}
+/* The code panel is fixed; only the transfer stack under it may scroll. */
+#recv-pick{flex:none}
+.error{color:var(--error); font-size:12px; min-height:1em; margin:var(--sp-2) 0 0}
 
 /* ------------------------- the wire-progress viz ------------------------- */
-.wire-wrap{margin-top:var(--sp-5)}
-.wire{width:100%; height:auto; display:block; overflow:visible}
+.wire-wrap{margin-top:var(--sp-4)}
+/* Capped: the wire is an accent, not a billboard. Without a max-height it scales
+   with column width and eats vertical budget on wide frames. */
+.wire{width:100%; height:auto; max-height:76px; display:block; overflow:visible}
 .w-track{fill:none; stroke:var(--wire-dim); stroke-width:3; opacity:.3; stroke-linecap:round}
 .w-fill{fill:none; stroke:var(--wire); stroke-width:4; stroke-linecap:round; filter:url(#wireGlow);
   stroke-dasharray:1; stroke-dashoffset:1; transition:stroke-dashoffset var(--dur-2) var(--ease-out)}
@@ -220,10 +288,11 @@ a{color:var(--wire); text-underline-offset:2px}
 /* finished: the wire turns success-green and stops flowing */
 .wire.done .w-fill{stroke:var(--success); filter:none}
 .wire.done .w-current{display:none}
-.wire-readout{margin-top:var(--sp-3); font-family:var(--font-mono); font-size:13px; color:var(--text-muted);
-  display:flex; align-items:center; gap:10px}
+.wire-readout{margin-top:var(--sp-2); font-family:var(--font-mono); font-size:12.5px; color:var(--text-muted);
+  display:flex; align-items:center; gap:10px; min-width:0}
+.wire-readout .js-status{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .wire-readout .js-status:not(:empty)::before{content:'·'; margin-right:6px; color:var(--text-faint)}
-.wire-pct{font-family:var(--font-display); font-size:22px; font-weight:600; color:var(--text); letter-spacing:-.5px}
+.wire-pct{font-family:var(--font-display); font-size:20px; font-weight:600; color:var(--text); letter-spacing:-.5px; flex:none}
 
 /* ----------------------------- route badge ------------------------------- */
 .route-badge{display:inline-flex; flex:none; white-space:nowrap; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:var(--r-full);
@@ -239,8 +308,13 @@ a{color:var(--wire); text-underline-offset:2px}
 .recv-name{font-weight:600; font-size:17px; letter-spacing:-.2px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .recv-actions{display:flex; gap:10px; margin-top:var(--sp-5)}
 
-/* ------------------------------- history --------------------------------- */
-.history{display:flex; flex-direction:column; gap:10px}
+/* ------------------------------- history ---------------------------------
+   Genuinely unbounded, so this is a legitimate bounded scroll region. */
+.history{flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  display:flex; flex-direction:column; gap:8px; padding-right:var(--sp-1)}
+/* Empty list must not claim height — the empty state centres in the view instead. */
+.history:empty{flex:none}
+.history > *{flex:none}
 .hist-item{display:grid; grid-template-columns:auto 1fr auto; gap:var(--sp-4); align-items:center;
   background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-2); padding:var(--sp-4);
   transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
@@ -248,12 +322,18 @@ a{color:var(--wire); text-underline-offset:2px}
 .hist-dir{width:34px; height:18px}
 .hist-name{font-weight:600; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .hist-meta{font-size:12px; color:var(--text-muted); margin-top:2px}
-.empty{color:var(--text-muted); text-align:center; padding:48px 24px}
+/* Empty states centre in whatever height the view gives them. */
+.empty{color:var(--text-muted); text-align:center; padding:24px; flex:1 1 auto; min-height:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center}
 .empty-glyph{width:80px; height:42px; margin:0 auto 16px; display:block; opacity:.6}
+.empty-title{font-family:var(--font-display); font-size:20px; font-weight:600; margin:0 0 4px; color:var(--text)}
+.empty-sub{margin:0; font-size:13.5px; max-width:38ch}
 
 /* ------------------------------- settings -------------------------------- */
-.settings{display:flex; flex-direction:column}
-.setting{display:flex; justify-content:space-between; align-items:center; gap:24px; padding:var(--sp-4) 0;
+/* Hugs its content, shrinks (and scrolls) only if the frame is short. */
+.settings{flex:0 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  display:flex; flex-direction:column}
+.setting{display:flex; justify-content:space-between; align-items:center; gap:24px; padding:var(--sp-3) 0;
   border-bottom:1px solid var(--hairline-soft)}
 .setting:last-child{border-bottom:0}
 .setting .label{margin:0}
@@ -313,16 +393,21 @@ a{color:var(--wire); text-underline-offset:2px}
   justify-content:center; padding:24px; z-index:50}
 /* Consent dialog always sits above the receive-preview modal if both appear. */
 #nearby-offer-modal{z-index:60}
-.modal-sheet{width:100%; max-width:440px; max-height:82vh; display:flex; flex-direction:column;
+/* Bounded to the frame with the scrim's own padding subtracted, so a dialog can
+   never be taller than the window it sits in. */
+.modal-sheet{width:100%; max-width:440px; max-height:calc(100vh - 48px); display:flex; flex-direction:column;
   background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
-  box-shadow:var(--elev-pop); padding:var(--sp-6)}
+  box-shadow:var(--elev-pop); padding:var(--sp-5)}
 .modal-title{font-family:var(--font-display); font-size:22px; font-weight:600; letter-spacing:-.4px; margin:0 0 4px}
 .modal-sub{color:var(--text-muted); font-size:13px; margin:0 0 var(--sp-4)}
 .preview-meta{display:flex; align-items:center; gap:10px; margin-bottom:var(--sp-3); flex-wrap:wrap}
 .preview-verified{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600;
   letter-spacing:.3px; color:var(--success)}
 .preview-verified::before{content:""; width:6px; height:6px; border-radius:var(--r-full); background:currentColor}
-.file-list{list-style:none; margin:0 0 var(--sp-4); padding:0; overflow-y:auto; flex:1 1 auto; min-height:0; max-height:46vh;
+/* Bounded scroll region: a folder can hold hundreds of files. It shrinks with
+   the sheet (flex + min-height:0) rather than pushing the dialog past the frame. */
+.file-list{list-style:none; margin:0 0 var(--sp-4); padding:0; overflow-y:auto; overscroll-behavior:contain;
+  flex:1 1 auto; min-height:64px;
   border:1px solid var(--hairline); border-radius:var(--r-3); background:var(--surface-2)}
 .file-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px;
   border-bottom:1px solid var(--hairline-soft)}
@@ -334,10 +419,14 @@ a{color:var(--wire); text-underline-offset:2px}
 .modal-note{font-size:12px; color:var(--text-muted); margin:0 0 var(--sp-5); word-break:break-word}
 .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:auto}
 
-/* ===================== nearby devices + consent flow ==================== */
-.nearby-panel{margin-top:var(--sp-5)}
-.nearby-head{display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4); margin-bottom:var(--sp-4)}
-.nearby-title{display:flex; align-items:center; gap:12px}
+/* ===================== nearby devices + consent flow ====================
+   Lives in the send view's side column: full height, header and footer fixed,
+   only the device list scrolls. */
+.nearby-panel{flex:1 1 auto; min-height:0; display:flex; flex-direction:column; padding:var(--sp-4)}
+.nearby-head{flex:none; display:flex; align-items:flex-start; justify-content:space-between; gap:var(--sp-3);
+  margin-bottom:var(--sp-4); flex-wrap:wrap}
+.nearby-title{display:flex; align-items:center; gap:10px; min-width:0}
+.nearby-title-text{min-width:0}
 .nearby-title-text .label{margin:0}
 .nearby-title-text .hint{margin:2px 0 0}
 
@@ -365,29 +454,35 @@ a{color:var(--wire); text-underline-offset:2px}
 .switch[aria-checked="true"] .switch-knob{left:20px; background:var(--text-on-wire)}
 .switch:focus-visible{outline:2px solid var(--wire); outline-offset:2px}
 
-.device-list{display:flex; flex-direction:column; gap:var(--sp-2); min-height:10px}
-.device-row{display:flex; align-items:center; gap:14px; padding:10px 12px; border-radius:var(--r-3);
+/* Bounded scroll region: N devices on a busy network must not grow the frame. */
+.device-list{flex:1 1 auto; display:flex; flex-direction:column; gap:var(--sp-2); min-height:0;
+  overflow-y:auto; overscroll-behavior:contain; margin:0 calc(var(--sp-2) * -1); padding:0 var(--sp-2)}
+.device-row{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--r-3);
   background:var(--surface-2); border:1px solid var(--hairline);
   transition:border-color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out)}
 .device-row:hover{border-color:var(--hairline-strong); transform:translateY(-1px); background:var(--surface-3)}
 .device-row.entering{animation:deviceIn var(--dur-3) var(--ease-pop, cubic-bezier(.34,1.2,.5,1))}
 @keyframes deviceIn{from{opacity:0; transform:translateY(8px) scale(.98)} to{opacity:1; transform:none}}
-.device-avatar{flex:none; width:36px; height:36px; border-radius:var(--r-2); display:grid; place-items:center;
+.device-avatar{flex:none; width:32px; height:32px; border-radius:var(--r-2); display:grid; place-items:center;
   background:var(--surface); border:1px solid var(--hairline-strong); color:var(--wire)}
-.device-avatar.big{width:48px; height:48px; border-radius:var(--r-3)}
-.device-info{min-width:0; display:flex; flex-direction:column; gap:2px}
-.device-name{font-weight:600; font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.device-fp{font-size:11.5px; letter-spacing:.5px; white-space:nowrap}
-.device-row .js-send{margin-left:auto; height:34px; padding:0 14px; font-size:13px}
+.device-avatar.big{width:44px; height:44px; border-radius:var(--r-3)}
+.device-info{min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:1px}
+.device-name{font-weight:600; font-size:13.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+/* The pairing code must never wrap mid-value; truncate the hostname instead. */
+.device-fp{font-size:11px; letter-spacing:.4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.device-row .js-send{flex:none; margin-left:auto; height:30px; padding:0 11px; font-size:12.5px}
 .device-row.busy .js-send{opacity:.55; pointer-events:none}
 /* While one offer is in flight, no other device is tappable (one offer at a time). */
 #nearby-devices.offering .js-send{opacity:.55; pointer-events:none}
-.device-empty{padding:18px 12px; text-align:center; color:var(--text-muted); font-size:13px;
+.device-empty{padding:16px 12px; text-align:center; color:var(--text-muted); font-size:12.5px; line-height:1.45;
   border:1px dashed var(--hairline); border-radius:var(--r-3)}
-.nearby-foot{margin-top:var(--sp-3)}
+.nearby-foot{flex:none; margin-top:var(--sp-3); padding-top:var(--sp-3); border-top:1px solid var(--hairline-soft);
+  line-height:1.45}
+/* The switch label wraps to its own line in the narrow side column. */
+.nearby-head .switch{margin-left:auto}
 
 /* incoming offer modal */
-.offer-sheet{max-width:460px}
+.offer-sheet{max-width:480px}
 .offer-from{display:flex; align-items:center; gap:14px; margin-bottom:var(--sp-4)}
 .offer-from .modal-title,.offer-from .modal-sub{margin:0}
 .offer-summary{display:flex; align-items:baseline; gap:10px; padding:var(--sp-3) var(--sp-4); margin-bottom:var(--sp-4);
@@ -397,9 +492,20 @@ a{color:var(--wire); text-underline-offset:2px}
 .offer-verify{margin-bottom:var(--sp-4)}
 .offer-verify .label{margin-bottom:2px}
 .offer-verify .label.sm{font-size:11px}
-.label.xs{font-size:10px; letter-spacing:.8px; margin:0 0 4px}
-.verify-grid{display:grid; grid-template-columns:1fr auto 1fr; gap:8px; align-items:stretch; margin-top:6px}
+/* `.label.xs` is a <span>. Left inline it ran into the pairing code and the two
+   wrapped together as one text run ("THEIR CODEgf o koj uky 5ux"). It has to be
+   a block for its own line and its bottom margin to mean anything. */
+.label.xs{display:block; font-size:10px; letter-spacing:.8px; margin:0 0 5px; text-transform:uppercase;
+  font-weight:600; color:var(--text-faint)}
+/* Two columns only — the old middle `auto` track had no child and just ate gap. */
+.verify-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:stretch; margin-top:8px}
 .verify-box{padding:10px 12px; background:var(--surface-2); border:1px solid var(--hairline); border-radius:var(--r-2);
-  font-family:var(--font-mono); font-size:15px; letter-spacing:2px; font-weight:600; color:var(--text); user-select:all}
+  min-width:0}
+/* Sized so a 12-character code (4 groups of 3) fits on one line without wrapping
+   mid-group. The code got wider when the fingerprint moved from ~21 bits to a
+   60-bit hash; the box never followed. */
+.verify-box code{display:block; font-family:var(--font-mono); font-size:13px; letter-spacing:.3px;
+  font-weight:600; color:var(--text); user-select:all; white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis; direction:ltr}
 .offer-sheet .modal-note{margin-top:0}
 .btn.sm{height:34px; padding:0 14px; font-size:13px}

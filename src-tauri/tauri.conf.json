@@ -12,10 +12,10 @@
       {
         "label": "main",
         "title": "Dropwire",
-        "width": 980,
-        "height": 680,
-        "minWidth": 720,
-        "minHeight": 520,
+        "width": 1020,
+        "height": 700,
+        "minWidth": 900,
+        "minHeight": 620,
         "dragDropEnabled": true
       }
     ],

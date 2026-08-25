@@ -49,38 +49,44 @@
       <section class="view is-active" id="view-send" role="region" aria-label="Send">
         <header class="view-head"><h1>Send</h1><p class="sub">Pick a file or folder. Share the code — it goes straight to them.</p></header>
 
-        <div id="send-pick" class="dropzone">
-          <div>
-            <svg class="dz-glyph" viewBox="0 0 120 60" aria-hidden="true">
-              <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-              <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
-              <circle class="drift" r="3" fill="var(--wire)"/>
-            </svg>
-            <p class="dz-title">Drop a file or folder here</p>
-            <p class="dz-sub">or</p>
-            <div class="dz-actions"><button class="btn" id="pick-file">Choose a file</button><button class="btn-ghost" id="pick-folder">Choose a folder</button></div>
-          </div>
-        </div>
-
-        <div id="send-list" class="transfer-list"></div>
-
-        <!-- ----- nearby devices (mDNS discovery + two-sided consent) ----- -->
-        <div id="nearby-panel" class="panel nearby-panel">
-          <div class="nearby-head">
-            <div class="nearby-title">
-              <span class="nearby-radar" id="nearby-radar" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
-              <div class="nearby-title-text">
-                <p class="label">Nearby devices</p>
-                <p class="hint" id="nearby-status" aria-live="polite">Looking on this network…</p>
+        <!-- Two columns: transfer work left, nearby devices always visible right. -->
+        <div class="view-body send-layout">
+          <div class="send-main">
+            <div id="send-pick" class="dropzone">
+              <div>
+                <svg class="dz-glyph" viewBox="0 0 120 60" aria-hidden="true">
+                  <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
+                  <circle class="drift" r="3" fill="var(--wire)"/>
+                </svg>
+                <p class="dz-title">Drop a file or folder here</p>
+                <p class="dz-sub">or</p>
+                <div class="dz-actions"><button class="btn" id="pick-file">Choose a file</button><button class="btn-ghost" id="pick-folder">Choose a folder</button></div>
               </div>
             </div>
-            <button class="switch" id="nearby-toggle" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing">
-              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-              <span class="switch-text">Nearby sharing</span>
-            </button>
+
+            <div id="send-list" class="transfer-list"></div>
           </div>
-          <div id="nearby-devices" class="device-list" role="list" aria-label="Devices found on this network"></div>
-          <p class="hint nearby-foot">Both devices confirm before anything sends. With sharing off, this device is invisible.</p>
+
+          <!-- ----- nearby devices (mDNS discovery + two-sided consent) ----- -->
+          <aside class="send-side">
+            <div id="nearby-panel" class="panel nearby-panel">
+              <div class="nearby-head">
+                <div class="nearby-title">
+                  <span class="nearby-radar" id="nearby-radar" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
+                  <div class="nearby-title-text">
+                    <p class="label">Nearby devices</p>
+                    <p class="hint" id="nearby-status" aria-live="polite">Looking on this network…</p>
+                  </div>
+                </div>
+                <button class="switch" id="nearby-toggle" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing" title="Nearby sharing">
+                  <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+                </button>
+              </div>
+              <div id="nearby-devices" class="device-list" role="list" aria-label="Devices found on this network"></div>
+              <p class="hint nearby-foot">Both devices confirm before anything sends. With sharing off, this device is invisible.</p>
+            </div>
+          </aside>
         </div>
 
         <template id="tpl-send">
@@ -116,21 +122,23 @@
       </section>
 
       <!-- ----- RECEIVE ----- -->
-      <section class="view" id="view-receive" role="region" aria-label="Receive">
+      <section class="view view-narrow" id="view-receive" role="region" aria-label="Receive">
         <header class="view-head"><h1>Receive</h1><p class="sub">Enter the code you were given, then choose where to save the files.</p></header>
 
-        <div id="recv-pick" class="panel">
-          <label class="field-label" for="recv-code-input">Transfer code</label>
-          <div class="code-input-wrap">
-            <svg class="code-input-glyph" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="var(--wire-dim)"/><circle cx="34" cy="12" r="3.5" fill="var(--text-faint)"/></svg>
-            <input id="recv-code-input" class="code-input" type="text" spellcheck="false" autocomplete="off" placeholder="Paste code (starts with blob…)" />
+        <div class="view-body">
+          <div id="recv-pick" class="panel">
+            <label class="field-label" for="recv-code-input">Transfer code</label>
+            <div class="code-input-wrap">
+              <svg class="code-input-glyph" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="var(--wire-dim)"/><circle cx="34" cy="12" r="3.5" fill="var(--text-faint)"/></svg>
+              <input id="recv-code-input" class="code-input" type="text" spellcheck="false" autocomplete="off" placeholder="Paste code (starts with blob…)" />
+            </div>
+            <div class="recv-dest"><span class="hint" id="recv-dest-label">Save to: <em>Downloads</em></span><button class="btn-ghost" id="pick-dest">Choose folder…</button></div>
+            <button class="btn btn-block" id="recv-start" disabled>Receive</button>
+            <p class="error" id="recv-error" aria-live="assertive"></p>
           </div>
-          <div class="recv-dest"><span class="hint" id="recv-dest-label">Save to: <em>Downloads</em></span><button class="btn-ghost" id="pick-dest">Choose folder…</button></div>
-          <button class="btn btn-block" id="recv-start" style="margin-top:16px" disabled>Receive</button>
-          <p class="error" id="recv-error" aria-live="assertive"></p>
-        </div>
 
-        <div id="recv-list" class="transfer-list"></div>
+          <div id="recv-list" class="transfer-list"></div>
+        </div>
         <template id="tpl-recv">
           <div class="panel xfer-card">
             <div class="recv-head"><span class="recv-name js-name">Connecting…</span><span class="route-badge connecting">connecting</span></div>
@@ -154,19 +162,22 @@
       </section>
 
       <!-- ----- HISTORY ----- -->
-      <section class="view" id="view-history" role="region" aria-label="History">
+      <section class="view view-narrow" id="view-history" role="region" aria-label="History">
         <header class="view-head"><h1>History</h1><p class="sub">Transfers on this device. Stored only here.</p></header>
-        <div id="history-list" class="history"></div>
-        <div class="empty hidden" id="history-empty">
-          <svg class="empty-glyph" viewBox="0 0 120 60" aria-hidden="true"><path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/><circle class="drift" r="3" fill="var(--wire)"/></svg>
-          <p style="font-family:var(--font-display);font-size:22px;font-weight:600;margin:0 0 4px;color:var(--text)">No transfers yet</p>
-          <p style="margin:0">Files you send or receive show up here — stored only on this device.</p>
+        <div class="view-body">
+          <div id="history-list" class="history"></div>
+          <div class="empty hidden" id="history-empty">
+            <svg class="empty-glyph" viewBox="0 0 120 60" aria-hidden="true"><path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/><circle class="drift" r="3" fill="var(--wire)"/></svg>
+            <p class="empty-title">No transfers yet</p>
+            <p class="empty-sub">Files you send or receive show up here — stored only on this device.</p>
+          </div>
         </div>
       </section>
 
       <!-- ----- SETTINGS ----- -->
-      <section class="view" id="view-settings" role="region" aria-label="Settings">
+      <section class="view view-narrow" id="view-settings" role="region" aria-label="Settings">
         <header class="view-head"><h1>Settings</h1><p class="sub">Dropwire keeps nothing in the cloud. Everything below lives on this device.</p></header>
+        <div class="view-body">
         <div class="panel settings">
           <div class="setting"><span class="label">This device's ID</span>
             <span class="setting-control"><code class="mono val" id="endpoint-id">…</code><button class="btn-quiet sm" id="copy-id">Copy</button></span>
@@ -183,6 +194,7 @@
           <div class="setting"><span class="label">Source code</span><span class="setting-control"><a class="val js-ext" data-url="https://github.com/muhamadjawdatsalemalakoum/dropwire" href="#">github.com/muhamadjawdatsalemalakoum/dropwire</a></span></div>
           <div class="setting"><span class="label">Author</span><span class="setting-control"><a class="val js-ext" data-url="https://www.linkedin.com/in/akoum/" href="#">Muhamad J. Akoum · LinkedIn</a></span></div>
           <div class="setting"><span class="label">About</span><span class="val">Dropwire · free &amp; open source · built on iroh · <span id="app-version"></span></span></div>
+        </div>
         </div>
       </section>
     </main>
