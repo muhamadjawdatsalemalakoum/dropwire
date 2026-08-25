@@ -85,7 +85,7 @@ jobs:
             no account, no server holding your data. Built on iroh.
 
             ### Downloads
-            - **Windows** — `.msi` or `_x64-setup.exe`
+            - **Windows** — `_x64-setup.exe`
             - **macOS** — `_universal.dmg` (Apple Silicon + Intel)
             - **Linux** — `.AppImage`, `.deb`, or `.rpm`
 

@@ -40,6 +40,36 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - The project is now public and the landing page is live on GitHub Pages.
 - Removed internal-only planning docs and the unused `dropwire.app` domain
   references; the site is GitHub-hosted.
+- Release profile now unwinds on panic instead of aborting, so a fault in a
+  background discovery thread degrades nearby discovery rather than crashing the
+  whole app; the desktop shell also logs panics to `panic.log` in its data dir.
+
+### Fixed
+- **macOS launch crash**: the always-on mDNS threads could abort the process
+  under `panic = "abort"`; switched to unwind + poison-safe locks + a panic hook.
+  The macOS bundle is now ad-hoc signed so Gatekeeper/TCC have a stable identity.
+- **Nearby sharing off now truly means invisible**: incoming offers are declined
+  at the consent layer when Nearby is off (previously the check was computed and
+  discarded, so anyone who knew your endpoint id — over the LAN or the relay —
+  could still pop a consent dialog).
+- **Pairing fingerprint** is now a BLAKE3 hash of the identity (60 bits) instead
+  of a grindable ~21-bit prefix of its hex form, and the receiver derives it from
+  the authenticated remote id rather than a sender-supplied field.
+- **Accepting a nearby offer** now goes through the same verified preview as the
+  code flow (real file names/sizes from the manifest), instead of downloading on
+  the sender's unverified claimed metadata.
+- Nearby devices no longer vanish from the list ~30 seconds after discovery while
+  still present; presence now follows mDNS add/remove events.
+- A crafted or colliding mDNS instance name can no longer evict a different
+  peer from the nearby list (removal matches the exact instance).
+- Incoming offers survive a burst (broadcast-lag no longer permanently kills the
+  offer pump), a second "Send here" can't cancel a transfer another device just
+  accepted, a new offer no longer replaces the consent dialog mid-decision, and a
+  lapsed offer is cleaned up and reported as expired instead of leaking.
+- **Windows firewall rules** are now applied through an elevated step (the
+  per-user installer could not add them before, so they silently did nothing).
+- CI runs the nearby consent + relay suites (they were gated behind a feature the
+  workflow never enabled) and now includes a macOS job.
 
 ## [0.2.3] - 2026-06-17
 

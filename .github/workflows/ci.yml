@@ -18,10 +18,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS (x10 Actions-minute multiplier) is omitted from routine CI to
-        # conserve private-repo minutes; the release workflow builds + tests it
-        # on tags. Re-add `macos-latest` here once the repo is public (free).
-        os: [ubuntu-latest, windows-latest]
+        # All three desktop OSes: the repo is public, so Actions minutes are
+        # free and the macOS runner is worth it — the nearby feature has
+        # macOS-specific paths (mDNS, Local Network permission) that only a
+        # macOS job exercises.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -37,13 +38,18 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -p irohcore --all-targets -- -D warnings
+        # test-utils so the gated integration tests (nearby consent, relay) are
+        # linted too, not just the shipping lib.
+        run: cargo clippy -p irohcore --all-targets --features test-utils -- -D warnings
 
       - name: Build
         run: cargo build -p irohcore --verbose
 
       - name: Test
-        run: cargo test -p irohcore --verbose
+        # test-utils is REQUIRED for the nearby consent suite and the relay
+        # tests ([[test]] required-features in core/Cargo.toml). Without it those
+        # entire suites were silently skipped in CI.
+        run: cargo test -p irohcore --features test-utils --verbose
 
   # Placeholder for the desktop bundle job, enabled once `src-tauri` lands (M2).
   # Uses tauri-apps/tauri-action to produce signed installers per OS.
