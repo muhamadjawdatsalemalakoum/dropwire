@@ -229,7 +229,13 @@ function onSendMsg(m, els, card) {
       els.status.textContent = m.message ? `Couldn't send — ${m.message}` : "Couldn't send.";
       if (liveSend && liveSend.card === card) liveSend = null;
       break;
-    case 'cancelled': removeCard(card); break;
+    case 'cancelled':
+      removeCard(card);
+      // The send this offer was for is gone; release the nearby list so the
+      // user can pick a device again without waiting out the offer timeout.
+      if (liveSend && liveSend.card === card) liveSend = null;
+      setOffering(false);
+      break;
   }
 }
 $('#pick-file').addEventListener('click', async () => {
@@ -323,6 +329,8 @@ function closeModal() {
   const app = document.querySelector('.app'); if (app) app.removeAttribute('inert'); // before focus restore
   previewTicket = null; previewDest = null; previewLoaded = false;
   if (lastFocus && lastFocus.focus) lastFocus.focus();
+  // A nearby offer accepted into this preview parks the queue; resume it now.
+  showNextOffer();
 }
 function checkedIndices() {
   return [...document.querySelectorAll('#preview-files .file-check')]
@@ -680,7 +688,9 @@ function anyModalOpen() {
 // one is answered.
 function enqueueOffer(offer) {
   if (!offer || !offer.offerId) return;
-  if (nearby.offers.has(offer.offerId)) return; // duplicate event
+  // Dedup against both the shown offer and the waiting queue.
+  if (nearby.offers.has(offer.offerId)) return;
+  if (nearby.queue.some((o) => o.offerId === offer.offerId)) return;
   if (offerState || anyModalOpen()) { nearby.queue.push(offer); return; }
   showOfferModal(offer);
 }
@@ -718,7 +728,10 @@ function expireOfferModal(offerId) {
   $('#offer-accept').disabled = true;
   setTimeout(() => { if (offerState && offerState.offerId === offerId) closeOfferModal(); }, 1600);
 }
-function closeOfferModal() {
+// `showNext` is false when the caller immediately opens another modal (the
+// accept path opens the verified preview): draining the queue here would put a
+// fresh consent dialog on screen at the same time as that preview.
+function closeOfferModal(showNext = true) {
   if (nearby.offerTimer) { clearTimeout(nearby.offerTimer); nearby.offerTimer = null; }
   if (offerState) nearby.offers.delete(offerState.offerId);
   const scrim = $('#nearby-offer-modal');
@@ -726,7 +739,7 @@ function closeOfferModal() {
   const app = document.querySelector('.app'); if (app) app.removeAttribute('inert');
   offerState = null;
   if (offerLastFocus && offerLastFocus.focus) offerLastFocus.focus();
-  showNextOffer(); // surface the next queued offer, if any
+  if (showNext) showNextOffer(); // surface the next queued offer, if any
 }
 $('#offer-accept').addEventListener('click', async () => {
   const offer = offerState; if (!offer) return;
@@ -735,12 +748,21 @@ $('#offer-accept').addEventListener('click', async () => {
   let ok = true;
   try { await invoke('nearby_respond', { offerId: offer.offerId, accept: true }); } catch (_) { ok = false; }
   const ticket = offer.ticket;
-  closeOfferModal();
+  if (!ok) {
+    // The engine rejects an answer whose offer already lapsed. Say so on the
+    // dialog rather than closing it silently under the user.
+    acceptBtn.textContent = 'Accept & receive';
+    expireOfferModal(offer.offerId);
+    return;
+  }
+  // Keep the queue paused: the preview modal opens right below, and draining a
+  // queued offer here would stack two dialogs at once.
+  closeOfferModal(false);
   // Route through the SAME verified preview the code-share flow uses: the file
   // names and sizes come from the transfer manifest (committed by the code),
   // not the sender's claim in the offer, and nothing is written until the user
-  // confirms them. If the offer already lapsed, openPreview surfaces that.
-  if (ok) openPreview(ticket, null);
+  // confirms them.
+  openPreview(ticket, recvDest || localStorage.getItem('dropwire-default-dir') || null);
 });
 $('#offer-decline').addEventListener('click', async () => {
   const offer = offerState; if (!offer) { closeOfferModal(); return; }

@@ -334,8 +334,10 @@ fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// Where a panic breadcrumb is written (app data dir, honoring the test
-/// override). Kept identical to the data-dir resolution in `run`'s setup.
+/// Where a panic breadcrumb is written. Honors `DROPWIRE_DATA_DIR`; otherwise
+/// the OS data dir. Note this is resolved WITHOUT a Tauri handle (the hook is
+/// installed before the app exists), so in the default case it lands beside —
+/// not inside — Tauri's identifier-scoped `app_data_dir()`.
 fn panic_log_path() -> Option<PathBuf> {
     let base = match std::env::var("DROPWIRE_DATA_DIR") {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
