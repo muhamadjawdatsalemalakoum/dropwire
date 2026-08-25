@@ -13,228 +13,313 @@
     <filter id="wireGlow" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="2.4" /></filter>
   </defs></svg>
 
-  <div class="app">
-    <!-- ===================== RAIL ===================== -->
-    <aside class="sidebar">
-      <div class="brand" aria-label="Dropwire">
-        <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
-          <path class="brand-wire" pathLength="1" d="M17 36h11l4-8 4 8h11" fill="none" stroke="#d2ff3a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="17" cy="36" r="6" fill="#d2ff3a"/><circle cx="47" cy="36" r="5" fill="#f2f5ef"/>
-        </svg>
+  <div class="win">
+    <!-- ===================== TITLE BAR (frameless chrome) ===================== -->
+    <div class="titlebar" data-tauri-drag-region>
+      <svg class="tb-mark" viewBox="0 0 64 64" width="18" height="18" aria-hidden="true">
+        <path class="brand-wire" pathLength="1" d="M17 36h11l4-8 4 8h11" fill="none" stroke="#D2FF3A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="17" cy="36" r="6" fill="#D2FF3A"/><circle cx="47" cy="36" r="5" fill="#F2F5EF"/>
+      </svg>
+      <span class="tb-name" data-tauri-drag-region>Dropwire</span>
+      <span class="tb-spacer" data-tauri-drag-region></span>
+      <div class="tb-controls">
+        <button class="tb-btn" id="win-min" type="button" aria-label="Minimize" title="Minimize">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2 6h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <button class="tb-btn" id="win-max" type="button" aria-label="Maximize" title="Maximize">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+        </button>
+        <button class="tb-btn danger" id="win-close" type="button" aria-label="Close" title="Close">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
       </div>
-      <nav class="nav" aria-label="Primary">
-        <div class="nav-indicator" aria-hidden="true"></div>
-        <button class="nav-item is-active" data-view="send" data-tip="Send" aria-current="page" title="Send">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Send</span>
+    </div>
+
+    <!-- ===================== TOOLBAR ===================== -->
+    <div class="toolbar">
+      <span class="identity" id="identity-chip" title="This device">
+        <span class="identity-dot" aria-hidden="true"></span>
+        <span class="identity-name" id="device-name">This device</span>
+      </span>
+
+      <div class="seg" role="tablist" aria-label="Sections">
+        <button class="seg-btn is-active" role="tab" aria-selected="true" data-panel="send" id="tab-send">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Send
         </button>
-        <button class="nav-item" data-view="receive" data-tip="Receive" title="Receive">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Receive</span>
+        <button class="seg-btn" role="tab" aria-selected="false" data-panel="receive" id="tab-receive">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Receive
         </button>
-        <button class="nav-item" data-view="history" data-tip="History" title="History">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 7v5l3 2M21 12a9 9 0 1 1-9-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>History</span>
+        <button class="seg-btn" role="tab" aria-selected="false" data-panel="activity" id="tab-activity">
+          Activity<span class="seg-badge hidden" id="activity-badge">0</span>
         </button>
-        <button class="nav-item" data-view="settings" data-tip="Settings" title="Settings">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Settings</span>
-        </button>
-      </nav>
-      <div class="sidebar-foot">
-        <button id="theme-toggle" class="ghost-btn" type="button" aria-label="Switch theme"></button>
-        <span class="net-badge" role="img" aria-label="Serverless — peers via the public DHT, free relay only as fallback" title="Discovery via the public DHT; free relay only as fallback">serverless</span>
       </div>
-    </aside>
 
-    <!-- ===================== MAIN ===================== -->
-    <main class="main">
-      <!-- ----- SEND ----- -->
-      <section class="view is-active" id="view-send" role="region" aria-label="Send">
-        <header class="view-head"><h1>Send</h1><p class="sub">Pick a file or folder. Share the code — it goes straight to them.</p></header>
+      <span class="toolbar-right">
+        <button class="chip-btn" id="open-settings" type="button" title="Settings (Ctrl+,)">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Settings
+        </button>
+      </span>
+    </div>
 
-        <!-- Two columns: transfer work left, nearby devices always visible right. -->
-        <div class="view-body send-layout">
-          <div class="send-main">
-            <div id="send-pick" class="dropzone">
-              <div>
-                <svg class="dz-glyph" viewBox="0 0 120 60" aria-hidden="true">
-                  <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-                  <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
-                  <circle class="drift" r="3" fill="var(--wire)"/>
-                </svg>
-                <p class="dz-title">Drop a file or folder here</p>
-                <p class="dz-sub">or</p>
-                <div class="dz-actions"><button class="btn" id="pick-file">Choose a file</button><button class="btn-ghost" id="pick-folder">Choose a folder</button></div>
-              </div>
+    <!-- ===================== STAGE ===================== -->
+    <main class="stage">
+
+      <!-- ---------- SEND ---------- -->
+      <section class="panel surface is-active" id="panel-send" role="tabpanel" aria-labelledby="tab-send">
+        <!-- drop area: hero when idle, slim bar once something is in flight -->
+        <div class="drop" id="send-pick">
+          <div class="drop-hero">
+            <svg class="drop-glyph" viewBox="0 0 120 60" width="128" height="64" aria-hidden="true">
+              <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
+              <circle class="drift" r="3" fill="var(--wire)" opacity=".7"/>
+            </svg>
+            <p class="drop-title">Drop files or a folder here</p>
+            <p class="drop-sub">No size limit. Nothing is uploaded anywhere.</p>
+            <div class="drop-actions">
+              <button class="btn" id="pick-file">Choose files</button>
+              <button class="btn-ghost" id="pick-folder">Choose a folder</button>
             </div>
-
-            <div id="send-list" class="transfer-list"></div>
+            <p class="drop-foot">Both devices stay in control: nothing sends until the other side accepts.</p>
           </div>
-
-          <!-- ----- nearby devices (mDNS discovery + two-sided consent) ----- -->
-          <aside class="send-side">
-            <div id="nearby-panel" class="panel nearby-panel">
-              <div class="nearby-head">
-                <div class="nearby-title">
-                  <span class="nearby-radar" id="nearby-radar" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
-                  <div class="nearby-title-text">
-                    <p class="label">Nearby devices</p>
-                    <p class="hint" id="nearby-status" aria-live="polite">Looking on this network…</p>
-                  </div>
-                </div>
-                <button class="switch" id="nearby-toggle" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing" title="Nearby sharing">
-                  <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
-                </button>
-              </div>
-              <div id="nearby-devices" class="device-list" role="list" aria-label="Devices found on this network"></div>
-              <p class="hint nearby-foot">Both devices confirm before anything sends. With sharing off, this device is invisible.</p>
-            </div>
-          </aside>
+          <div class="drop-bar">
+            <svg class="drop-bar-glyph" viewBox="0 0 120 60" width="34" height="18" aria-hidden="true">
+              <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="16" cy="34" r="8" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="7" fill="var(--text-faint)"/>
+            </svg>
+            <span class="drop-bar-text">Drop more here to start another transfer</span>
+            <span class="grow"></span>
+            <button class="btn sm" id="pick-file-2">Choose files</button>
+            <button class="btn-ghost sm" id="pick-folder-2">Folder</button>
+          </div>
         </div>
 
-        <template id="tpl-send">
-          <div class="code-card xfer-card">
-            <div class="send-grid">
-              <div>
-                <p class="label">Share this code</p>
-                <div class="code js-code">—</div>
-                <div class="code-actions"><button class="btn js-copy">Copy code</button><button class="btn-quiet js-cancel">Cancel</button></div>
-                <p class="hint js-status" aria-live="polite">Preparing…</p>
-              </div>
-              <div class="qr-block">
-                <div class="qr-lens"><div class="qr js-qr"></div></div>
-                <p class="hint">Scan to receive</p>
-              </div>
-            </div>
-            <div class="wire-wrap">
-              <svg class="wire connecting" data-dir="send" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-                <defs><clipPath id="lit-send"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
-                <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <g clip-path="url(#lit-send)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
-                <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <circle class="w-spark peer" cx="540" cy="60" r="8"/>
-                <circle class="w-node self live" cx="60" cy="60" r="8"/>
-                <circle class="w-node peer" cx="540" cy="60" r="8"/>
-              </svg>
-              <div class="wire-readout"><span class="wire-pct">0%</span><span class="route-badge connecting">connecting</span></div>
-            </div>
+        <div id="send-list" class="cards"></div>
+
+        <!-- nearby: part of the same surface, hairline separated -->
+        <div class="nearby" id="nearby-panel">
+          <div class="nearby-head">
+            <span class="nearby-title">
+              <span class="radar" id="nearby-radar" aria-hidden="true"><i></i><b></b></span>
+              <span class="label">Nearby devices</span>
+              <span class="hint" id="nearby-status" aria-live="polite">Looking on this network…</span>
+            </span>
+            <span class="nearby-vis">
+              <span class="hint">Visible to this network</span>
+              <button class="switch" id="nearby-toggle" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing" title="Nearby sharing">
+                <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+              </button>
+            </span>
           </div>
-        </template>
+          <div id="nearby-devices" class="device-list" role="list" aria-label="Devices found on this network"></div>
+          <p class="nearby-foot hint">Both devices confirm before anything sends. With sharing off, this device is invisible.</p>
+        </div>
       </section>
 
-      <!-- ----- RECEIVE ----- -->
-      <section class="view view-narrow" id="view-receive" role="region" aria-label="Receive">
-        <header class="view-head"><h1>Receive</h1><p class="sub">Enter the code you were given, then choose where to save the files.</p></header>
-
-        <div class="view-body">
-          <div id="recv-pick" class="panel">
-            <label class="field-label" for="recv-code-input">Transfer code</label>
-            <div class="code-input-wrap">
-              <svg class="code-input-glyph" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="var(--wire-dim)"/><circle cx="34" cy="12" r="3.5" fill="var(--text-faint)"/></svg>
-              <input id="recv-code-input" class="code-input" type="text" spellcheck="false" autocomplete="off" placeholder="Paste code (starts with blob…)" />
+      <!-- ---------- RECEIVE ---------- -->
+      <section class="panel surface" id="panel-receive" role="tabpanel" aria-labelledby="tab-receive" hidden>
+        <div class="recv-entry" id="recv-pick">
+          <div class="recv-entry-hero">
+            <h2 class="entry-title">Paste the code you were given</h2>
+            <p class="entry-sub">You will see the file names and sizes before anything downloads, and nothing is saved until you accept.</p>
+            <div class="code-field">
+              <svg class="code-field-glyph" viewBox="0 0 40 24" aria-hidden="true"><path d="M6 12 H34" stroke="var(--wire-dim)" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="4" fill="var(--wire-dim)"/><circle cx="34" cy="12" r="3.5" fill="var(--text-faint)"/></svg>
+              <input id="recv-code-input" type="text" spellcheck="false" autocomplete="off" placeholder="blob…" aria-label="Transfer code" />
+              <button class="btn-quiet sm" id="recv-paste" type="button">Paste</button>
             </div>
-            <div class="recv-dest"><span class="hint" id="recv-dest-label">Save to: <em>Downloads</em></span><button class="btn-ghost" id="pick-dest">Choose folder…</button></div>
-            <button class="btn btn-block" id="recv-start" disabled>Receive</button>
             <p class="error" id="recv-error" aria-live="assertive"></p>
-          </div>
-
-          <div id="recv-list" class="transfer-list"></div>
-        </div>
-        <template id="tpl-recv">
-          <div class="panel xfer-card">
-            <div class="recv-head"><span class="recv-name js-name">Connecting…</span><span class="route-badge connecting">connecting</span></div>
-            <div class="wire-wrap">
-              <svg class="wire connecting" data-dir="recv" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-                <defs><clipPath id="lit-recv"><rect class="lit-clip" x="0" y="0" width="60" height="120"/></clipPath></defs>
-                <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <g clip-path="url(#lit-recv)"><path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/></g>
-                <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
-                <circle class="w-spark peer" cx="540" cy="60" r="8"/>
-                <circle class="w-node peer" cx="60" cy="60" r="8"/>
-                <circle class="w-node self" cx="540" cy="60" r="8"/>
-              </svg>
-              <div class="wire-readout"><span class="wire-pct">0%</span><span class="js-status" aria-live="polite"></span></div>
+            <div class="dest-row">
+              <span class="dest-label">
+                <span class="label">Save to</span>
+                <span class="dest-path" id="recv-dest-label" title="">Downloads</span>
+              </span>
+              <button class="btn-ghost sm" id="pick-dest" type="button">Change…</button>
             </div>
-            <div class="recv-actions"><button class="btn-quiet js-cancel">Cancel</button><button class="btn js-open hidden">Open folder</button><button class="btn-quiet js-another hidden">Receive another</button></div>
+            <button class="btn btn-lg" id="recv-start" disabled>Receive</button>
+            <p class="entry-foot">Someone on your network sending to you? You do not need a code, they will appear as a request here.</p>
           </div>
-        </template>
+          <div class="recv-bar">
+            <span class="recv-bar-text">Paste another code to receive from someone else</span>
+            <div class="code-field sm">
+              <input id="recv-code-input-2" type="text" spellcheck="false" autocomplete="off" placeholder="blob…" aria-label="Transfer code" />
+            </div>
+            <button class="btn sm" id="recv-start-2">Receive</button>
+          </div>
+        </div>
+
+        <div id="recv-list" class="cards"></div>
       </section>
 
-      <!-- ----- HISTORY ----- -->
-      <section class="view view-narrow" id="view-history" role="region" aria-label="History">
-        <header class="view-head"><h1>History</h1><p class="sub">Transfers on this device. Stored only here.</p></header>
-        <div class="view-body">
-          <div id="history-list" class="history"></div>
-          <div class="empty hidden" id="history-empty">
-            <svg class="empty-glyph" viewBox="0 0 120 60" aria-hidden="true"><path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/><circle class="drift" r="3" fill="var(--wire)"/></svg>
-            <p class="empty-title">No transfers yet</p>
-            <p class="empty-sub">Files you send or receive show up here — stored only on this device.</p>
+      <!-- ---------- ACTIVITY ---------- -->
+      <section class="panel surface" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+        <div class="act-scroll">
+          <div class="act-section" id="act-live-section" hidden>
+            <div class="act-head">
+              <span class="label">In flight</span>
+              <span class="hint" id="act-live-meta"></span>
+            </div>
+            <div id="act-live" class="act-rows"></div>
           </div>
-        </div>
-      </section>
-
-      <!-- ----- SETTINGS ----- -->
-      <section class="view view-narrow" id="view-settings" role="region" aria-label="Settings">
-        <header class="view-head"><h1>Settings</h1><p class="sub">Dropwire keeps nothing in the cloud. Everything below lives on this device.</p></header>
-        <div class="view-body">
-        <div class="panel settings">
-          <div class="setting"><span class="label">This device's ID</span>
-            <span class="setting-control"><code class="mono val" id="endpoint-id">…</code><button class="btn-quiet sm" id="copy-id">Copy</button></span>
+          <div class="act-section" id="act-earlier-section" hidden>
+            <div class="act-head">
+              <span class="label">Earlier</span>
+              <span class="hint">Stored on this device only</span>
+            </div>
+            <div id="history-list" class="act-rows"></div>
           </div>
-          <div class="setting"><span class="label">Default download folder</span>
-            <span class="setting-control"><span class="val" id="default-folder-label">Downloads</span><button class="btn-ghost sm" id="change-folder">Change…</button></span>
-          </div>
-          <div class="setting"><span class="label">Theme</span>
-            <div class="seg" role="radiogroup" aria-label="Theme">
-              <button class="seg-btn" role="radio" aria-checked="false" data-theme-set="auto">Auto</button><button class="seg-btn" role="radio" aria-checked="false" data-theme-set="light">Light</button><button class="seg-btn" role="radio" aria-checked="false" data-theme-set="dark">Dark</button>
+          <div class="act-empty" id="act-empty">
+            <svg class="drop-glyph" viewBox="0 0 120 60" width="112" height="56" aria-hidden="true">
+              <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
+              <circle class="drift" r="3" fill="var(--wire)" opacity=".7"/>
+            </svg>
+            <p class="act-empty-title">No transfers yet</p>
+            <p class="act-empty-sub">Anything you send or receive shows up here, and stays on this device only. Nothing is ever uploaded to a server.</p>
+            <div class="drop-actions">
+              <button class="btn" data-goto="send">Send something</button>
+              <button class="btn-ghost" data-goto="receive">Paste a code</button>
             </div>
           </div>
-          <div class="setting"><span class="label">Connection</span><span class="val">Serverless — peers via the public DHT, free relay only as fallback. No account, no tracking.</span></div>
-          <div class="setting"><span class="label">Source code</span><span class="setting-control"><a class="val js-ext" data-url="https://github.com/muhamadjawdatsalemalakoum/dropwire" href="#">github.com/muhamadjawdatsalemalakoum/dropwire</a></span></div>
-          <div class="setting"><span class="label">Author</span><span class="setting-control"><a class="val js-ext" data-url="https://www.linkedin.com/in/akoum/" href="#">Muhamad J. Akoum · LinkedIn</a></span></div>
-          <div class="setting"><span class="label">About</span><span class="val">Dropwire · free &amp; open source · built on iroh · <span id="app-version"></span></span></div>
-        </div>
         </div>
       </section>
     </main>
 
-    <!-- persistent, unobtrusive author + source credit (open source) -->
-    <footer class="app-credit" aria-label="Credits">
-      <span>by Muhamad J. Akoum</span>
-      <a class="js-ext" data-url="https://github.com/muhamadjawdatsalemalakoum/dropwire" href="#" title="Source on GitHub" aria-label="Source on GitHub">
-        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 2.5-.34c.85 0 1.71.12 2.5.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.82 0 .27.18.6.69.49A10.04 10.04 0 0 0 22 12.25C22 6.58 17.52 2 12 2z" fill="currentColor"/></svg>
-      </a>
-      <a class="js-ext" data-url="https://www.linkedin.com/in/akoum/" href="#" title="LinkedIn — Muhamad J. Akoum" aria-label="LinkedIn — Muhamad J. Akoum">
-        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zM8.34 9.67H5.67V18h2.67V9.67zM7 6.06a1.55 1.55 0 1 0 0 3.1 1.55 1.55 0 0 0 0-3.1zM18.34 18v-4.57c0-2.45-1.31-3.59-3.06-3.59-1.41 0-2.04.78-2.39 1.32v-1.13h-2.67V18h2.67v-4.39c0-.23.02-.46.09-.63.18-.46.6-.94 1.31-.94.92 0 1.29.7 1.29 1.73V18h2.66z" fill="currentColor"/></svg>
-      </a>
-    </footer>
+    <!-- ===================== STATUS BAR ===================== -->
+    <div class="statusbar">
+      <span class="status-left"><span class="status-dot" id="status-dot" aria-hidden="true"></span><span id="status-text">starting…</span></span>
+      <span class="status-right app-credit">
+        <span>by Muhamad J. Akoum</span>
+        <a class="js-ext" data-url="https://github.com/muhamadjawdatsalemalakoum/dropwire" href="#" title="Source on GitHub" aria-label="Source on GitHub">
+          <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 2.5-.34c.85 0 1.71.12 2.5.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.82 0 .27.18.6.69.49A10.04 10.04 0 0 0 22 12.25C22 6.58 17.52 2 12 2z" fill="currentColor"/></svg>
+        </a>
+        <span id="app-version"></span>
+      </span>
+    </div>
   </div>
+
+  <!-- ===== send card ===== -->
+  <template id="tpl-send">
+    <div class="xfer">
+      <div class="xfer-head">
+        <span class="label">Share this code, it works once</span>
+        <span class="grow"></span>
+        <span class="mono xfer-meta js-meta"></span>
+      </div>
+      <div class="ticket-row">
+        <div class="ticket-main">
+          <div class="code-slab">
+            <span class="code-text js-code mono">—</span>
+            <span class="code-len mono js-len"></span>
+          </div>
+          <div class="ticket-actions">
+            <button class="btn js-copy">Copy code</button>
+            <button class="btn-ghost js-full">Show full code</button>
+            <button class="btn-quiet js-cancel">Cancel</button>
+          </div>
+          <div class="ticket-status">
+            <span class="pulse-dot js-dot" aria-hidden="true"></span>
+            <span class="js-status" aria-live="polite">Preparing…</span>
+          </div>
+        </div>
+        <div class="qr-block">
+          <div class="qr js-qr"></div>
+          <p class="hint">Scan to receive</p>
+        </div>
+      </div>
+      <div class="wire-wrap">
+        <svg class="wire connecting" data-dir="send" viewBox="0 19 600 68" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <circle class="w-spark peer" cx="540" cy="60" r="8"/>
+          <circle class="w-node self live" cx="60" cy="60" r="8"/>
+          <circle class="w-node peer" cx="540" cy="60" r="8"/>
+        </svg>
+        <div class="wire-readout">
+          <span class="wire-pct js-pct">0%</span>
+          <span class="pill connecting js-route">connecting</span>
+          <span class="grow"></span>
+          <span class="wire-ends mono js-ends"></span>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ===== receive card ===== -->
+  <template id="tpl-recv">
+    <div class="xfer">
+      <div class="xfer-head">
+        <span class="xfer-name js-name">Connecting…</span>
+        <span class="grow"></span>
+        <span class="pill connecting js-route">connecting</span>
+        <button class="btn-quiet sm js-cancel">Cancel</button>
+        <button class="btn sm js-open hidden">Open folder</button>
+        <button class="btn-ghost sm js-another hidden">Receive another</button>
+      </div>
+      <p class="xfer-sub mono js-sub"></p>
+      <div class="wire-wrap">
+        <svg class="wire connecting" data-dir="recv" viewBox="0 19 600 68" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-sweep" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-current" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-pulse" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <circle class="w-spark peer" cx="540" cy="60" r="8"/>
+          <circle class="w-node peer" cx="60" cy="60" r="8"/>
+          <circle class="w-node self" cx="540" cy="60" r="8"/>
+        </svg>
+        <div class="wire-readout">
+          <span class="wire-pct js-pct">0%</span>
+          <span class="grow"></span>
+          <span class="wire-ends mono js-status" aria-live="polite"></span>
+        </div>
+      </div>
+    </div>
+  </template>
 
   <!-- ===== nearby device row ===== -->
   <template id="tpl-device">
-    <div class="device-row" role="listitem">
-      <span class="device-avatar" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 6h16v9H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 10h8M8 13h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    <div class="device" role="listitem">
+      <span class="device-icon js-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="17" height="17"><rect x="3" y="5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 20h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       </span>
-      <div class="device-info">
+      <span class="device-id">
         <span class="device-name js-name">Device</span>
-        <span class="device-fp js-fp mono" title="Compare this code with the one shown on the other device before accepting">fp ···</span>
-      </div>
+        <span class="device-os js-os mono hidden"></span>
+      </span>
+      <span class="device-fp mono js-fp"></span>
       <button class="btn sm js-send" type="button">Send here</button>
     </div>
   </template>
 
+  <!-- ===== activity row ===== -->
+  <template id="tpl-act-row">
+    <div class="act-row">
+      <span class="act-dir js-dir" aria-hidden="true"></span>
+      <span class="act-id">
+        <span class="act-name js-name"></span>
+        <span class="act-meta js-meta"></span>
+      </span>
+      <span class="act-state">
+        <span class="act-pct js-pct"></span>
+        <span class="pill js-pill"></span>
+      </span>
+      <span class="act-actions js-actions"></span>
+    </div>
+  </template>
+
   <!-- ===== incoming nearby offer (two-sided consent) ===== -->
-  <div id="nearby-offer-modal" class="modal-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="offer-title">
-    <div class="modal-sheet offer-sheet" role="document">
+  <div id="nearby-offer-modal" class="scrim hidden" role="dialog" aria-modal="true" aria-labelledby="offer-title">
+    <div class="sheet offer-sheet" role="document">
       <div class="offer-from">
-        <span class="device-avatar big" aria-hidden="true">
+        <span class="device-icon big" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 3v10m0 0l-3.5-3.5M12 13l3.5-3.5M5 17h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </span>
         <div>
-          <h2 class="modal-title" id="offer-title">Incoming transfer</h2>
-          <p class="modal-sub"><span id="offer-device">A nearby device</span> wants to send you files</p>
+          <h2 class="sheet-title" id="offer-title"><span id="offer-device">A nearby device</span></h2>
+          <p class="sheet-sub">wants to send you files</p>
         </div>
       </div>
       <div class="offer-summary">
@@ -242,35 +327,105 @@
         <span class="offer-size" id="offer-size">—</span>
       </div>
       <div class="offer-verify">
-        <p class="label sm">Verify it's really them</p>
-        <p class="hint">Ask the sender for their pairing code and compare:</p>
+        <p class="label">Verify it is really them</p>
+        <p class="hint">Ask them to read their pairing code aloud, then compare:</p>
         <div class="verify-grid">
-          <div class="verify-box"><span class="label xs">Their code</span><code class="mono js-their-fp" id="offer-fp">··· ··· ··· ···</code></div>
+          <div class="verify-box"><span class="label xs">Their code</span><code class="mono" id="offer-fp">··· ··· ··· ···</code></div>
           <div class="verify-box"><span class="label xs">Yours</span><code class="mono" id="offer-my-fp">··· ··· ··· ···</code></div>
         </div>
       </div>
-      <p class="modal-note" id="offer-note">Nothing is received until you accept. Declining tells them instantly.</p>
-      <div class="modal-actions">
+      <p class="sheet-note" id="offer-note">Nothing is received until you accept. Declining tells them instantly.</p>
+      <div class="sheet-actions">
+        <span class="hint" id="offer-countdown"></span>
+        <span class="grow"></span>
         <button class="btn-quiet" id="offer-decline">Decline</button>
-        <button class="btn" id="offer-accept">Accept &amp; receive</button>
+        <button class="btn" id="offer-accept">Accept &amp; preview</button>
       </div>
     </div>
   </div>
 
-  <!-- ===== preview / accept modal (shown before any download) ===== -->
-  <div id="recv-preview" class="modal-scrim hidden" role="dialog" aria-modal="true" aria-labelledby="preview-title">
-    <div class="modal-sheet" role="document">
-      <h2 class="modal-title" id="preview-title">Incoming transfer</h2>
-      <p class="modal-sub" id="preview-summary" aria-live="polite">Connecting to sender to preview…</p>
+  <!-- ===== preview / accept sheet ===== -->
+  <div id="recv-preview" class="scrim hidden" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+    <div class="sheet" role="document">
+      <h2 class="sheet-title" id="preview-title">Incoming transfer</h2>
+      <p class="sheet-sub" id="preview-summary" aria-live="polite">Connecting to sender to preview…</p>
       <div class="preview-meta">
-        <span class="route-badge connecting" id="preview-route">connecting</span>
-        <span class="preview-verified" title="These names and sizes are committed by the transfer code — the sender cannot fake them.">verified by the code</span>
+        <span class="pill connecting" id="preview-route">connecting</span>
+        <span class="pill verified" title="These names and sizes are committed by the transfer code, the sender cannot fake them.">verified by the code</span>
+      </div>
+      <div class="preview-selectall">
+        <label class="sel-all"><input type="checkbox" id="preview-all" checked /> <span id="preview-selcount">All selected</span></label>
+        <span class="grow"></span>
+        <span class="mono hint" id="preview-seltotal"></span>
       </div>
       <ul class="file-list" id="preview-files" aria-label="Files in this transfer"></ul>
-      <p class="modal-note" id="preview-note">Nothing is saved until you accept.</p>
-      <div class="modal-actions">
-        <button class="btn-quiet" id="preview-decline">Cancel</button>
-        <button class="btn" id="preview-accept" disabled>Accept &amp; download</button>
+      <p class="sheet-note" id="preview-note">Nothing is saved until you accept. Untick anything you do not want, only what you choose is transferred.</p>
+      <div class="sheet-actions">
+        <span class="grow"></span>
+        <button class="btn-quiet" id="preview-decline">Decline</button>
+        <button class="btn" id="preview-accept" disabled>Accept</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== settings sheet ===== -->
+  <div id="sheet-settings" class="scrim hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="sheet wide" role="document">
+      <div class="sheet-head">
+        <h2 class="sheet-title" id="settings-title">Settings</h2>
+        <span class="grow"></span>
+        <button class="tb-btn" id="settings-close" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="settings-scroll">
+        <p class="label section">This device</p>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Name others see</span></span>
+          <span class="set-v"><span class="val" id="set-device-name">—</span></span>
+        </div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Pairing code</span><span class="set-d">Read this aloud to prove it is you</span></span>
+          <span class="set-v"><code class="mono strong" id="set-fp">—</code></span>
+        </div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Device ID</span><span class="set-d">Your public key, safe to share</span></span>
+          <span class="set-v"><code class="mono" id="endpoint-id">…</code><button class="btn-quiet sm" id="copy-id">Copy</button></span>
+        </div>
+
+        <p class="label section">Transfers</p>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Save received files to</span></span>
+          <span class="set-v"><span class="val" id="default-folder-label">Downloads</span><button class="btn-ghost sm" id="change-folder">Change…</button></span>
+        </div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Nearby sharing</span><span class="set-d">Off means invisible: no advertising, no incoming requests</span></span>
+          <span class="set-v">
+            <button class="switch" id="nearby-toggle-2" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing">
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </span>
+        </div>
+
+        <p class="label section">Appearance</p>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Theme</span></span>
+          <span class="set-v">
+            <span class="seg small" role="radiogroup" aria-label="Theme" id="theme-toggle">
+              <button class="seg-btn" role="radio" aria-checked="false" data-theme-set="auto">Auto</button><button class="seg-btn" role="radio" aria-checked="false" data-theme-set="light">Light</button><button class="seg-btn" role="radio" aria-checked="false" data-theme-set="dark">Dark</button>
+            </span>
+          </span>
+        </div>
+
+        <p class="label section">About</p>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Connection</span></span>
+          <span class="set-v"><span class="val">Serverless, public DHT, free relay only as fallback. No account, no tracking.</span></span>
+        </div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Dropwire</span></span>
+          <span class="set-v"><span class="val"><span id="app-version-2"></span> · free &amp; open source · built on iroh · <a class="js-ext" data-url="https://github.com/muhamadjawdatsalemalakoum/dropwire" href="#">source</a> · by <a class="js-ext" data-url="https://www.linkedin.com/in/akoum/" href="#">Muhamad J. Akoum</a></span></span>
+        </div>
       </div>
     </div>
   </div>

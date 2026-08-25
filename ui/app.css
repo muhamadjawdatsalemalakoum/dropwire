@@ -1,511 +1,497 @@
 /* ============================================================================
-   Dropwire — "The Wire is alive" design system
-   Implements docs/DESIGN.md. Dark-first. Tokens → components → motion.
+   Dropwire — Design v2, "a desktop app that behaves like hardware".
+
+   FIXED FRAME. Frameless chrome (title bar / toolbar / stage / status bar),
+   one canvas with a segmented Send · Receive · Activity switch, and the wire as
+   the only progress meter. Nothing here may grow the window: the stage is the
+   height budget and only explicitly bounded regions scroll inside it.
    ============================================================================ */
 
 :root {
   color-scheme: dark;
-  /* --- Live Wire current --- */
-  --wire:#D2FF3A; --wire-press:#B6E830; --wire-dim:#8FB81F; --wire-ink:#0E1116;
-  --wire-glow:rgba(210,255,58,.55); --wire-glow-soft:rgba(210,255,58,.16); --wire-hot:#EAFFA0;
-  /* --- Surface ladder --- */
+  /* --- Current, the accent. One, at most two lime moments per view. --- */
+  --wire:#D2FF3A; --wire-hot:#EAFFA0; --wire-press:#B6E830; --wire-dim:#8FB81F; --wire-ink:#0E1116;
+  --wire-glow:rgba(210,255,58,.55); --wire-glow-soft:rgba(210,255,58,.16);
+  /* --- Surface ladder. Depth from stepped light + hairlines, not shadows. --- */
   --canvas:#0B0E13; --wire-black:#0E1116; --surface:#131820; --surface-2:#1A212B; --surface-3:#232C38;
   --scrim:rgba(7,9,12,.66);
   /* --- Hairlines --- */
   --hairline:#232B36; --hairline-soft:rgba(242,245,239,.06); --hairline-strong:rgba(242,245,239,.14);
-  /* --- Text --- */
+  /* --- Text: three tiers. Nothing below 11px ships. --- */
   --text:#F2F5EF; --text-muted:#9BA6B2; --text-faint:#6B7480; --text-on-wire:#0E1116;
-  /* --- Semantic --- */
+  /* --- Semantic. Done is green, never lime. Relay is honest, not alarming. --- */
   --success:#34D77A; --direct:#34D77A; --relayed:#E0A93A; --warning:#E0A93A; --error:#F2664F; --info:#5AA0FF;
   --success-glow:rgba(52,215,122,.45);
-  /* --- Elevation --- */
+  /* --- Elevation. Every card carries a 1px lit top edge. --- */
   --elev-1:inset 0 1px 0 0 var(--hairline-strong), 0 1px 2px rgba(0,0,0,.40);
   --elev-2:inset 0 1px 0 0 var(--hairline-strong), 0 8px 24px rgba(0,0,0,.45);
   --elev-pop:inset 0 1px 0 0 var(--hairline-strong), 0 16px 48px rgba(0,0,0,.55);
-  --glow-focus:0 0 0 3px var(--wire-glow-soft);
+  --glow-focus:0 0 0 2px var(--wire), 0 0 0 6px var(--wire-glow-soft);
   --glow-live:0 0 16px var(--wire-glow), 0 0 2px var(--wire-glow);
-  --glow-success:0 0 20px var(--success-glow);
   /* --- Type --- */
   --font-ui:"Inter",-apple-system,"Segoe UI Variable","Segoe UI",Roboto,system-ui,sans-serif;
   --font-display:"Space Grotesk","Inter",system-ui,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
-  /* --- Spacing --- */
+  /* --- Spacing, 8pt --- */
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px; --sp-8:64px;
-  /* --- Radii --- */
-  --r-1:6px; --r-2:10px; --r-3:14px; --r-4:20px; --r-full:999px;
+  /* --- Radii. Window corner is 12, the one radius the OS also sees. --- */
+  --r-1:6px; --r-2:10px; --r-3:14px; --r-4:20px; --r-win:12px; --r-full:999px;
   /* --- Motion --- */
   --dur-0:80ms; --dur-1:140ms; --dur-2:220ms; --dur-3:380ms; --dur-4:640ms; --dur-flow:1100ms;
   --ease-out:cubic-bezier(.22,1,.36,1); --ease-in-out:cubic-bezier(.65,0,.35,1);
-  --ease-in:cubic-bezier(.5,0,.75,0); --ease-snap:cubic-bezier(.34,1.2,.5,1);
+  --ease-snap:cubic-bezier(.34,1.2,.5,1);
 }
 
+/* Light port: the canvas is dark-only, but the app keeps a working light theme
+   so the Settings choice is not a dead control. Same ladder, inverted. */
 :root[data-theme="light"] {
   color-scheme: light;
-  --wire:#C6F032; --wire-press:#A8D616; --wire-dim:#B8D84A; --wire-ink:#0E1116;
-  --wire-glow:rgba(168,214,22,.45); --wire-glow-soft:rgba(168,214,22,.18); --wire-hot:#86B300;
-  --canvas:#FBFCF9; --wire-black:#0E1116; --surface:#FFFFFF; --surface-2:#F2F5EE; --surface-3:#E8ECE2;
+  --wire:#C6F032; --wire-hot:#86B300; --wire-press:#A8D616; --wire-dim:#B8D84A;
+  --wire-glow:rgba(168,214,22,.45); --wire-glow-soft:rgba(168,214,22,.18);
+  --canvas:#FBFCF9; --wire-black:#F2F5EE; --surface:#FFFFFF; --surface-2:#F2F5EE; --surface-3:#E8ECE2;
   --scrim:rgba(14,17,22,.32);
   --hairline:#DDE2D8; --hairline-soft:rgba(14,17,22,.06); --hairline-strong:rgba(14,17,22,.12);
   --text:#0E1116; --text-muted:#5B6470; --text-faint:#8A93A0; --text-on-wire:#0E1116;
   --success:#1F9D55; --direct:#1F9D55; --relayed:#C98A1E; --warning:#C98A1E; --error:#D7402B; --info:#2D7FF0;
-  --success-glow:rgba(31,157,85,.30);
   --elev-1:0 1px 2px rgba(14,17,22,.06), 0 0 0 1px var(--hairline);
   --elev-2:0 6px 20px rgba(14,17,22,.10), 0 0 0 1px var(--hairline);
   --elev-pop:0 16px 48px rgba(14,17,22,.16), 0 0 0 1px var(--hairline);
-  --glow-live:0 0 14px var(--wire-glow);
 }
 
 /* ---------------------------------- base --------------------------------- */
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
-html{background:var(--canvas)}
+html,body{height:100%; margin:0}
+html{background:transparent}
 body{
   font-family:var(--font-ui); font-size:15px; line-height:1.5; color:var(--text);
-  background:var(--canvas); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  background:transparent; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   font-feature-settings:"calt" 1,"kern" 1,"liga" 1; user-select:none; overflow:hidden;
 }
-.tabular{font-variant-numeric:tabular-nums}
-button{font:inherit;color:inherit;cursor:pointer}
-a{color:var(--wire); text-underline-offset:2px}
+button{font:inherit; color:inherit; cursor:pointer; border:0; background:none}
+a{color:var(--wire); text-underline-offset:2px; text-decoration:none}
+a:hover{text-decoration:underline}
 :focus-visible{outline:none; box-shadow:var(--glow-focus)}
+.hidden,[hidden]{display:none !important}
+.grow{flex:1 1 auto; min-width:0}
+.mono{font-family:var(--font-mono)}
+.label{font-size:12px; font-weight:600; letter-spacing:.7px; text-transform:uppercase; color:var(--text-muted); margin:0}
+.label.xs{display:block; font-size:10.5px; letter-spacing:.8px; margin:0 0 5px}
+.hint{color:var(--text-faint); font-size:12.5px; margin:0}
+.error{color:var(--error); font-size:12.5px; min-height:1em; margin:0}
 
-/* --------------------------------- shell ---------------------------------
-   FIXED FRAME. This is a native desktop app, not a scrolling document: the
-   window is a fixed canvas and every view lays itself out inside it. Nothing
-   here may grow the page. Only explicitly bounded regions (the history list,
-   the transfer stack, a dialog's file list) scroll, each inside its own box.
-   Rule of thumb when adding UI: give it a height budget, or it does not ship.
+/* =============================== THE WINDOW ===============================
+   Frameless: we draw the chrome, the radius and the border ourselves.
    -------------------------------------------------------------------------- */
-.app{display:grid; grid-template-columns:64px 1fr; height:100vh; overflow:hidden}
+.win{
+  height:100vh; display:flex; flex-direction:column; overflow:hidden;
+  background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-win);
+}
 
-/* rail nav */
-.sidebar{
-  width:64px; background:var(--wire-black); border-right:1px solid var(--hairline-soft);
-  display:flex; flex-direction:column; align-items:center; padding:16px 0; gap:4px; position:relative;
+/* ------------------------------- title bar -------------------------------- */
+.titlebar{
+  flex:none; height:44px; background:var(--wire-black); border-bottom:1px solid var(--hairline-soft);
+  display:flex; align-items:center; gap:12px; padding:0 10px 0 16px;
+  border-radius:var(--r-win) var(--r-win) 0 0;
 }
-.brand{display:flex; align-items:center; justify-content:center; margin-bottom:16px}
-.brand-name{display:none}
-.nav{display:flex; flex-direction:column; align-items:center; gap:4px; position:relative}
-.nav-item{
-  width:44px; height:44px; display:flex; align-items:center; justify-content:center;
-  border:0; border-radius:var(--r-2); background:transparent; color:var(--text-faint);
-  position:relative; transition:color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+.tb-mark{flex:none; -webkit-app-region:no-drag}
+.tb-name{font-size:12.5px; font-weight:600; color:var(--text-muted)}
+.tb-spacer{flex:1 1 auto}
+.tb-controls{display:flex; gap:2px; -webkit-app-region:no-drag}
+.tb-btn{width:30px; height:30px; border-radius:var(--r-2); display:grid; place-items:center; color:var(--text-faint);
+  transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
+.tb-btn:hover{background:var(--surface-3); color:var(--text)}
+.tb-btn.danger:hover{background:var(--error); color:#fff}
+
+/* -------------------------------- toolbar --------------------------------- */
+.toolbar{
+  flex:none; height:60px; border-bottom:1px solid var(--hairline-soft);
+  display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:0 20px; gap:var(--sp-3);
 }
-.nav-item span{display:none}              /* labels hidden; tooltip on hover */
-.nav-item::after{                          /* tooltip */
-  content:attr(data-tip); position:absolute; left:52px; top:50%; transform:translateY(-50%) translateX(-4px);
-  background:var(--surface-3); color:var(--text); font-size:12px; font-weight:500; padding:5px 9px;
-  border-radius:var(--r-2); white-space:nowrap; opacity:0; pointer-events:none; box-shadow:var(--elev-1);
-  transition:opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); z-index:5;
-}
-.nav-item:hover{color:var(--text); background:rgba(255,255,255,.05)}
-.nav-item:hover::after{opacity:1; transform:translateY(-50%) translateX(0)}
-.nav-item.is-active{color:var(--wire)}
-/* sliding lime indicator = a wire segment */
-.nav-indicator{
-  position:absolute; left:-12px; width:3px; height:20px; border-radius:var(--r-full);
-  background:var(--wire); box-shadow:var(--glow-live);
-  transition:transform var(--dur-2) var(--ease-out); will-change:transform;
-}
-.sidebar-foot{margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:10px}
-.ghost-btn{width:32px;height:32px;border:0;border-radius:var(--r-2);background:transparent;color:var(--text-faint);
-  font-size:0; display:flex; align-items:center; justify-content:center}
-.ghost-btn::before{content:"◐"; font-size:16px}
-.ghost-btn:hover{background:var(--surface-2); color:var(--text)}
-.net-badge{font-size:0; width:8px; height:8px; border-radius:var(--r-full); background:var(--wire);
+.identity{justify-self:start; display:inline-flex; align-items:center; gap:8px; height:28px; padding:0 10px;
+  border-radius:var(--r-full); background:var(--surface); border:1px solid var(--hairline); min-width:0}
+.identity-dot{flex:none; width:6px; height:6px; border-radius:var(--r-full); background:var(--wire);
   box-shadow:0 0 8px var(--wire-glow); animation:breathe 3s ease-in-out infinite}
+.identity-name{font-size:12px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.toolbar-right{justify-self:end}
+.chip-btn{height:32px; padding:0 12px 0 10px; border-radius:var(--r-2); background:var(--surface);
+  border:1px solid var(--hairline); display:inline-flex; align-items:center; gap:7px;
+  color:var(--text-muted); font-size:12.5px; font-weight:500;
+  transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
+.chip-btn:hover{background:var(--surface-3); color:var(--text)}
 
-/* --------------------------------- main ----------------------------------
-   The content pane never scrolls. It is a column: a fixed view header, then a
-   body that takes the remaining height (`min-height:0` so its children may
-   shrink and scroll internally instead of pushing the frame open).
-   -------------------------------------------------------------------------- */
-.main{min-height:0; overflow:hidden; padding:24px 32px 20px; display:flex; flex-direction:column}
-/* persistent author/source credit — pinned bottom-right, unobtrusive, click-through gaps */
-.app-credit{position:fixed; right:14px; bottom:10px; z-index:30; display:flex; align-items:center; gap:8px;
-  font-size:11px; color:var(--text-faint); pointer-events:none}
-.app-credit > *{pointer-events:auto}
-.app-credit a{display:inline-flex; align-items:center; color:var(--text-faint);
-  transition:color var(--dur-1) var(--ease-out)}
-.app-credit a:hover{color:var(--wire)}
-/* A view fills the pane: fixed head + flexible body. Never taller than the frame. */
-.view{display:none; flex:1 1 auto; min-height:0; width:100%; max-width:1100px; margin:0 auto}
-.view.is-active{display:flex; flex-direction:column}
-.view-head{flex:none; margin-bottom:var(--sp-4)}
-.view-head h1{font-family:var(--font-display); font-size:24px; font-weight:600; letter-spacing:-.7px;
-  line-height:1.15; margin:0 0 2px; view-transition-name:view-title}
-.view-head .sub{color:var(--text-muted); margin:0; font-size:13.5px}
-/* The scrollable-by-exception region inside a view. */
-.view-body{flex:1 1 auto; min-height:0; display:flex; flex-direction:column}
-/* Single-column views keep a comfortable measure instead of stretching edge to edge. */
-.view-narrow .view-head,.view-narrow .view-body{max-width:620px; width:100%; margin-left:auto; margin-right:auto}
+/* the segmented switch — the new navigation */
+.seg{justify-self:center; display:inline-flex; background:var(--wire-black); border:1px solid var(--hairline);
+  border-radius:var(--r-full); padding:3px; gap:2px}
+.seg-btn{height:32px; padding:0 18px; border-radius:var(--r-full); color:var(--text-muted);
+  font-size:13.5px; font-weight:500; display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+  transition:color var(--dur-1) var(--ease-out), background var(--dur-2) var(--ease-out)}
+.seg-btn:hover{color:var(--text)}
+.seg-btn svg{color:currentColor}
+.seg-btn.is-active{background:var(--surface-2); color:var(--text); font-weight:600;
+  box-shadow:inset 0 1px 0 var(--hairline-strong)}
+/* the icon, not the plate, carries the lime */
+.seg-btn.is-active svg{color:var(--wire)}
+.seg-badge{min-width:18px; height:18px; padding:0 5px; border-radius:var(--r-full); background:var(--wire);
+  color:var(--text-on-wire); font-size:10.5px; font-weight:700; line-height:1;
+  display:inline-flex; align-items:center; justify-content:center}
+/* compact variant used inside Settings for the theme radio group */
+.seg.small{padding:2px}
+.seg.small .seg-btn{height:26px; padding:0 12px; font-size:12.5px}
 
-/* -------------------------------- buttons -------------------------------- */
-.btn{height:40px; padding:0 18px; border:0; border-radius:var(--r-2); background:var(--wire);
-  color:var(--text-on-wire); font-size:14px; font-weight:600; display:inline-flex; align-items:center;
-  justify-content:center; gap:8px; box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 0 12px rgba(210,255,58,.18);
-  transition:transform var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out), background var(--dur-0) var(--ease-snap)}
-.btn:hover{transform:translateY(-1px); box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 0 18px rgba(210,255,58,.3)}
-.btn:active{transform:scale(.97); background:var(--wire-press); box-shadow:inset 0 1px 0 rgba(255,255,255,.2), 0 0 8px rgba(210,255,58,.15)}
-.btn:disabled{opacity:.6; cursor:not-allowed; transform:none; box-shadow:none; background:var(--surface-3); color:var(--text-muted)}
+/* --------------------------------- stage ---------------------------------- */
+.stage{flex:1 1 auto; min-height:0; padding:28px 40px 32px; display:flex; flex-direction:column}
+.panel{flex:1 1 auto; min-height:0; display:none; flex-direction:column; overflow:hidden}
+.panel.is-active{display:flex; animation:panelIn var(--dur-2) var(--ease-out)}
+/* one surface per panel: no floating cards, no side column */
+.surface{background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-3);
+  box-shadow:var(--elev-1)}
+
+/* ------------------------------- status bar ------------------------------- */
+.statusbar{
+  flex:none; height:32px; background:var(--wire-black); border-top:1px solid var(--hairline-soft);
+  display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4); padding:0 16px;
+  font-family:var(--font-mono); font-size:11px; color:var(--text-faint);
+  border-radius:0 0 var(--r-win) var(--r-win);
+}
+.status-left,.status-right{display:inline-flex; align-items:center; gap:7px; min-width:0}
+.status-left{overflow:hidden}
+.status-left #status-text{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.status-dot{flex:none; width:6px; height:6px; border-radius:var(--r-full); background:var(--text-faint)}
+.status-dot.up{background:var(--success)}
+.status-dot.warn{background:var(--relayed)}
+.status-right{flex:none}
+.status-right a{color:var(--text-faint); display:inline-flex}
+.status-right a:hover{color:var(--wire)}
+
+/* ================================ BUTTONS ================================= */
+.btn{height:40px; padding:0 18px; border-radius:var(--r-2); background:var(--wire); color:var(--text-on-wire);
+  font-size:14px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 0 12px rgba(210,255,58,.18);
+  transition:transform var(--dur-0) var(--ease-snap), box-shadow var(--dur-1) var(--ease-out), background var(--dur-0) var(--ease-snap)}
+.btn:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 0 18px rgba(210,255,58,.30)}
+.btn:active{transform:scale(.97); background:var(--wire-press)}
+.btn:disabled{opacity:1; cursor:not-allowed; transform:none; box-shadow:none;
+  background:var(--surface-3); color:var(--text-faint)}
 .btn-ghost{height:40px; padding:0 18px; border:1px solid var(--hairline); border-radius:var(--r-2);
-  background:transparent; color:var(--text); font-size:14px; font-weight:500; display:inline-flex; align-items:center;
-  justify-content:center; gap:8px; transition:transform var(--dur-0) var(--ease-snap), background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+  color:var(--text); font-size:14px; font-weight:500; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), transform var(--dur-0) var(--ease-snap)}
 .btn-ghost:hover{background:var(--surface-2); border-color:var(--hairline-strong)}
 .btn-ghost:active{transform:scale(.97)}
-.btn-quiet{height:40px; padding:0 14px; border:0; background:transparent; color:var(--text-muted); font-size:14px;
-  font-weight:500; border-radius:var(--r-2); transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
+.btn-quiet{height:40px; padding:0 14px; border-radius:var(--r-2); color:var(--text-muted); font-size:14px; font-weight:500;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
 .btn-quiet:hover{background:var(--surface-2); color:var(--text)}
-.btn-block{width:100%}
+.btn.sm,.btn-ghost.sm,.btn-quiet.sm{height:32px; padding:0 13px; font-size:13px; border-radius:9px}
+.btn-lg{height:44px; font-size:15px; width:100%}
 
-/* -------------------------------- panels --------------------------------- */
-.panel{background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-3); padding:var(--sp-5);
-  box-shadow:var(--elev-1)}
-.hidden{display:none !important}
+/* ================================= PILLS ================================== */
+.pill{display:inline-flex; flex:none; align-items:center; gap:6px; height:24px; padding:0 10px;
+  border-radius:var(--r-full); font-size:11px; font-weight:600; letter-spacing:.4px; white-space:nowrap;
+  background:var(--surface-2); color:var(--text-muted);
+  transition:background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out)}
+.pill::before{content:""; width:6px; height:6px; border-radius:var(--r-full); background:currentColor}
+.pill.connecting::before{animation:breathe 1.4s ease-in-out infinite}
+.pill.direct{background:color-mix(in srgb,var(--direct) 16%,transparent); color:var(--direct)}
+.pill.relayed{background:color-mix(in srgb,var(--relayed) 16%,transparent); color:var(--relayed)}
+.pill.failed{background:color-mix(in srgb,var(--error) 16%,transparent); color:var(--error)}
+.pill.resuming{background:color-mix(in srgb,var(--info) 16%,transparent); color:var(--info)}
+.pill.done{background:color-mix(in srgb,var(--success) 16%,transparent); color:var(--success)}
+.pill.verified{background:color-mix(in srgb,var(--success) 14%,transparent); color:var(--success)}
 
-/* Stack of concurrent transfer cards. This is a bounded scroll region: the list
-   is genuinely unbounded (N transfers at once), so it scrolls INSIDE the column
-   rather than growing the frame. */
-.transfer-list{display:flex; flex-direction:column; gap:var(--sp-4); min-height:0;
-  overflow-y:auto; overscroll-behavior:contain}
-.transfer-list:not(:empty){flex:1 1 auto; margin-top:var(--sp-4)}
-/* Cards keep their natural height. Without this, flex-shrink squashes them to
-   fit the column and `overflow:hidden` silently clips the QR and the wire. */
-.transfer-list > *{flex:none}
+/* ============================== SEND PANEL ================================ */
+/* The whole panel is the drop target. Hero when idle, slim bar once live. */
+.drop{flex:1 1 auto; min-height:0; display:flex; flex-direction:column; justify-content:center;
+  border-radius:var(--r-3) var(--r-3) 0 0; outline:none;
+  transition:background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out)}
+.drop.dragover{background:color-mix(in srgb, var(--wire-glow-soft) 55%, transparent);
+  box-shadow:inset 0 0 0 2px var(--wire)}
+.drop-hero{display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:36px}
+.drop-glyph{display:block; margin-bottom:20px}
+.drop-title{margin:0 0 6px; font-family:var(--font-display); font-size:26px; font-weight:600; letter-spacing:-.7px}
+.drop-sub{margin:0 0 24px; font-size:13.5px; color:var(--text-faint)}
+.drop-actions{display:flex; gap:12px; flex-wrap:wrap; justify-content:center}
+.drop-foot{margin:18px 0 0; font-size:12.5px; color:var(--text-faint)}
+/* live: one line, pinned above the cards */
+.drop-bar{display:none; align-items:center; gap:14px; padding:14px 20px}
+.drop-bar-glyph{flex:none}
+.drop-bar-text{font-size:13.5px; font-weight:600}
+.panel-send-live .drop{flex:none; justify-content:flex-start}
+.panel-send-live .drop-hero{display:none}
+.panel-send-live .drop-bar{display:flex}
 
-/* ------------------------------ send layout -------------------------------
-   Two columns: the transfer work on the left, nearby devices pinned on the
-   right. The nearby panel used to sit below the code card and fell off the
-   bottom of the window the moment a transfer started; now it is always on
-   screen and never competes for vertical space.
-   -------------------------------------------------------------------------- */
-.send-layout{flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 300px;
-  gap:var(--sp-5); align-items:stretch}
-.send-main{min-height:0; display:flex; flex-direction:column}
-.send-side{min-height:0; display:flex; flex-direction:column}
-/* Give the left column more room as the frame approaches its minimum width, so
-   the two-column layout still holds at minWidth (900) instead of collapsing. */
-@media (max-width:980px){.send-layout{grid-template-columns:minmax(0,1fr) 264px; gap:var(--sp-4)}}
-/* Last-resort stack, well BELOW the window's 900px minimum: only reachable if a
-   platform ignores minWidth. The breakpoint must stay under that minimum —
-   `max-width` is inclusive, so a 900px breakpoint would fire at the minimum size
-   and reintroduce exactly the stacked, scrolling layout this redesign removes. */
-@media (max-width:830px){
-  .send-layout{grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); overflow-y:auto}
-}
+/* the stack of live transfer cards — the one bounded scroll region here */
+.cards{display:none; flex-direction:column; gap:var(--sp-4); min-height:0; overflow-y:auto;
+  overscroll-behavior:contain; padding:var(--sp-4) 20px; border-top:1px solid var(--hairline-soft)}
+.cards:not(:empty){display:flex; flex:1 1 auto}
 
-/* ------------------------------- drop zone -------------------------------
-   Idle: fills the left column. Live: collapses to a slim bar (see below) so the
-   transfer cards get the room. Both states are height-bounded by the column.
-   -------------------------------------------------------------------------- */
-.dropzone{flex:1 1 auto; min-height:180px; border:2px dashed var(--hairline); border-radius:var(--r-4);
-  background:var(--surface); display:flex; align-items:center; justify-content:center; text-align:center;
-  padding:var(--sp-5); outline:none;
-  transition:border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out)}
-.dropzone:hover,.dropzone:focus-visible{border-color:var(--wire-dim); background:var(--surface-2)}
-.dropzone.dragover{border-color:var(--wire); border-style:solid; background:color-mix(in srgb, var(--wire-glow-soft) 60%, var(--surface));
-  transform:scale(1.015)}
-.dz-glyph{width:64px; height:34px; margin:0 auto 12px; display:block}
-.dz-title{font-family:var(--font-ui); font-weight:600; font-size:16px; letter-spacing:-.2px; margin:0 0 4px}
-.dz-sub{color:var(--text-faint); margin:4px 0; font-size:12px}
-.dz-actions{display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap}
-
-/* Live state: the drop target becomes a one-line bar pinned above the cards. */
-.send-main:has(#send-list:not(:empty)) .dropzone{flex:none; min-height:0; padding:var(--sp-3) var(--sp-4);
-  border-radius:var(--r-3); border-width:1px}
-.send-main:has(#send-list:not(:empty)) .dropzone > div{display:flex; align-items:center; gap:var(--sp-3); width:100%}
-.send-main:has(#send-list:not(:empty)) .dz-glyph{width:34px; height:18px; margin:0; flex:none}
-.send-main:has(#send-list:not(:empty)) .dz-title{font-size:13.5px; margin:0; white-space:nowrap}
-.send-main:has(#send-list:not(:empty)) .dz-sub{display:none}
-.send-main:has(#send-list:not(:empty)) .dz-actions{margin:0 0 0 auto; flex-wrap:nowrap}
-.send-main:has(#send-list:not(:empty)) .dz-actions .btn,
-.send-main:has(#send-list:not(:empty)) .dz-actions .btn-ghost{height:32px; padding:0 12px; font-size:13px}
-
-/* ----------------------- the share-code "ticket" card -------------------- */
-.code-card{position:relative; container-type:inline-size; background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
-  padding:var(--sp-5); box-shadow:var(--elev-2); overflow:hidden}
-.code-card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--wire);
-  box-shadow:0 0 10px var(--wire-glow)}              /* the lit "wire spine" */
-:root[data-theme="light"] .code-card::before{background:var(--wire-press); box-shadow:0 0 6px var(--wire-glow)}
-.send-grid{display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--sp-5); align-items:center}
-/* on a narrow card, stack the code over the QR instead of crushing both */
-@container (max-width:420px){.send-grid{grid-template-columns:minmax(0,1fr)} .qr-block{justify-self:start; text-align:left}}
-.label{font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase; color:var(--text-muted); margin:0 0 var(--sp-2)}
-/* The share code is ~330 characters. Rendered in full at display size it wrapped
-   to ~13 lines and single-handedly overflowed the window. Nobody reads it — they
-   press Copy or show the QR — so it lives on ONE truncated line. The full string
-   is still the element's text, so Copy and select-all get all of it. */
-.code{font-family:var(--font-mono); font-size:14px; font-weight:500; letter-spacing:.3px;
-  line-height:1.5; color:var(--text-muted); background:var(--surface-2); border-radius:var(--r-2);
-  padding:11px var(--sp-4); box-shadow:inset 0 1px 0 var(--hairline-strong);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; user-select:all; caret-color:var(--wire);
-  direction:ltr}
-.code-actions{display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-3)}
-.hint{color:var(--text-muted); font-size:12px; margin:var(--sp-2) 0 0}
-.qr-block{text-align:center}
-.qr{width:124px; height:124px; background:#fff; border-radius:var(--r-2); padding:9px; display:block}
+/* ------------------------------- transfer card ---------------------------- */
+.xfer{background:var(--surface-2); border:1px solid var(--hairline); border-radius:var(--r-2);
+  padding:16px 18px; box-shadow:inset 0 1px 0 var(--hairline-strong)}
+.xfer-head{display:flex; align-items:center; gap:12px; margin-bottom:12px; min-width:0}
+.xfer-name{font-size:17px; font-weight:600; letter-spacing:-.2px; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.xfer-meta{font-size:11.5px; color:var(--text-faint); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.xfer-sub{margin:0 0 12px; font-size:12px; color:var(--text-faint)}
+.ticket-row{display:flex; gap:20px; align-items:stretch}
+.ticket-main{flex:1 1 auto; min-width:0; display:flex; flex-direction:column}
+/* the code is a slab you copy, never a hero: one line, ellipsis, always */
+.code-slab{display:flex; align-items:center; gap:12px; padding:14px 16px; border-radius:var(--r-2);
+  background:var(--canvas); box-shadow:inset 0 1px 0 var(--hairline-strong)}
+.code-text{flex:1 1 auto; min-width:0; font-size:14px; font-weight:500; letter-spacing:.3px; color:var(--text-muted);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; user-select:all}
+.code-text.full{white-space:normal; word-break:break-all; text-overflow:clip}
+.code-len{flex:none; font-size:11.5px; color:var(--text-faint)}
+.ticket-actions{display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap}
+.ticket-status{display:flex; align-items:center; gap:10px; margin-top:14px; font-size:13px; color:var(--text-muted)}
+.pulse-dot{flex:none; width:8px; height:8px; border-radius:var(--r-full); background:var(--wire);
+  animation:breathe 1.6s ease-in-out infinite}
+.qr-block{flex:none; text-align:center}
+.qr{width:122px; height:122px; border-radius:var(--r-win); background:#fff; padding:9px}
 .qr svg{width:100%; height:100%; display:block}
-.qr-lens{border:1px solid var(--hairline); border-radius:var(--r-3); padding:4px; background:var(--surface); display:inline-block}
+.qr-block .hint{margin-top:8px; font-size:11.5px}
 
-/* ------------------------------- inputs ---------------------------------- */
-.field-label{display:block; font-size:12px; font-weight:600; letter-spacing:.6px; text-transform:uppercase;
-  color:var(--text-muted); margin-bottom:var(--sp-3)}
-.code-input-wrap{position:relative; display:flex; align-items:center}
-.code-input{width:100%; height:56px; padding:0 16px 0 44px; border-radius:var(--r-3); background:var(--surface-2);
-  border:1px solid var(--hairline); color:var(--text); font-family:var(--font-mono); font-size:16px; letter-spacing:.5px;
-  user-select:text; caret-color:var(--wire); transition:box-shadow var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
-.code-input:focus{outline:none; border-color:transparent; box-shadow:0 0 0 2px var(--wire), var(--glow-focus)}
-.code-input-glyph{position:absolute; left:14px; width:20px; height:12px; pointer-events:none}
-.code-input.shake{animation:shake var(--dur-3) var(--ease-in-out)}
-.recv-dest{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:var(--sp-4)}
-.recv-dest .hint{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0}
-.recv-dest .btn-ghost{flex:none}
-#recv-start{margin-top:var(--sp-4)}
-/* The code panel is fixed; only the transfer stack under it may scroll. */
-#recv-pick{flex:none}
-.error{color:var(--error); font-size:12px; min-height:1em; margin:var(--sp-2) 0 0}
-
-/* ------------------------- the wire-progress viz ------------------------- */
-.wire-wrap{margin-top:var(--sp-4)}
-/* Capped: the wire is an accent, not a billboard. Without a max-height it scales
-   with column width and eats vertical budget on wide frames. */
-.wire{width:100%; height:auto; max-height:76px; display:block; overflow:visible}
+/* ------------------------------ the wire ---------------------------------- */
+.wire-wrap{margin-top:14px}
+.wire{width:100%; height:66px; display:block; overflow:visible}
 .w-track{fill:none; stroke:var(--wire-dim); stroke-width:3; opacity:.3; stroke-linecap:round}
 .w-fill{fill:none; stroke:var(--wire); stroke-width:4; stroke-linecap:round; filter:url(#wireGlow);
   stroke-dasharray:1; stroke-dashoffset:1; transition:stroke-dashoffset var(--dur-2) var(--ease-out)}
 .w-current{fill:none; stroke:var(--wire-hot); stroke-width:2.5; stroke-linecap:round; stroke-dasharray:3 15;
-  animation:flow var(--dur-flow) linear infinite}
+  animation:flow var(--dur-flow) linear infinite; opacity:0}
 .wire[data-dir="recv"] .w-current{animation-direction:reverse}
-.w-node{fill:var(--surface-3); stroke:var(--hairline-strong); stroke-width:1; transition:fill var(--dur-2) var(--ease-out)}
-.w-node.self.live{fill:var(--wire); stroke:none; filter:url(#wireGlow)}
-.w-node.peer.live{fill:var(--wire); stroke:none; filter:url(#wireGlow)}
-.w-node.done{fill:var(--success); stroke:none}
-.w-spark{fill:none; stroke:var(--wire); stroke-width:2; opacity:0}
-.wire.connecting .w-fill{opacity:0}
-.wire.connecting .w-sweep{opacity:1}
+.wire.live .w-current{opacity:1}
 .w-sweep{fill:none; stroke:var(--wire-hot); stroke-width:3; stroke-linecap:round; stroke-dasharray:.06 1;
   stroke-dashoffset:0; opacity:0; animation:sweep var(--dur-flow) linear infinite; filter:url(#wireGlow)}
-/* finished: the wire turns success-green and stops flowing */
-.wire.done .w-fill{stroke:var(--success); filter:none}
-.wire.done .w-current{display:none}
-.wire-readout{margin-top:var(--sp-2); font-family:var(--font-mono); font-size:12.5px; color:var(--text-muted);
-  display:flex; align-items:center; gap:10px; min-width:0}
-.wire-readout .js-status{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.wire-readout .js-status:not(:empty)::before{content:'·'; margin-right:6px; color:var(--text-faint)}
-.wire-pct{font-family:var(--font-display); font-size:20px; font-weight:600; color:var(--text); letter-spacing:-.5px; flex:none}
-
-/* ----------------------------- route badge ------------------------------- */
-.route-badge{display:inline-flex; flex:none; white-space:nowrap; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:var(--r-full);
-  font-size:11px; font-weight:600; letter-spacing:.4px; background:var(--surface-2); color:var(--text-muted);
-  transition:background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out)}
-.route-badge::before{content:""; width:6px; height:6px; border-radius:var(--r-full); background:currentColor}
-.route-badge.connecting::before{animation:breathe 1.4s ease-in-out infinite}
-.route-badge.direct{background:color-mix(in srgb,var(--direct) 16%,transparent); color:var(--direct)}
-.route-badge.relayed{background:color-mix(in srgb,var(--relayed) 16%,transparent); color:var(--relayed)}
-
-/* ------------------------------- receive --------------------------------- */
-.recv-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:var(--sp-4)}
-.recv-name{font-weight:600; font-size:17px; letter-spacing:-.2px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.recv-actions{display:flex; gap:10px; margin-top:var(--sp-5)}
-
-/* ------------------------------- history ---------------------------------
-   Genuinely unbounded, so this is a legitimate bounded scroll region. */
-.history{flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
-  display:flex; flex-direction:column; gap:8px; padding-right:var(--sp-1)}
-/* Empty list must not claim height — the empty state centres in the view instead. */
-.history:empty{flex:none}
-.history > *{flex:none}
-.hist-item{display:grid; grid-template-columns:auto 1fr auto; gap:var(--sp-4); align-items:center;
-  background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-2); padding:var(--sp-4);
-  transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
-.hist-item:hover{background:var(--surface-2); border-color:var(--hairline-strong)}
-.hist-dir{width:34px; height:18px}
-.hist-name{font-weight:600; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.hist-meta{font-size:12px; color:var(--text-muted); margin-top:2px}
-/* Empty states centre in whatever height the view gives them. */
-.empty{color:var(--text-muted); text-align:center; padding:24px; flex:1 1 auto; min-height:0;
-  display:flex; flex-direction:column; align-items:center; justify-content:center}
-.empty-glyph{width:80px; height:42px; margin:0 auto 16px; display:block; opacity:.6}
-.empty-title{font-family:var(--font-display); font-size:20px; font-weight:600; margin:0 0 4px; color:var(--text)}
-.empty-sub{margin:0; font-size:13.5px; max-width:38ch}
-
-/* ------------------------------- settings -------------------------------- */
-/* Hugs its content, shrinks (and scrolls) only if the frame is short. */
-.settings{flex:0 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
-  display:flex; flex-direction:column}
-.setting{display:flex; justify-content:space-between; align-items:center; gap:24px; padding:var(--sp-3) 0;
-  border-bottom:1px solid var(--hairline-soft)}
-.setting:last-child{border-bottom:0}
-.setting .label{margin:0}
-.setting .val{color:var(--text-muted); font-size:14px; text-align:right}
-.mono{font-family:var(--font-mono); font-size:13px; word-break:break-all; user-select:text; color:var(--text-muted)}
-.setting-control{display:flex; align-items:center; gap:8px; max-width:62%; justify-content:flex-end}
-.setting-control .val{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.setting a{text-decoration:none}
-.setting a:hover{color:var(--wire); text-decoration:underline}
-.btn-quiet.sm,.btn-ghost.sm{height:30px; padding:0 12px; font-size:13px}
-.seg{display:inline-flex; background:var(--surface-2); border-radius:var(--r-2); padding:2px; gap:2px}
-.seg-btn{height:28px; padding:0 14px; border:0; background:transparent; color:var(--text-muted); font-size:13px; font-weight:500;
-  border-radius:8px; transition:background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out)}
-.seg-btn:hover{color:var(--text)}
-.seg-btn.on{background:var(--wire); color:var(--text-on-wire)}
-
-/* ------------------------ keyframes / motion ----------------------------- */
-@keyframes flow{from{stroke-dashoffset:0} to{stroke-dashoffset:-18}}
-@keyframes sweep{from{stroke-dashoffset:0} to{stroke-dashoffset:-1.06}}
-@keyframes breathe{0%,100%{opacity:.55} 50%{opacity:1}}
-@keyframes shake{0%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}100%{transform:translateX(0)}}
-@keyframes viewIn{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
-.view.is-active{animation:viewIn var(--dur-2) var(--ease-out)}
-
-/* view transitions (Send/Receive/...) */
-::view-transition-old(root){animation:vt-out var(--dur-1) var(--ease-in) both}
-::view-transition-new(root){animation:vt-in var(--dur-2) var(--ease-out) both}
-@keyframes vt-out{to{opacity:0; transform:translateY(-6px)}}
-@keyframes vt-in{from{opacity:0; transform:translateY(8px)}}
-::view-transition-old(view-title),::view-transition-new(view-title){animation-duration:var(--dur-2)}
-
-/* --------------------------- reduced motion ------------------------------ */
-/* --------------------------- flourish / power-on ------------------------- */
-.app{animation:appIn 460ms var(--ease-out)}
-@keyframes appIn{from{opacity:0; transform:scale(.992)}}
-/* the brand wire-mark draws itself on launch */
-.brand-wire{stroke-dasharray:1; animation:wireDraw 620ms var(--ease-out) 60ms both}
-@keyframes wireDraw{from{stroke-dashoffset:1} to{stroke-dashoffset:0}}
-/* connect pulse: a single bright dash that races the wire (fired from JS on peerJoined) */
+.wire.connecting .w-sweep{opacity:1}
+.wire.connecting .w-fill{opacity:0}
 .w-pulse{fill:none; stroke:var(--wire-hot); stroke-width:4; stroke-linecap:round; stroke-dasharray:.045 1;
   stroke-dashoffset:1; opacity:0; filter:url(#wireGlow)}
-/* ambient: one dim particle drifts along an idle wire glyph */
-.drift{offset-path:path('M16 34 H52 l8 -14 8 14 H104'); offset-rotate:0deg; opacity:.7;
-  animation:drift 4.2s linear infinite}
-@keyframes drift{from{offset-distance:0%} to{offset-distance:100%}}
+.w-node{fill:var(--surface-3); stroke:var(--hairline-strong); stroke-width:1; transition:fill var(--dur-2) var(--ease-out)}
+.w-node.live{fill:var(--wire); stroke:none; filter:url(#wireGlow)}
+.w-node.done{fill:var(--success); stroke:none; filter:none}
+.w-spark{fill:none; stroke:var(--wire); stroke-width:2; opacity:0}
+/* done: green and calm, never lime — "done" must not look like "live" */
+.wire.done .w-fill{stroke:var(--success); filter:none}
+.wire.done .w-current,.wire.done .w-sweep{display:none}
+/* interrupted: the wire breaks where it stopped */
+.wire.failed .w-fill{stroke:var(--error); filter:none}
+.wire.failed .w-current,.wire.failed .w-sweep{display:none}
+.wire.resuming .w-fill{stroke:var(--info); filter:none}
+.wire-readout{margin-top:12px; display:flex; align-items:center; gap:10px; font-family:var(--font-mono);
+  font-size:12.5px; color:var(--text-muted)}
+.wire-pct{font-family:var(--font-display); font-size:22px; font-weight:600; color:var(--text); letter-spacing:-.5px;
+  font-variant-numeric:tabular-nums}
+.wire-ends{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-faint)}
 
-@media (prefers-reduced-motion: reduce){
-  *,*::before,*::after{animation-duration:.01ms !important; animation-iteration-count:1 !important;
-    transition-duration:.01ms !important}
-  .w-current,.w-sweep,.w-pulse,.drift,.net-badge{display:none !important}
-  /* keep the determinate fill length transition (gentle, informative) */
-  .w-fill{transition:stroke-dashoffset var(--dur-2) linear !important}
-}
+/* ============================ NEARBY (send panel) ========================= */
+/* Shrinkable: with several cards AND several devices at the 920x640 minimum,
+   a rigid nearby block pushed itself out of the frame. It now yields, and
+   its device list scrolls inside whatever height is left. */
+.nearby{flex:0 1 auto; border-top:1px solid var(--hairline-soft); display:flex; flex-direction:column; min-height:0}
+.nearby-head{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 20px 10px}
+.nearby-title{display:flex; align-items:center; gap:11px; min-width:0}
+.nearby-vis{display:inline-flex; align-items:center; gap:10px; flex:none}
+.radar{position:relative; flex:none; width:30px; height:30px; border-radius:var(--r-full);
+  background:var(--surface-2); border:1px solid var(--hairline); display:grid; place-items:center}
+.radar b{width:7px; height:7px; border-radius:var(--r-full); background:var(--wire); box-shadow:0 0 10px var(--wire-glow)}
+.radar i{position:absolute; inset:0; border-radius:var(--r-full); border:1.5px solid var(--wire-dim); opacity:0}
+.radar.on i{animation:radar var(--dur-flow) cubic-bezier(.22,1,.36,1) infinite}
+.radar:not(.on) b{background:var(--text-faint); box-shadow:none}
+/* device rows: hairline separated, part of the same object */
+.device-list{display:flex; flex-direction:column; min-height:0; overflow-y:auto; overscroll-behavior:contain}
+/* Once transfers are live they are the subject: nearby stays reachable but
+   compact instead of competing for the column. */
+.panel-send-live .device-list{max-height:120px}
+.device{display:flex; align-items:center; gap:14px; padding:10px 20px; border-top:1px solid var(--hairline-soft);
+  transition:background var(--dur-1) var(--ease-out)}
+.device:hover{background:var(--surface-2)}
+.device-icon{flex:none; width:34px; height:34px; border-radius:var(--r-2); background:var(--surface-2);
+  border:1px solid var(--hairline); color:var(--text-muted); display:grid; place-items:center}
+.device:first-child .device-icon{color:var(--wire)}
+.device-icon.big{width:48px; height:48px; border-radius:var(--r-3); color:var(--wire)}
+.device-id{flex:none; min-width:210px; max-width:280px; display:flex; align-items:center; gap:9px}
+.device-name{font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.device-os{flex:none; height:19px; padding:0 7px; border-radius:var(--r-1); background:var(--surface-2);
+  border:1px solid var(--hairline); color:var(--text-muted); font-size:10.5px; display:inline-flex; align-items:center}
+/* The pairing code is what a human reads aloud to authenticate the peer.
+   It is never truncated; the button wraps instead. */
+.device-fp{flex:1 1 auto; min-width:0; font-size:11.5px; letter-spacing:.4px; color:var(--text-faint);
+  white-space:nowrap; overflow:visible}
+.device .js-send{flex:none; margin-left:auto}
+/* One lime moment per view: only the top device offers the primary action,
+   the rest are ghosts so the eye is not pulled three ways at once. */
+.device:not(:first-child) .btn.js-send{background:transparent; border:1px solid var(--hairline);
+  color:var(--text); box-shadow:none}
+.device:not(:first-child) .btn.js-send:hover{background:var(--surface-3); border-color:var(--hairline-strong)}
+.device.busy .js-send{opacity:.55; pointer-events:none}
+.device-list.offering .js-send{opacity:.55; pointer-events:none}
+.device-empty{padding:16px 20px; border-top:1px solid var(--hairline-soft); color:var(--text-faint); font-size:13px}
+.nearby-foot{flex:none; padding:10px 20px 11px; border-top:1px solid var(--hairline-soft); font-size:12px}
 
-/* ----------------------- preview / accept modal ------------------------- */
-.modal-scrim{position:fixed; inset:0; background:var(--scrim); display:flex; align-items:center;
-  justify-content:center; padding:24px; z-index:50}
-/* Consent dialog always sits above the receive-preview modal if both appear. */
+/* ============================ RECEIVE PANEL =============================== */
+.recv-entry{flex:1 1 auto; min-height:0; display:flex; flex-direction:column; justify-content:center}
+.recv-entry-hero{display:flex; flex-direction:column; align-items:center; text-align:center; padding:36px;
+  width:100%; max-width:560px; margin:0 auto}
+.entry-title{margin:0 0 8px; font-family:var(--font-display); font-size:26px; font-weight:600; letter-spacing:-.7px}
+.entry-sub{margin:0 0 24px; font-size:13.5px; color:var(--text-faint); max-width:46ch}
+.code-field{position:relative; display:flex; align-items:center; gap:8px; width:100%; height:52px; padding:0 8px 0 44px;
+  border-radius:var(--r-3); background:var(--surface-2); border:1px solid var(--hairline);
+  transition:box-shadow var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+.code-field:focus-within{border-color:transparent; box-shadow:var(--glow-focus)}
+.code-field.bad{border-color:var(--error)}
+.code-field.shake{animation:shake var(--dur-3) var(--ease-in-out)}
+.code-field-glyph{position:absolute; left:14px; width:20px; height:12px; pointer-events:none}
+.code-field input{flex:1 1 auto; min-width:0; height:100%; border:0; background:none; color:var(--text);
+  font-family:var(--font-mono); font-size:14px; letter-spacing:.3px; user-select:text; caret-color:var(--wire)}
+.code-field input:focus{outline:none}
+.code-field.sm{height:38px; padding:0 6px 0 12px}
+.code-field.sm input{font-size:13px}
+.recv-entry-hero .error{margin-top:10px}
+.dest-row{display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;
+  margin-top:20px; padding:12px 14px; border-radius:var(--r-2); background:var(--surface-2);
+  border:1px solid var(--hairline)}
+.dest-label{display:flex; flex-direction:column; align-items:flex-start; gap:2px; min-width:0; text-align:left}
+.dest-path{font-size:13px; color:var(--text-muted); font-family:var(--font-mono);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%}
+.recv-entry-hero .btn-lg{margin-top:16px}
+.entry-foot{margin:18px 0 0; font-size:12.5px; color:var(--text-faint); max-width:52ch}
+/* live: collapse the entry to one bar, the transfer is the subject now */
+.recv-bar{display:none; align-items:center; gap:12px; padding:14px 20px}
+.recv-bar-text{font-size:13.5px; font-weight:600; white-space:nowrap}
+.recv-bar .code-field{flex:1 1 auto; width:auto; padding-left:12px}
+.panel-recv-live .recv-entry{flex:none; justify-content:flex-start}
+.panel-recv-live .recv-entry-hero{display:none}
+.panel-recv-live .recv-bar{display:flex}
+
+/* ============================ ACTIVITY PANEL ============================== */
+.act-scroll{flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; display:flex; flex-direction:column}
+.act-section{flex:none}
+.act-head{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px 10px}
+.act-rows{display:flex; flex-direction:column}
+.act-row{display:flex; align-items:center; gap:14px; min-height:64px; padding:12px 20px;
+  border-top:1px solid var(--hairline-soft); transition:background var(--dur-1) var(--ease-out)}
+.act-row:hover{background:var(--surface-2)}
+.act-dir{flex:none; width:34px; height:34px; border-radius:var(--r-2); background:var(--surface-2);
+  border:1px solid var(--hairline); color:var(--text-muted); display:grid; place-items:center}
+.act-dir.send{color:var(--wire)}
+.act-dir.recv{color:var(--info)}
+.act-id{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px}
+.act-name{font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.act-meta{font-size:12px; color:var(--text-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.act-state{flex:none; display:inline-flex; align-items:center; gap:10px}
+.act-pct{font-family:var(--font-mono); font-size:13px; color:var(--text); font-variant-numeric:tabular-nums}
+.act-actions{flex:none; display:inline-flex; align-items:center; gap:8px}
+.act-empty{flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; padding:36px}
+.act-empty-title{margin:16px 0 6px; font-family:var(--font-display); font-size:24px; font-weight:600; letter-spacing:-.6px}
+.act-empty-sub{margin:0 0 24px; font-size:13.5px; color:var(--text-faint); max-width:52ch}
+
+/* ================================ OVERLAYS ================================ */
+.scrim{position:fixed; inset:0; background:var(--scrim); display:flex; align-items:center; justify-content:center;
+  padding:24px; z-index:50}
 #nearby-offer-modal{z-index:60}
-/* Bounded to the frame with the scrim's own padding subtracted, so a dialog can
-   never be taller than the window it sits in. */
-.modal-sheet{width:100%; max-width:440px; max-height:calc(100vh - 48px); display:flex; flex-direction:column;
+.sheet{width:100%; max-width:460px; max-height:calc(100vh - 48px); display:flex; flex-direction:column;
   background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
   box-shadow:var(--elev-pop); padding:var(--sp-5)}
-.modal-title{font-family:var(--font-display); font-size:22px; font-weight:600; letter-spacing:-.4px; margin:0 0 4px}
-.modal-sub{color:var(--text-muted); font-size:13px; margin:0 0 var(--sp-4)}
+.sheet.wide{max-width:560px}
+.sheet-head{display:flex; align-items:center; gap:12px; margin-bottom:var(--sp-4)}
+.sheet-title{margin:0; font-family:var(--font-display); font-size:24px; font-weight:600; letter-spacing:-.6px}
+.sheet-sub{margin:0 0 var(--sp-4); color:var(--text-muted); font-size:13.5px}
+.sheet-note{margin:0 0 var(--sp-4); font-size:12.5px; color:var(--text-faint)}
+.sheet-actions{display:flex; align-items:center; gap:10px; margin-top:auto}
+
+/* preview sheet */
 .preview-meta{display:flex; align-items:center; gap:10px; margin-bottom:var(--sp-3); flex-wrap:wrap}
-.preview-verified{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600;
-  letter-spacing:.3px; color:var(--success)}
-.preview-verified::before{content:""; width:6px; height:6px; border-radius:var(--r-full); background:currentColor}
-/* Bounded scroll region: a folder can hold hundreds of files. It shrinks with
-   the sheet (flex + min-height:0) rather than pushing the dialog past the frame. */
+.preview-selectall{display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:13px; color:var(--text-muted)}
+.sel-all{display:inline-flex; align-items:center; gap:8px; cursor:pointer}
 .file-list{list-style:none; margin:0 0 var(--sp-4); padding:0; overflow-y:auto; overscroll-behavior:contain;
-  flex:1 1 auto; min-height:64px;
-  border:1px solid var(--hairline); border-radius:var(--r-3); background:var(--surface-2)}
-.file-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px;
-  border-bottom:1px solid var(--hairline-soft)}
+  flex:1 1 auto; min-height:0; max-height:38vh; border:1px solid var(--hairline); border-radius:var(--r-2);
+  background:var(--surface-2)}
+.file-row{display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--hairline-soft)}
 .file-row:last-child{border-bottom:0}
 .file-check{accent-color:var(--wire); width:16px; height:16px; flex:none; cursor:pointer}
-.file-name{flex:1; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
-.file-size{font-family:var(--font-mono); font-size:12px; color:var(--text-muted); flex:none;
-  font-variant-numeric:tabular-nums}
-.modal-note{font-size:12px; color:var(--text-muted); margin:0 0 var(--sp-5); word-break:break-word}
-.modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:auto}
+.file-name{flex:1 1 auto; min-width:0; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.file-size{flex:none; font-family:var(--font-mono); font-size:12px; color:var(--text-muted); font-variant-numeric:tabular-nums}
 
-/* ===================== nearby devices + consent flow ====================
-   Lives in the send view's side column: full height, header and footer fixed,
-   only the device list scrolls. */
-.nearby-panel{flex:1 1 auto; min-height:0; display:flex; flex-direction:column; padding:var(--sp-4)}
-.nearby-head{flex:none; display:flex; align-items:flex-start; justify-content:space-between; gap:var(--sp-3);
-  margin-bottom:var(--sp-4); flex-wrap:wrap}
-.nearby-title{display:flex; align-items:center; gap:10px; min-width:0}
-.nearby-title-text{min-width:0}
-.nearby-title-text .label{margin:0}
-.nearby-title-text .hint{margin:2px 0 0}
+/* offer sheet */
+.offer-from{display:flex; align-items:center; gap:14px; margin-bottom:var(--sp-4)}
+.offer-from .sheet-title{font-size:20px}
+.offer-from .sheet-sub{margin:0}
+.offer-summary{display:flex; align-items:baseline; gap:10px; padding:12px 16px; margin-bottom:var(--sp-4);
+  background:var(--surface-2); border:1px solid var(--hairline); border-radius:var(--r-2)}
+.offer-count{font-family:var(--font-display); font-size:20px; font-weight:600; letter-spacing:-.4px; color:var(--text)}
+.offer-size{font-size:13px; color:var(--text-muted)}
+.offer-verify{margin-bottom:var(--sp-4)}
+.offer-verify .hint{margin:4px 0 8px}
+.verify-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+.verify-box{padding:10px 12px; background:var(--surface-2); border:1px solid var(--hairline); border-radius:var(--r-2)}
+.verify-box code{display:block; font-size:14px; letter-spacing:1px; font-weight:600; color:var(--text); user-select:all;
+  white-space:nowrap}
 
-/* radar: three expanding rings around a live dot (scanning) */
-.nearby-radar{position:relative; flex:none; width:34px; height:34px; border-radius:50%;
-  background:var(--surface-2); border:1px solid var(--hairline); display:grid; place-items:center}
-.nearby-radar b{width:8px; height:8px; border-radius:50%; background:var(--wire); box-shadow:0 0 10px var(--wire-glow, rgba(210,255,58,.45))}
-.nearby-radar i{position:absolute; inset:0; border-radius:50%; border:1.5px solid var(--wire-dim); opacity:0; pointer-events:none}
-.nearby-radar.on i{animation:radarPing var(--dur-flow) cubic-bezier(.22,1,.36,1) infinite}
-.nearby-radar.on i:nth-child(2){animation-delay:calc(var(--dur-flow)/3)}
-.nearby-radar.on i:nth-child(3){animation-delay:calc(2*var(--dur-flow)/3)}
-@keyframes radarPing{0%{transform:scale(.35); opacity:.9} 70%{opacity:.25} 100%{transform:scale(1.15); opacity:0}}
-.nearby-radar:not(.on) b{background:var(--text-faint); box-shadow:none}
-@media (prefers-reduced-motion: reduce){.nearby-radar i{animation:none !important}}
+/* settings sheet */
+.settings-scroll{flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; margin:0 calc(var(--sp-5) * -1);
+  padding:0 var(--sp-5)}
+.label.section{margin:var(--sp-4) 0 var(--sp-2)}
+.label.section:first-child{margin-top:0}
+.set-row{display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 0;
+  border-bottom:1px solid var(--hairline-soft)}
+.set-row:last-child{border-bottom:0}
+.set-k{display:flex; flex-direction:column; gap:2px; min-width:0}
+.set-t{font-size:14px; font-weight:500; color:var(--text)}
+.set-d{font-size:12px; color:var(--text-faint)}
+.set-v{display:inline-flex; align-items:center; gap:10px; flex:none; max-width:58%; justify-content:flex-end}
+.set-v .val{font-size:13px; color:var(--text-muted); text-align:right; overflow:hidden; text-overflow:ellipsis}
+.set-v code{font-size:12.5px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px}
+.set-v code.strong{color:var(--text); font-weight:600; letter-spacing:.8px}
 
-/* the switch (nearby sharing on/off = visible/invisible to others) */
-.switch{display:inline-flex; align-items:center; gap:10px; border:0; background:transparent; padding:4px;
-  color:var(--text-muted); font-size:13px; font-weight:600; cursor:pointer; border-radius:var(--r-full)}
-.switch:hover{color:var(--text)}
+/* ================================ SWITCH ================================== */
+.switch{display:inline-flex; align-items:center; padding:2px; border-radius:var(--r-full)}
 .switch-track{position:relative; flex:none; width:40px; height:22px; border-radius:var(--r-full);
-  background:var(--surface-3); border:1px solid var(--hairline-strong); transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
-.switch-knob{position:absolute; top:50%; left:2px; transform:translateY(-50%); width:16px; height:16px; border-radius:50%;
+  background:var(--surface-3); border:1px solid var(--hairline-strong);
+  transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+.switch-knob{position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:var(--r-full);
   background:var(--text-faint); transition:left var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out)}
 .switch[aria-checked="true"] .switch-track{background:var(--wire); border-color:var(--wire)}
 .switch[aria-checked="true"] .switch-knob{left:20px; background:var(--text-on-wire)}
-.switch:focus-visible{outline:2px solid var(--wire); outline-offset:2px}
 
-/* Bounded scroll region: N devices on a busy network must not grow the frame. */
-.device-list{flex:1 1 auto; display:flex; flex-direction:column; gap:var(--sp-2); min-height:0;
-  overflow-y:auto; overscroll-behavior:contain; margin:0 calc(var(--sp-2) * -1); padding:0 var(--sp-2)}
-.device-row{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--r-3);
-  background:var(--surface-2); border:1px solid var(--hairline);
-  transition:border-color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out)}
-.device-row:hover{border-color:var(--hairline-strong); transform:translateY(-1px); background:var(--surface-3)}
-.device-row.entering{animation:deviceIn var(--dur-3) var(--ease-pop, cubic-bezier(.34,1.2,.5,1))}
-@keyframes deviceIn{from{opacity:0; transform:translateY(8px) scale(.98)} to{opacity:1; transform:none}}
-.device-avatar{flex:none; width:32px; height:32px; border-radius:var(--r-2); display:grid; place-items:center;
-  background:var(--surface); border:1px solid var(--hairline-strong); color:var(--wire)}
-.device-avatar.big{width:44px; height:44px; border-radius:var(--r-3)}
-.device-info{min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:1px}
-.device-name{font-weight:600; font-size:13.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-/* The pairing code must never wrap mid-value; truncate the hostname instead. */
-.device-fp{font-size:11px; letter-spacing:.4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.device-row .js-send{flex:none; margin-left:auto; height:30px; padding:0 11px; font-size:12.5px}
-.device-row.busy .js-send{opacity:.55; pointer-events:none}
-/* While one offer is in flight, no other device is tappable (one offer at a time). */
-#nearby-devices.offering .js-send{opacity:.55; pointer-events:none}
-.device-empty{padding:16px 12px; text-align:center; color:var(--text-muted); font-size:12.5px; line-height:1.45;
-  border:1px dashed var(--hairline); border-radius:var(--r-3)}
-.nearby-foot{flex:none; margin-top:var(--sp-3); padding-top:var(--sp-3); border-top:1px solid var(--hairline-soft);
-  line-height:1.45}
-/* The switch label wraps to its own line in the narrow side column. */
-.nearby-head .switch{margin-left:auto}
+/* ================================ MOTION ================================== */
+@keyframes flow{from{stroke-dashoffset:0} to{stroke-dashoffset:-18}}
+@keyframes sweep{from{stroke-dashoffset:0} to{stroke-dashoffset:-1.06}}
+@keyframes breathe{0%,100%{opacity:.5} 50%{opacity:1}}
+@keyframes radar{0%{transform:scale(.35); opacity:.9} 70%{opacity:.22} 100%{transform:scale(1.15); opacity:0}}
+@keyframes drift{from{offset-distance:0%} to{offset-distance:100%}}
+@keyframes shake{0%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}100%{transform:translateX(0)}}
+@keyframes panelIn{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
+@keyframes cardIn{from{opacity:0; transform:translateY(10px) scale(.98)} to{opacity:1; transform:none}}
+@keyframes wireDraw{from{stroke-dashoffset:1} to{stroke-dashoffset:0}}
+.brand-wire{stroke-dasharray:1; animation:wireDraw 620ms var(--ease-out) 60ms both}
+.drift{offset-path:path('M16 34 H52 l8 -14 8 14 H104'); offset-rotate:0deg; animation:drift 4.2s linear infinite}
+.xfer{animation:cardIn var(--dur-3) var(--ease-snap)}
 
-/* incoming offer modal */
-.offer-sheet{max-width:480px}
-.offer-from{display:flex; align-items:center; gap:14px; margin-bottom:var(--sp-4)}
-.offer-from .modal-title,.offer-from .modal-sub{margin:0}
-.offer-summary{display:flex; align-items:baseline; gap:10px; padding:var(--sp-3) var(--sp-4); margin-bottom:var(--sp-4);
-  background:var(--surface-2); border-radius:var(--r-3); border:1px solid var(--hairline)}
-.offer-count{font-family:var(--font-display); font-weight:600; font-size:20px; letter-spacing:-.4px; color:var(--text)}
-.offer-size{color:var(--text-muted); font-size:13px}
-.offer-verify{margin-bottom:var(--sp-4)}
-.offer-verify .label{margin-bottom:2px}
-.offer-verify .label.sm{font-size:11px}
-/* `.label.xs` is a <span>. Left inline it ran into the pairing code and the two
-   wrapped together as one text run ("THEIR CODEgf o koj uky 5ux"). It has to be
-   a block for its own line and its bottom margin to mean anything. */
-.label.xs{display:block; font-size:10px; letter-spacing:.8px; margin:0 0 5px; text-transform:uppercase;
-  font-weight:600; color:var(--text-faint)}
-/* Two columns only — the old middle `auto` track had no child and just ate gap. */
-.verify-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:stretch; margin-top:8px}
-.verify-box{padding:10px 12px; background:var(--surface-2); border:1px solid var(--hairline); border-radius:var(--r-2);
-  min-width:0}
-/* Sized so a 12-character code (4 groups of 3) fits on one line without wrapping
-   mid-group. The code got wider when the fingerprint moved from ~21 bits to a
-   60-bit hash; the box never followed. */
-.verify-box code{display:block; font-family:var(--font-mono); font-size:13px; letter-spacing:.3px;
-  font-weight:600; color:var(--text); user-select:all; white-space:nowrap; overflow:hidden;
-  text-overflow:ellipsis; direction:ltr}
-.offer-sheet .modal-note{margin-top:0}
-.btn.sm{height:34px; padding:0 14px; font-size:13px}
+/* Reduced motion keeps full functional parity: colour and length still carry
+   every state, only the decorative current and sweep go away. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important; animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+  .w-current,.w-sweep,.w-pulse,.drift,.radar i,.identity-dot,.pulse-dot{display:none !important}
+  .w-fill{transition:stroke-dashoffset var(--dur-2) linear !important}
+}
+
+/* ============================== RESPONSIVE ================================
+   Min window is 920x640. Below 1040 the device rows tighten; the frame never
+   scrolls at any permitted size.
+   -------------------------------------------------------------------------- */
+@media (max-width:1040px){
+  .stage{padding:20px 24px 24px}
+  .device-id{min-width:150px}
+  .drop-title,.entry-title{font-size:23px}
+  .drop-glyph{width:104px; height:52px; margin-bottom:14px}
+  .drop-hero,.recv-entry-hero,.act-empty{padding:24px}
+  .drop-sub,.entry-sub{margin-bottom:18px}
+}
+@media (max-width:960px){
+  .device{flex-wrap:wrap; row-gap:8px}
+  .device-fp{order:3; flex:1 0 100%; padding-left:48px}
+  .toolbar{padding:0 14px}
+  .seg-btn{padding:0 13px}
+}
