@@ -42,6 +42,7 @@
     "macOS": {
       "minimumSystemVersion": "10.15",
       "infoPlist": "installer/Info.plist",
+      "signingIdentity": "-",
       "dmg": {
         "background": "icons/dmg-background.png",
         "windowSize": { "width": 660, "height": 440 },
