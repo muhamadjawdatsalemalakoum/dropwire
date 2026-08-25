@@ -37,6 +37,12 @@ fn my_fingerprint(state: State<'_, AppState>) -> String {
     state.core.fingerprint()
 }
 
+/// This device's advertised display name (what nearby peers see).
+#[tauri::command]
+async fn device_name(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.core.device_name().await)
+}
+
 /// Start the nearby session: advertise on the LAN + browse for peers, and
 /// spawn the two event pumps (offers in → window events; nothing out needs a
 /// pump since offer updates stream through their own channels).
@@ -400,6 +406,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             my_endpoint_id,
             my_fingerprint,
+            device_name,
             nearby_start,
             nearby_stop,
             nearby_list,

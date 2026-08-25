@@ -37,6 +37,10 @@ pub(crate) const NEARBY_SERVICE: &str = "_dropwire._udp.local.";
 /// TXT keys (short: mDNS TXT records should stay small).
 const TXT_EID: &str = "dw_eid";
 const TXT_NAME: &str = "dw_name";
+/// Platform of the advertising device ("windows" / "macos" / "linux").
+/// Shown next to the hostname: two similar names are told apart fastest
+/// by the platform, and it is honest data rather than a guess from the name.
+const TXT_OS: &str = "dw_os";
 
 /// One nearby Dropwire instance seen on the local network.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +54,10 @@ pub struct NearbyDevice {
     /// Short human-checkable fingerprint derived from the endpoint id
     /// (e.g. `"k7q m2z h4w"`) — displayed in confirm dialogs on both sides.
     pub fingerprint: String,
+    /// Advertised platform, e.g. `"windows"`. `None` from peers older than the
+    /// TXT key, so the UI simply omits the badge.
+    #[serde(default)]
+    pub os: Option<String>,
     /// Most recent LAN socket, e.g. `"192.168.1.20:48726"` (display/debug).
     pub addr: Option<String>,
     /// Unix seconds of last sighting.
@@ -193,6 +201,7 @@ fn apply_event(peers: &PeerTable, event: &ServiceEvent) {
                 .get_property_val_str(TXT_NAME)
                 .map(str::to_owned)
                 .unwrap_or_else(|| "Dropwire device".into());
+            let os = props.get_property_val_str(TXT_OS).map(str::to_owned);
             let sock = info
                 .get_addresses_v4()
                 .into_iter()
@@ -201,6 +210,7 @@ fn apply_event(peers: &PeerTable, event: &ServiceEvent) {
             let entry = PeerEntry {
                 device: NearbyDevice {
                     fingerprint: NearbyDevice::fingerprint_for(&other_eid),
+                    os,
                     addr: sock.as_ref().map(|s| s.to_string()),
                     endpoint_id: other_eid.clone(),
                     name,
@@ -319,6 +329,7 @@ impl NearbyState {
         let mut props = HashMap::new();
         props.insert(TXT_EID.to_string(), eid.clone());
         props.insert(TXT_NAME.to_string(), self.device_name.clone());
+        props.insert(TXT_OS.to_string(), std::env::consts::OS.to_string());
 
         // No explicit IP: `addr_auto` announces on every interface and fills
         // the SRV target addresses itself.
