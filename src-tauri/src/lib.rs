@@ -106,8 +106,21 @@ fn spawn_offer_pump(app: &AppHandle, state: &State<'_, AppState>) {
     let mut rx = state.core.subscribe_offers();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        while let Ok(offer) = rx.recv().await {
-            let _ = handle.emit("nearby-offer", offer);
+        use tokio::sync::broadcast::error::RecvError;
+        loop {
+            match rx.recv().await {
+                Ok(offer) => {
+                    let _ = handle.emit("nearby-offer", offer);
+                }
+                // Lagged is RECOVERABLE: under a burst of offers we fell behind
+                // and lost `n` of them, but the receiver keeps working. This
+                // pump is a process-wide singleton, so treating Lagged as
+                // terminal (the old `while let Ok` did) would silently kill
+                // incoming-offer delivery for the whole app run. Keep looping.
+                Err(RecvError::Lagged(_)) => continue,
+                // The sender was dropped (engine gone) — nothing left to pump.
+                Err(RecvError::Closed) => break,
+            }
         }
     });
 }
@@ -321,8 +334,46 @@ fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Where a panic breadcrumb is written (app data dir, honoring the test
+/// override). Kept identical to the data-dir resolution in `run`'s setup.
+fn panic_log_path() -> Option<PathBuf> {
+    let base = match std::env::var("DROPWIRE_DATA_DIR") {
+        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => dirs::data_dir()?.join("dropwire"),
+    };
+    Some(base.join("panic.log"))
+}
+
+/// Record panics to a file (and still run the default hook). Release builds are
+/// stripped, so a native crash report won't symbolicate; this leaves a readable
+/// `thread '…' panicked at …` breadcrumb for beta reports. Combined with
+/// `panic = "unwind"`, a panic in a background mDNS thread degrades discovery
+/// instead of aborting the whole process.
+fn install_panic_logger() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(path) = panic_log_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                use std::io::Write;
+                let thread = std::thread::current();
+                let name = thread.name().unwrap_or("<unnamed>");
+                let _ = writeln!(f, "[panic] thread '{name}': {info}");
+            }
+        }
+        default(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_logger();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
