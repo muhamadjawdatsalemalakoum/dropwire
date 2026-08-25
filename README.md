@@ -32,9 +32,10 @@ resumable, and open source.
 ---
 
 > **Status:** alpha. The transfer engine and desktop app work end to end on Windows,
-> macOS, and Linux — send a file or folder, preview before accepting, download only the
-> files you want, resume an interrupted transfer, and run several at once. Polishing
-> toward a public release. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design.
+> macOS, and Linux — send a file or folder, send straight to a nearby device with no code,
+> preview before accepting, download only the files you want, resume an interrupted
+> transfer, and run several at once. Polishing toward a public release. See
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design.
 
 ## Why Dropwire
 
@@ -48,6 +49,11 @@ your files through their servers with size caps and ads. Dropwire is the missing
 - **See it before you accept.** The receiver previews exactly what's coming — file names, sizes,
   and count — and approves before a single byte downloads. Both sides see, live, when the other
   device connects.
+- **Nearby devices, no code needed.** Dropwire apps on the same network find each other
+  automatically and appear as one-tap targets. Tap a device, they confirm, and it sends.
+  Both sides confirm every transfer, and each side shows a pairing code you can read aloud
+  to check you're talking to the right device. Turn nearby sharing off and your device is
+  invisible: it stops advertising and refuses incoming requests.
 - **Direct, peer-to-peer.** Your file goes straight from your device to theirs. When a
   direct connection isn't possible, it falls back to an encrypted relay that still can't
   read a single byte.
@@ -70,6 +76,10 @@ your files through their servers with size caps and ads. Dropwire is the missing
 3. The other person enters the code, **previews exactly what's being sent — names, sizes,
    and count — and accepts** (or declines, and you're told instantly). Then it runs
    **directly, device to device**, with a live direct-vs-relayed badge.
+
+On the same network, you can skip the code entirely: the other device shows up under
+**Nearby devices**, you tap **Send here**, and they get a confirm dialog. Nothing moves
+until both sides agree, and the receiver still previews the real file list before saving.
 
 Under the hood: each device has a stable cryptographic identity (you "dial a key, not an
 IP"); peers find each other via DNS/DHT discovery; the connection is QUIC with TLS 1.3;
@@ -95,10 +105,21 @@ Requires the [Rust toolchain](https://rustup.rs) and a C toolchain (see
 UI is plain HTML/CSS/JS.
 
 ```sh
-cargo test -p irohcore        # engine tests (roundtrip + resume), hermetic/offline
-cargo run  -p dropwire        # build + launch the desktop app
-cargo tauri build             # build installers (needs `cargo install tauri-cli`)
+cargo test -p irohcore --features test-utils   # engine tests, hermetic/offline
+cargo run  -p dropwire                         # build + launch the desktop app
+cargo tauri build                              # build installers (needs `cargo install tauri-cli`)
 ```
+
+`--features test-utils` matters: the nearby-consent and relay suites declare it as a
+required feature, so plain `cargo test` compiles them out and reports success without
+having run them. The live-multicast discovery test is additionally `#[ignore]`d; run it
+on a real network with:
+
+```sh
+cargo test -p irohcore --features test-utils --test nearby_mdns -- --ignored --nocapture
+```
+
+Two instances on one machine need separate data dirs: `cargo run -p dropwire -- --data-dir=/tmp/dw-b`.
 
 Full developer guide: [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Design: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
