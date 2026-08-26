@@ -193,6 +193,57 @@ document.addEventListener('keydown', (e) => {
   if (e.key === ',' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openSettings(); }
 });
 
+/* ====================== notifications and toasts ========================
+   The design allows exactly three notifying events: a transfer completed, an
+   offer that arrived while the window was hidden, and a failure that needs a
+   decision. Progress never notifies. The OS notification is fire-and-forget,
+   so anything actionable is mirrored as an in-app toast that keeps the button.
+   ------------------------------------------------------------------------ */
+const notifApi = (HAS_TAURI && TAURI.notification) ? TAURI.notification : null;
+let notifAllowed = false;
+async function initNotifications() {
+  if (!notifApi) return;
+  try {
+    notifAllowed = await notifApi.isPermissionGranted();
+    if (!notifAllowed) notifAllowed = (await notifApi.requestPermission()) === 'granted';
+  } catch (_) { notifAllowed = false; }
+}
+/** True when the user cannot see the window, so an OS notification is warranted. */
+async function windowIsAway() {
+  if (document.hidden) return true;
+  if (!appWindow) return false;
+  try {
+    const [vis, foc] = await Promise.all([appWindow.isVisible(), appWindow.isFocused()]);
+    return !vis || !foc;
+  } catch (_) { return false; }
+}
+function toast({ title, sub, kind, action }) {
+  const el = document.getElementById('tpl-toast').content.firstElementChild.cloneNode(true);
+  if (kind) el.classList.add(kind);
+  el.querySelector('.js-title').textContent = title;
+  const subEl = el.querySelector('.js-sub');
+  subEl.textContent = sub || '';
+  subEl.title = sub || '';
+  const act = el.querySelector('.js-action');
+  if (action) {
+    act.textContent = action.label;
+    act.classList.remove('hidden');
+    act.addEventListener('click', () => { action.onClick(); el.remove(); });
+  }
+  const close = () => { if (el.isConnected) el.remove(); };
+  el.querySelector('.js-close').addEventListener('click', close);
+  $('#toasts').appendChild(el);
+  // A toast with an action waits longer: it is asking for something.
+  setTimeout(close, action ? 12000 : 6000);
+}
+/** One of the three allowed events. `action` stays reachable via the toast. */
+async function notify({ title, sub, kind, action, always }) {
+  toast({ title, sub, kind, action });
+  if (!notifApi || !notifAllowed) return;
+  if (!always && !(await windowIsAway())) return;
+  try { notifApi.sendNotification({ title, body: sub || '' }); } catch (_) {}
+}
+
 /* ============================== status bar =============================== */
 function setStatus(text, kind) {
   const t = $('#status-text'), d = $('#status-dot');
@@ -236,9 +287,12 @@ function setBar(fill, svg, pctEl, done, total) {
 // The route pill never hides a relay: it states the trade-off in words.
 function setRoute(el, route) {
   if (!el || !route) return;
-  const label = route === 'direct' ? 'direct' : route === 'relayed' ? 'relayed · a bit slower' : 'connected';
+  const label = route === 'direct' ? 'direct'
+    : route === 'relayed' ? 'relayed · a bit slower'
+    : route === 'resuming' ? 'resuming' : 'connected';
   el.textContent = label;
-  el.className = 'pill js-route ' + (route === 'direct' ? 'direct' : route === 'relayed' ? 'relayed' : '');
+  el.className = 'pill js-route ' + (route === 'direct' ? 'direct'
+    : route === 'relayed' ? 'relayed' : route === 'resuming' ? 'resuming' : '');
   el.setAttribute('aria-label', 'Connection: ' + label);
 }
 function removeCard(card) {
@@ -356,6 +410,10 @@ function onSendMsg(m, els, card, getId, setTicket) {
       liveSet(id, { state: 'transferring' });
       break;
     case 'transferring': {
+      // Resuming is derived from a transferring event after an error.
+      if (els.svg && els.svg.classList.contains('failed')) {
+        els.svg.classList.remove('failed'); els.svg.classList.add('resuming');
+      }
       const p = setBar(els.fill, els.svg, els.pct, m.offset, m.total);
       setRoute(els.route, m.route);
       els.status.textContent = `Sending… ${fmtBytes(m.offset)} / ${fmtBytes(m.total)}`;
@@ -370,8 +428,10 @@ function onSendMsg(m, els, card, getId, setTicket) {
       els.cancel.textContent = 'Dismiss';
       if (els.dot) els.dot.style.display = 'none';
       if (liveSend && liveSend.card === card) liveSend = null;
+      const sentName = (live.get(id) || {}).name || 'transfer';
       liveDrop(id);
       trayFlash('done');
+      notify({ title: 'Sent ' + sentName, sub: els.meta.textContent || 'delivered' });
       setStatus('transfer complete', 'up');
       break;
     case 'error':
@@ -380,6 +440,10 @@ function onSendMsg(m, els, card, getId, setTicket) {
       els.status.textContent = m.message ? `Could not send — ${m.message}` : 'Could not send.';
       if (liveSend && liveSend.card === card) liveSend = null;
       liveDrop(id);
+      // A failure needs a decision, so it is one of the three notifying events.
+      trayFlash('attention');
+      notify({ title: 'Send failed', sub: m.message || 'the transfer stopped', kind: 'error',
+               action: { label: 'Activity', onClick: () => showPanel('activity') } });
       break;
     case 'cancelled':
       liveDrop(id);
@@ -446,7 +510,7 @@ function submitCode() {
 $('#recv-start').addEventListener('click', submitCode);
 $('#recv-start-2').addEventListener('click', submitCode);
 
-async function beginReceive(ticket, dest, selected) {
+async function beginReceive(ticket, dest, selected, label) {
   $('#recv-error').textContent = '';
   showPanel('receive');
   const myDest = dest || DEFAULT_DEST;
@@ -458,7 +522,8 @@ async function beginReceive(ticket, dest, selected) {
     another: card.querySelector('.js-another'), cancel: card.querySelector('.js-cancel'),
   };
   els.name.textContent = 'Connecting…';
-  if (myDest) els.sub.textContent = 'saving to ' + myDest;
+  if (myDest) { els.sub.textContent = 'saving to ' + myDest; cardDest.set(card, myDest); }
+  if (label) { cardLabel.set(card, label); els.name.textContent = label; }
   let id = null;
   els.cancel.addEventListener('click', async () => {
     if (id) await invoke('cancel_transfer', { id }).catch(() => {});
@@ -471,13 +536,18 @@ async function beginReceive(ticket, dest, selected) {
     id = (selected && selected.length)
       ? await invoke('start_receive_selected', { ticket, dest: myDest, selected, onEvent: ch })
       : await invoke('start_receive', { ticket, dest: myDest, onEvent: ch });
-    liveSet(id, { dir: 'recv', name: 'Incoming transfer', state: 'connecting' });
+    liveSet(id, { dir: 'recv', name: label || 'Incoming transfer', state: 'connecting' });
   } catch (e) {
     removeCard(card);
     $('#recv-error').textContent = 'That code does not look right. Check it and try again.';
     console.warn(e);
   }
 }
+/** Where a given receive card is writing (used by the completion toast). */
+const cardDest = new WeakMap();
+/** What the receive is called, learned from the verified preview at accept time. */
+const cardLabel = new WeakMap();
+const myDestOf = (card) => cardDest.get(card) || null;
 function onRecvMsg(m, els, card, getId) {
   const id = getId();
   switch (m.kind) {
@@ -485,6 +555,13 @@ function onRecvMsg(m, els, card, getId) {
       if (els.svg && !els.svg.dataset.lit) {
         els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting');
         igniteNode(els.svg, '.w-node.peer'); els.name.textContent = 'Receiving…';
+      }
+      // Resuming is DERIVED, not a new event kind: a transferring event that
+      // arrives after an error on the same transfer is a resume.
+      if (els.svg && els.svg.classList.contains('failed')) {
+        els.svg.classList.remove('failed'); els.svg.classList.add('resuming');
+        els.name.textContent = 'Resuming…';
+        setRoute(els.route, 'resuming');
       }
       setRoute(els.route, m.route);
       const p = setBar(els.fill, els.svg, els.pct, m.offset, m.total);
@@ -501,6 +578,11 @@ function onRecvMsg(m, els, card, getId) {
       liveDrop(id);
       trayFlash('done');
       if (lastOfferPeer) { rememberDevice(lastOfferPeer); lastOfferPeer = null; }
+      notify({
+        title: 'Received ' + (cardLabel.get(card) || 'files'),
+        sub: `${fmtBytes(m.stats && m.stats.bytes)} · saved to ${myDestOf(card) || 'your downloads'}`,
+        action: myDestOf(card) ? { label: 'Open folder', onClick: () => invoke('reveal_path', { path: myDestOf(card) }).catch(() => {}) } : null,
+      });
       setStatus('received', 'up');
       break;
     case 'error': {
@@ -511,6 +593,9 @@ function onRecvMsg(m, els, card, getId) {
       els.status.textContent = offline ? 'Ask for a fresh code and try again.' : (m.message || '');
       els.cancel.textContent = 'Dismiss';
       liveDrop(id);
+      trayFlash('attention');
+      notify({ title: 'Receive failed', sub: els.status.textContent, kind: 'error',
+               action: { label: 'Activity', onClick: () => showPanel('activity') } });
       break;
     }
     case 'cancelled':
@@ -599,9 +684,11 @@ $('#preview-accept').addEventListener('click', () => {
   closePreview();
   if (!t) return;
   const selected = (idx.length > 0 && idx.length < total) ? idx : null;
+  const picked = idx.length === 1 && previewFiles[idx[0]] ? previewFiles[idx[0]].name
+    : `${idx.length} file${idx.length === 1 ? '' : 's'}`;
   codeInputs().forEach((el) => { el.value = ''; });
   $('#recv-start').disabled = true;
-  beginReceive(t, d, selected);
+  beginReceive(t, d, selected, picked);
 });
 $('#preview-decline').addEventListener('click', () => {
   if (previewTicket && previewLoaded) invoke('send_control', { ticket: previewTicket, kind: 'decline' }).catch(() => {});
@@ -673,18 +760,26 @@ const STATUS_LABEL = { active: 'In progress', done: 'Done', error: 'Failed', can
 const STATUS_PILL = { done: 'done', error: 'failed', cancelled: 'failed', interrupted: 'resuming', active: 'connecting' };
 async function loadHistory() {
   const list = $('#history-list'), section = $('#act-earlier-section');
+  const clearBtn = $('#clear-history');
   let items = [];
   try { items = await invoke('list_transfers'); } catch (_) {}
   list.innerHTML = '';
   section.hidden = !items || !items.length;
+  if (clearBtn) clearBtn.classList.toggle('hidden', !items || !items.length);
   if (items && items.length) {
     items.forEach((t, i) => {
       const dir = (t.direction || '').toLowerCase();
       const resumable = dir === 'receive' && t.status === 'interrupted' && t.ticket && t.dest;
       const resendable = dir === 'send' && !!t.source;
       const actions = [];
+      const failedish = t.status === 'error' || t.status === 'cancelled';
       if (resumable) actions.push({ label: 'Resume', cls: 'btn-ghost', onClick: () => beginReceive(t.ticket, t.dest) });
-      else if (resendable) actions.push({ label: 'Resend', cls: 'btn-ghost', onClick: () => { showPanel('send'); startSend(t.source); } });
+      else if (resendable) actions.push({
+        // "Retry" when it never got through, "Resend" when it did: same call,
+        // but the label should say which situation the user is in.
+        label: failedish ? 'Retry' : 'Resend', cls: 'btn-ghost',
+        onClick: () => { showPanel('send'); startSend(t.source); },
+      });
       if (t.status === 'done' && t.dest) actions.push({ label: 'Reveal', onClick: () => invoke('reveal_path', { path: t.dest }).catch(() => {}) });
       const row = actRow({
         dir: dir === 'send' ? 'send' : 'recv',
@@ -832,6 +927,12 @@ $('#text-send').addEventListener('click', async () => {
     startSend(path);
   } catch (e) { alert(String(e)); }
   btn.disabled = false; btn.textContent = 'Get a code';
+});
+
+$('#clear-history').addEventListener('click', async () => {
+  if (!confirm('Clear the transfer history on this device? Files already received are not deleted.')) return;
+  try { await invoke('clear_transfers'); } catch (e) { console.warn(e); }
+  loadHistory();
 });
 
 /* ============================== settings bits ============================ */
@@ -1069,6 +1170,13 @@ function showOfferModal(offer) {
   nearby.offers.set(offer.offerId, offer);
   // An offer is the one thing that needs a decision: say so on the tray icon.
   invoke('set_tray_state', { stateName: 'attention' }).catch(() => {});
+  // …and notify, but only if the user could not have seen the dialog.
+  notify({
+    title: (offer.deviceName || 'A nearby device') + ' wants to send you files',
+    sub: `${offer.fileCount} file${offer.fileCount === 1 ? '' : 's'} · ${fmtBytes(offer.totalBytes)}`,
+    kind: 'warn',
+    action: { label: 'Review', onClick: () => invoke('show_main').catch(() => {}) },
+  });
   offerState = offer;
   offerLastFocus = document.activeElement;
   $('#offer-device').textContent = offer.deviceName || 'A nearby device';
@@ -1210,6 +1318,7 @@ function applyPrefsToUi() {
 /* ================================= init ================================== */
 (async function init() {
   await loadPrefs();
+  initNotifications();
   try { DEFAULT_DEST = await invoke('default_dest_dir'); } catch (_) {}
   applyPrefsToUi();
   try {

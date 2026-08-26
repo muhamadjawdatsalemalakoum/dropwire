@@ -189,6 +189,12 @@ impl Core {
         self.inner.catalog.lock().await.list()
     }
 
+    /// Clear finished history. Records live only on this device, so this is the
+    /// whole delete story: there is nothing on a server to remove as well.
+    pub async fn clear_transfers(&self) {
+        self.inner.catalog.lock().await.clear_finished();
+    }
+
     /// Gracefully shut down the engine.
     pub async fn shutdown(self) -> Result<()> {
         self.stop_nearby().await;

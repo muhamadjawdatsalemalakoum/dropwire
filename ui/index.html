@@ -166,7 +166,9 @@
           <div class="act-section" id="act-earlier-section" hidden>
             <div class="act-head">
               <span class="label">Earlier</span>
+              <span class="grow"></span>
               <span class="hint">Stored on this device only</span>
+              <button class="btn-quiet sm" id="clear-history" type="button">Clear history</button>
             </div>
             <div id="history-list" class="act-rows"></div>
           </div>
@@ -610,6 +612,24 @@
       </div>
     </section>
   </div>
+
+  <!-- OS notifications are mirrored here, so the action is always reachable
+       even when the platform will not render notification buttons. -->
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+
+  <template id="tpl-toast">
+    <div class="toast">
+      <span class="toast-dot js-dot" aria-hidden="true"></span>
+      <span class="toast-body">
+        <span class="toast-title js-title"></span>
+        <span class="toast-sub js-sub"></span>
+      </span>
+      <button class="btn-quiet sm js-action hidden" type="button"></button>
+      <button class="tb-btn js-close" type="button" aria-label="Dismiss">
+        <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </template>
 
   <script src="app.js"></script>
 </body>

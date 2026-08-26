@@ -291,6 +291,14 @@ async fn list_transfers(state: State<'_, AppState>) -> Result<Vec<TransferRecord
     Ok(state.core.transfers().await)
 }
 
+/// Forget finished history. It only ever existed on this device, so this is the
+/// whole delete: nothing has to be revoked anywhere else.
+#[tauri::command]
+async fn clear_transfers(state: State<'_, AppState>) -> Result<(), String> {
+    state.core.clear_transfers().await;
+    Ok(())
+}
+
 /// Native file/folder picker. Returns absolute paths (empty if cancelled).
 #[tauri::command]
 async fn pick_paths(
@@ -622,6 +630,7 @@ pub fn run() {
     install_panic_logger();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // App data dir: identity (node.key), blob store, transfer catalog.
             // DROPWIRE_DATA_DIR overrides it — lets a second instance run side-
@@ -704,6 +713,7 @@ pub fn run() {
             nearby_offer,
             nearby_respond,
             list_transfers,
+            clear_transfers,
             pick_paths,
             pick_dest_dir,
             default_dest_dir,
