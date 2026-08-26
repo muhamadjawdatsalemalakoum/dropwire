@@ -20,7 +20,23 @@
         "decorations": false,
         "transparent": false,
         "shadow": true,
-        "center": true
+        "center": true,
+        "visible": false
+      },
+      {
+        "label": "tray",
+        "title": "Dropwire",
+        "url": "tray.html",
+        "width": 360,
+        "height": 470,
+        "resizable": false,
+        "decorations": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": true,
+        "shadow": true,
+        "dragDropEnabled": true
       }
     ],
     "security": {

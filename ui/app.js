@@ -78,9 +78,40 @@ function applyTheme(mode) {
 (function initTheme() {
   applyTheme(localStorage.getItem('dropwire-theme') || 'auto');
   $$('#theme-toggle .seg-btn').forEach((b) => b.addEventListener('click', () => {
-    const m = b.dataset.themeSet; localStorage.setItem('dropwire-theme', m); applyTheme(m);
+    const m = b.dataset.themeSet; localStorage.setItem('dropwire-theme', m); applyTheme(m); setPref('theme', m);
   }));
 })();
+
+/* ========================= persisted settings ============================
+   The shell owns these now (settings.json next to the engine data), so a
+   rename, a destination or a trusted device survives a restart and is visible
+   to every window, not just this webview's localStorage.
+   ------------------------------------------------------------------------ */
+let PREFS = {
+  onboarded: false, deviceName: null, destDir: null, nearbyOn: true, theme: 'auto',
+  trusted: [], skipCodeForTrusted: false, trayOnClose: true, startAtLogin: false,
+};
+async function loadPrefs() {
+  try { PREFS = await invoke('get_settings'); } catch (_) {}
+  return PREFS;
+}
+async function setPref(key, value) {
+  try { PREFS = await invoke('set_pref', { key, value }); } catch (e) { console.warn(e); }
+  return PREFS;
+}
+const isTrusted = (eid) => !!eid && PREFS.trusted.some((t) => t.endpointId === eid);
+/* A device is remembered after a transfer completes. Trust grants nothing on
+   its own: the peer still confirms, and the verified preview still gates us. */
+async function rememberDevice(dev) {
+  if (!dev || !dev.endpointId) return;
+  try {
+    PREFS = await invoke('trust_remember', { device: {
+      endpointId: dev.endpointId, name: dev.name || 'Device',
+      os: dev.os || null, fingerprint: dev.fingerprint || '',
+    } });
+    renderTrusted();
+  } catch (e) { console.warn(e); }
+}
 
 /* ============================ settings sheet ============================= */
 let settingsLastFocus = null;
@@ -88,12 +119,73 @@ function openSettings() {
   settingsLastFocus = document.activeElement;
   $('#sheet-settings').classList.remove('hidden');
   invoke('my_fingerprint').then((fp) => { $('#set-fp').textContent = fp; }).catch(() => {});
+  loadPrefs().then(() => { renderTrusted(); syncSettingSwitches(); });
   $('#settings-close').focus();
 }
 function closeSettings() {
   $('#sheet-settings').classList.add('hidden');
   if (settingsLastFocus && settingsLastFocus.focus) settingsLastFocus.focus();
 }
+function renderTrusted() {
+  const list = $('#trusted-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const items = PREFS.trusted || [];
+  $('#trusted-intro').textContent = items.length
+    ? `${items.length} remembered. Trust never grants access on its own: they still confirm on their side, and you still see the file list before anything is saved.`
+    : 'No devices remembered yet. A device is remembered after a transfer with it completes.';
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'trusted-empty';
+    p.textContent = 'Nothing here yet.';
+    list.appendChild(p);
+    return;
+  }
+  items.forEach((t) => {
+    const row = document.getElementById('tpl-trusted').content.firstElementChild.cloneNode(true);
+    const n = row.querySelector('.js-name'); n.textContent = t.name || 'Device'; n.title = t.name || '';
+    const os = (t.os || '').toLowerCase();
+    if (OS_LABEL[os]) {
+      const b = row.querySelector('.js-os'); b.textContent = OS_LABEL[os]; b.classList.remove('hidden');
+      row.querySelector('.js-icon').innerHTML = OS_ICON[os];
+    }
+    const bits = [];
+    if (t.fingerprint) bits.push(t.fingerprint);
+    bits.push(`${t.transfers || 0} transfer${(t.transfers || 0) === 1 ? '' : 's'}`);
+    if (t.lastSeen) bits.push('last ' + new Date(t.lastSeen * 1000).toLocaleString());
+    row.querySelector('.js-meta').textContent = bits.join(' \u00b7 ');
+    row.querySelector('.js-forget').addEventListener('click', async () => {
+      try { PREFS = await invoke('trust_forget', { endpointId: t.endpointId }); renderTrusted(); }
+      catch (e) { console.warn(e); }
+    });
+    list.appendChild(row);
+  });
+}
+function syncSettingSwitches() {
+  const set = (sel, on) => { const el = $(sel); if (el) el.setAttribute('aria-checked', on ? 'true' : 'false'); };
+  set('#skip-code-toggle', PREFS.skipCodeForTrusted);
+  set('#tray-close-toggle', PREFS.trayOnClose);
+  set('#start-login-toggle', PREFS.startAtLogin);
+}
+[['#skip-code-toggle', 'skipCodeForTrusted'], ['#tray-close-toggle', 'trayOnClose'], ['#start-login-toggle', 'startAtLogin']]
+  .forEach(([sel, key]) => {
+    const el = $(sel);
+    if (el) el.addEventListener('click', async () => {
+      await setPref(key, !PREFS[key]);
+      syncSettingSwitches();
+    });
+  });
+$('#rename-device').addEventListener('click', async () => {
+  const current = $('#set-device-name').textContent;
+  const next = prompt('What should nearby devices call this one?', current);
+  if (next == null) return;
+  try {
+    PREFS = await invoke('set_device_name', { name: next });
+    const n = PREFS.deviceName || next;
+    $('#set-device-name').textContent = n;
+    $('#device-name').textContent = n;
+  } catch (e) { alert(String(e)); }
+});
 $('#open-settings').addEventListener('click', openSettings);
 $('#settings-close').addEventListener('click', closeSettings);
 $('#sheet-settings').addEventListener('click', (e) => { if (e.target.id === 'sheet-settings') closeSettings(); });
@@ -180,6 +272,23 @@ function liveSet(id, patch) {
   renderActivityLive();
 }
 function liveDrop(id) { if (id && live.delete(id)) renderActivityLive(); }
+/* Both surfaces read one registry: the tray panel mirrors it, and the tray
+   icon carries the state so the app says what it is doing while hidden. */
+function broadcastLive() {
+  const items = [...live.values()];
+  if (HAS_TAURI && TAURI.event && TAURI.event.emit) {
+    TAURI.event.emit('live-transfers', items).catch(() => {});
+  }
+  const anyMoving = items.some((t) => t.state === 'transferring');
+  invoke('set_tray_state', { stateName: anyMoving ? 'active' : 'idle' }).catch(() => {});
+}
+function trayFlash(stateName) {
+  invoke('set_tray_state', { stateName }).catch(() => {});
+  setTimeout(() => {
+    const anyMoving = [...live.values()].some((t) => t.state === 'transferring');
+    invoke('set_tray_state', { stateName: anyMoving ? 'active' : 'idle' }).catch(() => {});
+  }, 4000);
+}
 
 /* ================================= SEND ================================== */
 // The most recent send that reached Ready — the transfer "Send here" offers.
@@ -262,6 +371,7 @@ function onSendMsg(m, els, card, getId, setTicket) {
       if (els.dot) els.dot.style.display = 'none';
       if (liveSend && liveSend.card === card) liveSend = null;
       liveDrop(id);
+      trayFlash('done');
       setStatus('transfer complete', 'up');
       break;
     case 'error':
@@ -285,6 +395,7 @@ async function pickAndSend(directory) {
 }
 ['#pick-file', '#pick-file-2'].forEach((s) => $(s).addEventListener('click', () => pickAndSend(false)));
 ['#pick-folder', '#pick-folder-2'].forEach((s) => $(s).addEventListener('click', () => pickAndSend(true)));
+$$('[data-send-text]').forEach((b) => b.addEventListener('click', openTextSheet));
 
 /* =============================== RECEIVE ================================= */
 let recvDest = null;
@@ -388,6 +499,8 @@ function onRecvMsg(m, els, card, getId) {
       els.status.textContent = `${fmtBytes(m.stats && m.stats.bytes)} in ${((m.stats && m.stats.seconds) || 0).toFixed(1)}s`;
       els.open.classList.remove('hidden'); els.another.classList.remove('hidden'); els.cancel.classList.add('hidden');
       liveDrop(id);
+      trayFlash('done');
+      if (lastOfferPeer) { rememberDevice(lastOfferPeer); lastOfferPeer = null; }
       setStatus('received', 'up');
       break;
     case 'error': {
@@ -501,7 +614,7 @@ const DIR_GLYPH = {
   send: '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   recv: '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
-function actRow({ dir, name, meta, pct, pill, pillClass, actions }) {
+function actRow({ dir, name, meta, pct, pill, pillClass, actions, onOpen }) {
   const row = document.getElementById('tpl-act-row').content.firstElementChild.cloneNode(true);
   const d = row.querySelector('.js-dir');
   d.className = 'act-dir js-dir ' + (dir === 'recv' ? 'recv' : 'send');
@@ -511,6 +624,11 @@ function actRow({ dir, name, meta, pct, pill, pillClass, actions }) {
   row.querySelector('.js-pct').textContent = pct == null ? '' : Math.round(pct * 100) + '%';
   const p = row.querySelector('.js-pill');
   if (pill) { p.textContent = pill; p.className = 'pill js-pill ' + (pillClass || ''); } else p.remove();
+  if (onOpen) {
+    row.tabIndex = 0;
+    row.addEventListener('click', (e) => { if (!e.target.closest('button')) onOpen(); });
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } });
+  }
   const a = row.querySelector('.js-actions');
   (actions || []).forEach(({ label, onClick, cls }) => {
     const b = document.createElement('button');
@@ -524,15 +642,23 @@ function renderActivityLive() {
   const items = [...live.entries()];
   section.hidden = items.length === 0;
   list.innerHTML = '';
-  items.forEach(([, t]) => {
+  items.forEach(([id, t]) => {
     list.appendChild(actRow({
       dir: t.dir, name: t.name, meta: t.meta,
       pct: t.state === 'transferring' ? t.pct : null,
       pill: t.state === 'ready' ? 'waiting' : (t.route || t.state),
       pillClass: t.route === 'direct' ? 'direct' : t.route === 'relayed' ? 'relayed' : 'connecting',
+      onOpen: () => openDrawer({
+        kind: t.dir === 'recv' ? 'Receiving' : 'Sending',
+        title: t.name, sub: t.meta, pct: t.pct, id,
+        pill: t.route || t.state, pillClass: t.route === 'direct' ? 'direct' : t.route === 'relayed' ? 'relayed' : 'connecting',
+        rate: t.meta, canCancel: true, ticket: t.ticket,
+        facts: [['Peer', t.peer], ['Route', t.route || 'connecting'], ['Started', t.startedAt], ['Verified', 'BLAKE3, per chunk']],
+      }),
     }));
   });
   $('#act-live-meta').textContent = items.length ? `${items.length} running` : '';
+  broadcastLive();
   const badge = $('#activity-badge');
   badge.textContent = String(items.length);
   badge.classList.toggle('hidden', items.length === 0);
@@ -568,6 +694,22 @@ async function loadHistory() {
         pill: STATUS_LABEL[t.status] || t.status || '',
         pillClass: STATUS_PILL[t.status] || '',
         actions,
+        onOpen: () => openDrawer({
+          kind: dir === 'send' ? 'Sent' : 'Received',
+          title: t.name || 'transfer',
+          sub: `${t.file_count || 0} file${(t.file_count || 0) === 1 ? '' : 's'} · ${fmtBytes(t.total_bytes)}`,
+          pct: t.total_bytes ? Math.min(1, (t.transferred || 0) / t.total_bytes) : null,
+          pill: STATUS_LABEL[t.status] || t.status, pillClass: STATUS_PILL[t.status] || '',
+          finished: t.status === 'done', ticket: t.ticket, canCancel: false,
+          facts: [
+            ['Status', STATUS_LABEL[t.status] || t.status],
+            ['Size', fmtBytes(t.total_bytes)],
+            ['Saved to', t.dest],
+            ['Source', t.source],
+            ['Started', t.created_at ? new Date(t.created_at * 1000).toLocaleString() : ''],
+            ['Verified', 'BLAKE3, per chunk'],
+          ],
+        }),
       });
       list.appendChild(row);
       if (canAnim) row.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 220, delay: Math.min(i, 6) * 40, easing: EASE_OUT });
@@ -575,6 +717,122 @@ async function loadHistory() {
   }
   updateActivityEmpty();
 }
+
+/* ========================== E2: the detail drawer ========================
+   One transfer, everything about it. Opened from any Activity row.
+   ------------------------------------------------------------------------ */
+let drawerCtx = null, drawerLastFocus = null;
+function openDrawer(ctx) {
+  drawerCtx = ctx;
+  drawerLastFocus = document.activeElement;
+  $('#drawer-kind').textContent = ctx.kind;
+  $('#drawer-title').textContent = ctx.title;
+  $('#drawer-sub').textContent = ctx.sub || '';
+  $('#drawer-pct').textContent = ctx.pct == null ? '—' : Math.round(ctx.pct * 100) + '%';
+  const pill = $('#drawer-pill');
+  pill.textContent = ctx.pill || '';
+  pill.className = 'pill ' + (ctx.pillClass || '');
+  pill.classList.toggle('hidden', !ctx.pill);
+  $('#drawer-rate').textContent = ctx.rate || '';
+  const fill = $('#drawer .w-fill');
+  if (fill) fill.style.strokeDashoffset = String(1 - (ctx.pct || 0));
+  $$('#drawer .w-node').forEach((n) => n.classList.toggle('done', ctx.finished === true));
+
+  const dl = $('#drawer-facts'); dl.innerHTML = '';
+  (ctx.facts || []).forEach(([k, v]) => {
+    if (v == null || v === '') return;
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v; dd.title = v;
+    dl.append(dt, dd);
+  });
+
+  const ul = $('#drawer-files'); ul.innerHTML = '';
+  const setFiles = (files) => {
+    ul.innerHTML = '';
+    (files || []).forEach((f) => {
+      const li = document.createElement('li'); li.className = 'file-row';
+      const n = document.createElement('span'); n.className = 'file-name'; n.textContent = f.name; n.title = f.name;
+      const sz = document.createElement('span'); sz.className = 'file-size'; sz.textContent = fmtBytes(f.size);
+      li.append(n, sz); ul.appendChild(li);
+    });
+    if (!files || !files.length) {
+      const li = document.createElement('li'); li.className = 'file-row';
+      li.innerHTML = '<span class="file-name">File list unavailable for this transfer.</span>';
+      ul.appendChild(li);
+    }
+  };
+  setFiles(null);
+  // Names and sizes come from the manifest the code commits to, so the drawer
+  // shows verified content rather than anything a peer claimed.
+  if (ctx.ticket) {
+    invoke('inspect_ticket', { ticket: ctx.ticket })
+      .then((p) => { if (drawerCtx === ctx) setFiles(p.files); })
+      .catch(() => { if (drawerCtx === ctx) setFiles([]); });
+  }
+
+  $('#drawer-copy').classList.toggle('hidden', !ctx.ticket);
+  $('#drawer-cancel').textContent = ctx.canCancel ? 'Cancel' : 'Close';
+  $('#drawer').classList.remove('hidden');
+  $('#drawer-close').focus();
+}
+function closeDrawer() {
+  $('#drawer').classList.add('hidden');
+  drawerCtx = null;
+  if (drawerLastFocus && drawerLastFocus.focus) drawerLastFocus.focus();
+}
+$('#drawer-close').addEventListener('click', closeDrawer);
+$('#drawer').addEventListener('click', (e) => { if (e.target.id === 'drawer') closeDrawer(); });
+$('#drawer-copy').addEventListener('click', () => {
+  if (drawerCtx && drawerCtx.ticket && navigator.clipboard) {
+    navigator.clipboard.writeText(drawerCtx.ticket);
+    const b = $('#drawer-copy'); b.textContent = 'Copied ✓';
+    setTimeout(() => { b.textContent = 'Copy code again'; }, 1400);
+  }
+});
+$('#drawer-cancel').addEventListener('click', async () => {
+  if (drawerCtx && drawerCtx.canCancel && drawerCtx.id) {
+    await invoke('cancel_transfer', { id: drawerCtx.id }).catch(() => {});
+  }
+  closeDrawer();
+});
+
+/* ======================== G2: send text or clipboard ==================== */
+function textStats() {
+  const v = $('#text-body').value;
+  const lines = v ? v.split(/\r?\n/).length : 0;
+  const bytes = new TextEncoder().encode(v).length;
+  $('#text-count').textContent = `${lines} line${lines === 1 ? '' : 's'} · ${bytes} byte${bytes === 1 ? '' : 's'}`;
+  $('#text-send').disabled = v.trim().length === 0;
+}
+function openTextSheet() {
+  $('#text-body').value = '';
+  textStats();
+  $('#sheet-text').classList.remove('hidden');
+  $('#text-body').focus();
+}
+function closeTextSheet() { $('#sheet-text').classList.add('hidden'); }
+$('#text-body').addEventListener('input', textStats);
+$('#text-close').addEventListener('click', closeTextSheet);
+$('#text-cancel').addEventListener('click', closeTextSheet);
+$('#sheet-text').addEventListener('click', (e) => { if (e.target.id === 'sheet-text') closeTextSheet(); });
+$('#text-clipboard').addEventListener('click', async () => {
+  try { $('#text-body').value = await navigator.clipboard.readText(); textStats(); }
+  catch (_) { $('#text-body').focus(); }
+});
+$('#text-send').addEventListener('click', async () => {
+  const text = $('#text-body').value;
+  if (!text.trim()) return;
+  const btn = $('#text-send'); btn.disabled = true; btn.textContent = 'Preparing…';
+  try {
+    // Text is not a second protocol: it becomes a small file and takes the
+    // ordinary send path, code and all.
+    const path = await invoke('write_text_file', { text });
+    closeTextSheet();
+    showPanel('send');
+    startSend(path);
+  } catch (e) { alert(String(e)); }
+  btn.disabled = false; btn.textContent = 'Get a code';
+});
 
 /* ============================== settings bits ============================ */
 $('#copy-id').addEventListener('click', () => {
@@ -588,6 +846,7 @@ $('#change-folder').addEventListener('click', async () => {
   const dir = await invoke('pick_dest_dir').catch(() => null);
   if (dir) {
     localStorage.setItem('dropwire-default-dir', dir);
+    setPref('destDir', dir);
     const l = $('#default-folder-label'); l.textContent = dir; l.title = dir;
     recvDest = dir; setDestLabel(dir);
   }
@@ -714,6 +973,7 @@ function nearbyStop() {
 function toggleNearby() {
   nearby.on = !nearby.on;
   localStorage.setItem('dropwire-nearby', nearby.on ? 'on' : 'off');
+  setPref('nearbyOn', nearby.on);
   if (nearby.on) { showPanel('send'); nearbyStart(); } else nearbyStop();
 }
 
@@ -744,6 +1004,7 @@ function offerToDevice(d, row) {
       case 'waiting': break;
       case 'accepted':
         done();
+        rememberDevice(d);
         els.status.textContent = (d.name || 'They') + ' accepted, sending…';
         if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
         break;
@@ -770,14 +1031,30 @@ function offerToDevice(d, row) {
 
 /* ---- incoming: the consent dialog ---- */
 let offerState = null, offerLastFocus = null;
+/* The peer an in-flight receive came from, so a completed transfer can
+   remember the device it actually happened with. */
+let lastOfferPeer = null;
 const OFFER_TTL_MS = 112000; // just inside the sender's 115s self-decline
 function anyModalOpen() {
   return !$('#nearby-offer-modal').classList.contains('hidden')
     || !$('#recv-preview').classList.contains('hidden')
-    || !$('#sheet-settings').classList.contains('hidden');
+    || !$('#sheet-settings').classList.contains('hidden')
+    || !$('#sheet-text').classList.contains('hidden')
+    || !$('#drawer').classList.contains('hidden')
+    || !$('#onboarding').classList.contains('hidden');
 }
 function enqueueOffer(offer) {
   if (!offer || !offer.offerId) return;
+  // Trusted + skip-the-code: go straight to the verified preview. They still
+  // confirmed on their side, and the file list still gates what is written.
+  if (PREFS.skipCodeForTrusted && isTrusted(offer.fromEndpointId)) {
+    nearby.offers.set(offer.offerId, offer);
+    lastOfferPeer = { endpointId: offer.fromEndpointId, name: offer.deviceName, fingerprint: offer.fingerprint };
+    invoke('nearby_respond', { offerId: offer.offerId, accept: true })
+      .then(() => openPreview(offer.ticket, recvDest || PREFS.destDir || null))
+      .catch(() => { nearby.offers.delete(offer.offerId); showOfferModal(offer); });
+    return;
+  }
   if (nearby.offers.has(offer.offerId)) return;
   if (nearby.queue.some((o) => o.offerId === offer.offerId)) return;
   if (offerState || anyModalOpen()) { nearby.queue.push(offer); return; }
@@ -790,6 +1067,8 @@ function showNextOffer() {
 }
 function showOfferModal(offer) {
   nearby.offers.set(offer.offerId, offer);
+  // An offer is the one thing that needs a decision: say so on the tray icon.
+  invoke('set_tray_state', { stateName: 'attention' }).catch(() => {});
   offerState = offer;
   offerLastFocus = document.activeElement;
   $('#offer-device').textContent = offer.deviceName || 'A nearby device';
@@ -823,6 +1102,7 @@ function expireOfferModal(offerId) {
   setTimeout(() => { if (offerState && offerState.offerId === offerId) closeOfferModal(); }, 1600);
 }
 function closeOfferModal(showNext = true) {
+  broadcastLive();
   if (nearby.offerTimer) { clearTimeout(nearby.offerTimer); nearby.offerTimer = null; }
   if (nearby.countdown) { clearInterval(nearby.countdown); nearby.countdown = null; }
   if (offerState) nearby.offers.delete(offerState.offerId);
@@ -840,6 +1120,7 @@ $('#offer-accept').addEventListener('click', async () => {
   try { await invoke('nearby_respond', { offerId: offer.offerId, accept: true }); } catch (_) { ok = false; }
   const ticket = offer.ticket;
   if (!ok) { acceptBtn.textContent = 'Accept & preview'; expireOfferModal(offer.offerId); return; }
+  lastOfferPeer = { endpointId: offer.fromEndpointId, name: offer.deviceName, fingerprint: offer.fingerprint };
   closeOfferModal(false);
   // Same verified preview as the code flow: names and sizes come from the
   // manifest the code commits to, not from the sender's claim in the offer.
@@ -857,6 +1138,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('#nearby-offer-modal').classList.contains('hidden')) return closeOfferModal();
   if (!$('#recv-preview').classList.contains('hidden')) return closePreview();
+  if (!$('#sheet-text').classList.contains('hidden')) return closeTextSheet();
+  if (!$('#drawer').classList.contains('hidden')) return closeDrawer();
   if (!$('#sheet-settings').classList.contains('hidden')) return closeSettings();
 });
 
@@ -865,11 +1148,70 @@ if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
   TAURI.event.listen('nearby-offer', (ev) => enqueueOffer(ev.payload)).catch(() => {});
 }
 
+/* ====================== A1 / A2: first-run setup =========================
+   Owns the window until it is done. Nothing touches the network from these
+   screens: the name and preferences are written first, then the app starts.
+   ------------------------------------------------------------------------ */
+function showOnboarding(step) {
+  $('#onboarding').classList.remove('hidden');
+  $$('.onboard-step').forEach((el) => {
+    const on = el.id === 'onboard-' + step;
+    el.classList.toggle('is-active', on);
+    el.hidden = !on;
+  });
+  if (step === 2) setTimeout(() => $('#onboard-name').focus(), 40);
+}
+function hideOnboarding() { $('#onboarding').classList.add('hidden'); }
+$('#onboard-start').addEventListener('click', () => showOnboarding(2));
+$('#onboard-back').addEventListener('click', () => showOnboarding(1));
+$('#onboard-nearby').addEventListener('click', (e) => {
+  const b = e.currentTarget;
+  b.setAttribute('aria-checked', b.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+});
+$('#onboard-dest-change').addEventListener('click', async () => {
+  const dir = await invoke('pick_dest_dir').catch(() => null);
+  if (dir) { $('#onboard-dest').textContent = dir; $('#onboard-dest').title = dir; }
+});
+$('#onboard-finish').addEventListener('click', async () => {
+  const btn = $('#onboard-finish'); btn.disabled = true;
+  const name = ($('#onboard-name').value || '').trim();
+  const on = $('#onboard-nearby').getAttribute('aria-checked') === 'true';
+  const dest = $('#onboard-dest').title || $('#onboard-dest').textContent;
+  try {
+    if (name) await invoke('set_device_name', { name });
+    await setPref('nearbyOn', on);
+    if (dest && dest !== 'Downloads') await setPref('destDir', dest);
+    await setPref('onboarded', true);
+  } catch (e) { console.warn(e); }
+  await loadPrefs();
+  hideOnboarding();
+  applyPrefsToUi();
+  nearby.on = PREFS.nearbyOn;
+  if (nearby.on) nearbyStart(); else { nearbySetSwitch(false); nearbyStatus('Sharing is off, this device is invisible.'); renderDevices(); }
+  btn.disabled = false;
+});
+
+/* Push loaded preferences into the chrome that displays them. */
+function applyPrefsToUi() {
+  const dest = PREFS.destDir || DEFAULT_DEST;
+  if (dest) {
+    const l = $('#default-folder-label'); l.textContent = dest; l.title = dest;
+    recvDest = dest; setDestLabel(dest);
+  }
+  if (PREFS.deviceName) {
+    $('#device-name').textContent = PREFS.deviceName;
+    $('#set-device-name').textContent = PREFS.deviceName;
+  }
+  applyTheme(PREFS.theme || 'auto');
+  syncSettingSwitches();
+  renderTrusted();
+}
+
 /* ================================= init ================================== */
 (async function init() {
-  const dd = localStorage.getItem('dropwire-default-dir');
-  if (dd) { const l = $('#default-folder-label'); l.textContent = dd; l.title = dd; recvDest = dd; setDestLabel(dd); }
-  try { DEFAULT_DEST = await invoke('default_dest_dir'); if (!dd) { $('#default-folder-label').textContent = DEFAULT_DEST; setDestLabel(DEFAULT_DEST); } } catch (_) {}
+  await loadPrefs();
+  try { DEFAULT_DEST = await invoke('default_dest_dir'); } catch (_) {}
+  applyPrefsToUi();
   try {
     const v = await invoke('app_version');
     if (v) { $('#app-version').textContent = 'v' + v; $('#app-version-2').textContent = 'v' + v; }
@@ -885,9 +1227,31 @@ if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
   try { const n = await invoke('device_name'); if (n) { $('#device-name').textContent = n; $('#set-device-name').textContent = n; } } catch (_) {}
   try { const fp = await invoke('my_fingerprint'); if (fp) $('#set-fp').textContent = fp; } catch (_) {}
 
-  if (nearby.on) nearbyStart();
-  else { nearbySetSwitch(false); nearbyStatus('Sharing is off, this device is invisible.'); renderDevices(); }
+  // First run owns the window until setup is finished.
+  if (!PREFS.onboarded) {
+    $$('.onboard-ver').forEach((el) => { el.textContent = $('#app-version').textContent || ''; });
+    try { $('#onboard-name').value = await invoke('device_name'); } catch (_) {}
+    try { $('#onboard-fp').textContent = await invoke('my_fingerprint'); } catch (_) {}
+    $('#onboard-dest').textContent = PREFS.destDir || DEFAULT_DEST || 'Downloads';
+    $('#onboard-dest').title = PREFS.destDir || DEFAULT_DEST || '';
+    showOnboarding(1);
+  } else {
+    nearby.on = PREFS.nearbyOn;
+    if (nearby.on) nearbyStart();
+    else { nearbySetSwitch(false); nearbyStatus('Sharing is off, this device is invisible.'); renderDevices(); }
+  }
   renderDevices();
   renderActivityLive();
   loadHistory();
+
+  // The tray panel hands work to the window that owns the pipelines.
+  if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
+    TAURI.event.listen('tray-send', (ev) => { showPanel('send'); startSend(ev.payload); }).catch(() => {});
+    TAURI.event.listen('tray-code', (ev) => {
+      showPanel('receive');
+      $('#recv-code-input').value = ev.payload;
+      $('#recv-code-input').dispatchEvent(new Event('input'));
+      submitCode();
+    }).catch(() => {});
+  }
 })();

@@ -495,3 +495,112 @@ a:hover{text-decoration:underline}
   .toolbar{padding:0 14px}
   .seg-btn{padding:0 13px}
 }
+
+/* ======================= A1 / A2 first-run setup =========================
+   Owns the whole frame while it is up: setup is the only job on screen.
+   ------------------------------------------------------------------------ */
+.onboard{position:fixed; inset:0; z-index:80; background:var(--canvas);
+  border-radius:var(--r-win); display:flex; flex-direction:column; overflow:hidden}
+.onboard-step{flex:1 1 auto; min-height:0; display:none; overflow-y:auto; overscroll-behavior:contain}
+.onboard-step.is-active{display:block}
+.onboard-inner{min-height:100%; max-width:760px; margin:0 auto; padding:56px 48px 40px;
+  display:flex; flex-direction:column; justify-content:center; gap:var(--sp-4)}
+.onboard-inner.narrow{max-width:600px}
+.onboard-brand{display:flex; align-items:center; gap:14px; margin-bottom:var(--sp-2)}
+.onboard-word{font-family:var(--font-display); font-size:22px; font-weight:600; letter-spacing:-.4px}
+.onboard-title{margin:0; font-family:var(--font-display); font-size:44px; line-height:1.05;
+  letter-spacing:-1.6px; font-weight:600; text-wrap:balance}
+.onboard-title.sm{font-size:32px; letter-spacing:-1px}
+.onboard-lede{margin:0; max-width:60ch; font-size:15px; line-height:1.6; color:var(--text-muted)}
+.onboard-points{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--sp-4); margin-top:var(--sp-3)}
+.onboard-point{background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-3);
+  padding:16px 18px; box-shadow:var(--elev-1)}
+.onboard-point-t{margin:0 0 4px; font-size:14px; font-weight:600}
+.onboard-point-d{margin:0; font-size:12.5px; line-height:1.5; color:var(--text-faint)}
+.onboard-actions{display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin-top:var(--sp-4)}
+.onboard-actions.row{flex-direction:row; align-items:center; gap:12px}
+.onboard-actions .btn-lg{width:auto; min-width:220px}
+/* Not margin-top:auto — an auto margin eats the free space the centred
+   .onboard-inner needs, which pinned the whole block to the top. */
+.onboard-foot{margin-top:var(--sp-5); font-size:11.5px}
+.onboard-fp{margin:10px 0 var(--sp-4); line-height:1.6}
+.onboard-fp code{margin-left:4px}
+.name-field{width:100%; margin-top:var(--sp-3); padding-left:14px}
+.onboard-step .set-row:first-of-type{border-top:1px solid var(--hairline-soft)}
+
+/* =========================== E2 detail drawer ============================
+   Slides in from the right and is bounded to the window, so a long file list
+   scrolls inside it rather than stretching the frame.
+   ------------------------------------------------------------------------ */
+.scrim.right{justify-content:flex-end; padding:0}
+.drawer{width:min(460px,100%); height:100%; display:flex; flex-direction:column;
+  background:var(--surface); border-left:1px solid var(--hairline); box-shadow:var(--elev-pop);
+  padding:var(--sp-5); animation:drawerIn var(--dur-3) var(--ease-out)}
+@keyframes drawerIn{from{transform:translateX(24px); opacity:0} to{transform:none; opacity:1}}
+.drawer .sheet-title{font-size:20px; margin-bottom:2px}
+.drawer-wire{margin:var(--sp-4) 0}
+.drawer .wire{height:56px}
+.facts{display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:0 0 var(--sp-4); font-size:13px}
+.facts dt{color:var(--text-faint)}
+.facts dd{margin:0; color:var(--text); font-family:var(--font-mono); font-size:12.5px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.file-list.plain{background:transparent; border:0; max-height:none; flex:1 1 auto}
+.file-list.plain .file-row{padding:8px 0; border-bottom:1px solid var(--hairline-soft)}
+
+/* ========================== F2 trusted devices =========================== */
+.set-note{margin:0 0 var(--sp-3); font-size:12.5px; line-height:1.55; color:var(--text-faint)}
+.trusted-list{display:flex; flex-direction:column; margin-bottom:var(--sp-2)}
+.trusted{display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--hairline-soft)}
+.trusted-id{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px}
+.trusted-top{display:flex; align-items:center; gap:8px; min-width:0}
+.trusted-meta{font-size:11.5px; color:var(--text-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.trusted-empty{padding:10px 0; font-size:12.5px; color:var(--text-faint)}
+
+/* ============================ G2 send text =============================== */
+.text-sheet{max-width:520px}
+.text-area{width:100%; height:180px; resize:none; padding:12px 14px; border-radius:var(--r-2);
+  background:var(--surface-2); border:1px solid var(--hairline); color:var(--text);
+  font-size:13px; line-height:1.55; user-select:text; caret-color:var(--wire)}
+.text-area:focus{outline:none; border-color:transparent; box-shadow:var(--glow-focus)}
+.text-foot{display:flex; align-items:center; gap:10px; margin:10px 0 var(--sp-4)}
+
+/* ============================== G1 tray panel ============================ */
+.tray-body{background:transparent}
+.tray-win{height:100vh; display:flex; flex-direction:column; overflow:hidden;
+  background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-win)}
+.tray-head{flex:none; display:flex; align-items:center; gap:9px; height:38px; padding:0 12px;
+  background:var(--wire-black); border-bottom:1px solid var(--hairline-soft);
+  border-radius:var(--r-win) var(--r-win) 0 0}
+.tray-name{font-size:12.5px; font-weight:600; color:var(--text-muted)}
+.tray-drop{flex:none; margin:12px; padding:18px 12px; border:2px dashed var(--hairline);
+  border-radius:var(--r-3); text-align:center;
+  transition:background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)}
+.tray-drop.dragover{border-color:var(--wire); border-style:solid;
+  background:color-mix(in srgb, var(--wire-glow-soft) 55%, transparent)}
+.tray-drop svg{display:block; margin:0 auto 8px}
+.tray-drop-title{margin:0 0 3px; font-family:var(--font-display); font-size:17px; font-weight:600; letter-spacing:-.3px}
+.tray-drop-sub{margin:0; font-size:11.5px; color:var(--text-faint)}
+.tray-drop kbd{font-family:var(--font-mono); font-size:10.5px; background:var(--surface-2);
+  border:1px solid var(--hairline); border-radius:4px; padding:1px 4px}
+.tray-section{flex:0 1 auto; min-height:0; display:flex; flex-direction:column; padding:0 12px}
+.tray-section .label{padding:6px 0}
+.tray-rows{min-height:0; overflow-y:auto; overscroll-behavior:contain}
+.tray-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--hairline-soft)}
+.tray-row-dir{flex:none; width:26px; height:26px; border-radius:8px; background:var(--surface-2);
+  border:1px solid var(--hairline); color:var(--text-muted); display:grid; place-items:center}
+.tray-row-dir.send{color:var(--wire)}
+.tray-row-dir.recv{color:var(--info)}
+.tray-row-id{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px}
+.tray-row-name{font-size:12.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.tray-row-meta{font-size:11px; color:var(--text-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.tray-row-state{flex:none; font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted)}
+.tray-row-state.ok{color:var(--success)}
+.tray-row-state.pct{color:var(--text)}
+.tray-foot{flex:none; margin-top:auto; padding:12px}
+
+@media (max-width:1040px){
+  .onboard-inner{padding:32px 28px}
+  .onboard-title{font-size:34px; letter-spacing:-1.1px}
+  .onboard-title.sm{font-size:26px}
+  .onboard-points{grid-template-columns:1fr}
+}

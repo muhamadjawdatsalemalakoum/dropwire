@@ -4,6 +4,8 @@
 //! and forwards everything to the verified `irohcore` engine. No iroh-blobs types
 //! appear here — only `irohcore`'s stable API.
 
+mod settings;
+
 use std::path::PathBuf;
 
 use irohcore::{
@@ -14,9 +16,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_stream::StreamExt;
 
-/// Long-lived app state: the single engine handle.
+/// Long-lived app state: the engine handle plus this machine's preferences.
 struct AppState {
     core: Core,
+    settings: settings::Store,
 }
 
 fn fp_to_string(fp: tauri_plugin_dialog::FilePath) -> Option<String> {
@@ -41,6 +44,157 @@ fn my_fingerprint(state: State<'_, AppState>) -> String {
 #[tauri::command]
 async fn device_name(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.core.device_name().await)
+}
+
+/* ------------------------------ settings ------------------------------- */
+
+/// Everything the setup screens, Settings sheet and trusted list read from.
+#[tauri::command]
+fn get_settings(state: State<'_, AppState>) -> settings::Settings {
+    state.settings.get()
+}
+
+/// Rename this device. Applies to the live mDNS advertisement immediately.
+#[tauri::command]
+async fn set_device_name(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<settings::Settings, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("a device name cannot be empty".into());
+    }
+    state
+        .core
+        .set_device_name(name.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(state.settings.update(|s| s.device_name = Some(name)))
+}
+
+/// Persist one of the simple preferences. Unknown keys are rejected rather than
+/// silently ignored, so a typo in the UI shows up immediately.
+#[tauri::command]
+fn set_pref(
+    key: String,
+    value: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<settings::Settings, String> {
+    let as_bool = || {
+        value
+            .as_bool()
+            .ok_or_else(|| format!("{key} expects a bool"))
+    };
+    let as_str = || {
+        value
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{key} expects a string"))
+    };
+    let updated = match key.as_str() {
+        "onboarded" => state.settings.update(|s| s.onboarded = true),
+        "nearbyOn" => {
+            let v = as_bool()?;
+            state.settings.update(|s| s.nearby_on = v)
+        }
+        "skipCodeForTrusted" => {
+            let v = as_bool()?;
+            state.settings.update(|s| s.skip_code_for_trusted = v)
+        }
+        "trayOnClose" => {
+            let v = as_bool()?;
+            state.settings.update(|s| s.tray_on_close = v)
+        }
+        "startAtLogin" => {
+            let v = as_bool()?;
+            state.settings.update(|s| s.start_at_login = v)
+        }
+        "theme" => {
+            let v = as_str()?;
+            state.settings.update(|s| s.theme = v)
+        }
+        "destDir" => {
+            let v = as_str()?;
+            state.settings.update(|s| s.dest_dir = Some(v))
+        }
+        other => return Err(format!("unknown preference: {other}")),
+    };
+    Ok(updated)
+}
+
+/// Remember a device we just completed a transfer with (or bump its counters).
+#[tauri::command]
+fn trust_remember(
+    device: settings::Trusted,
+    state: State<'_, AppState>,
+) -> Result<settings::Settings, String> {
+    if device.endpoint_id.is_empty() {
+        return Err("a trusted device needs an endpoint id".into());
+    }
+    Ok(state.settings.remember(device))
+}
+
+#[tauri::command]
+fn trust_forget(
+    endpoint_id: String,
+    state: State<'_, AppState>,
+) -> Result<settings::Settings, String> {
+    Ok(state.settings.forget(&endpoint_id))
+}
+
+/* ------------------------------ send text ------------------------------ */
+
+/// Write a snippet to a temp file so it can travel the ordinary transfer path.
+/// Returns the path for `start_send` — text is not a second protocol, it is
+/// just a small file (see the design's G2 sheet).
+#[tauri::command]
+fn write_text_file(text: String, app: AppHandle) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err("nothing to send".into());
+    }
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("dropwire-text");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("shared-text-{stamp}.txt"));
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/* -------------------------------- window ------------------------------- */
+
+/// Show and focus the main window (from the tray, or "Open Dropwire").
+#[tauri::command]
+fn show_main(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    if let Some(t) = app.get_webview_window("tray") {
+        let _ = t.hide();
+    }
+}
+
+/// Hide the tray panel (it closes on blur and after an action).
+#[tauri::command]
+fn hide_tray_window(app: AppHandle) {
+    if let Some(t) = app.get_webview_window("tray") {
+        let _ = t.hide();
+    }
+}
+
+/// Drive the tray icon's state: "idle" | "active" | "done" | "attention".
+/// The icon is the only always-visible surface, so it carries transfer state.
+#[tauri::command]
+fn set_tray_state(app: AppHandle, state_name: String) {
+    set_tray_icon(&app, &state_name);
 }
 
 /// Start the nearby session: advertise on the LAN + browse for peers, and
@@ -379,6 +533,90 @@ fn install_panic_logger() {
     }));
 }
 
+/// Swap the tray icon for the given state name. The tray is the only surface
+/// that is always visible, so it reports what the app is doing: dim at rest,
+/// lime while transferring, green on completion, amber when a decision is due.
+fn set_tray_icon(app: &AppHandle, state_name: &str) {
+    let bytes: &[u8] = match state_name {
+        "active" => include_bytes!("../icons/tray-active.png"),
+        "done" => include_bytes!("../icons/tray-done.png"),
+        "attention" => include_bytes!("../icons/tray-attention.png"),
+        _ => include_bytes!("../icons/tray-idle.png"),
+    };
+    if let Some(tray) = app.tray_by_id("dropwire") {
+        if let Ok(img) = tauri::image::Image::from_bytes(bytes) {
+            let _ = tray.set_icon(Some(img));
+        }
+    }
+}
+
+/// Position the tray panel near the tray icon and show it.
+fn toggle_tray_window(app: &AppHandle, at: tauri::PhysicalPosition<f64>) {
+    let Some(win) = app.get_webview_window("tray") else {
+        return;
+    };
+    if win.is_visible().unwrap_or(false) {
+        let _ = win.hide();
+        return;
+    }
+    // Anchor the panel to the icon, then clamp it inside the work area so it
+    // never opens half off-screen on a bottom or right-hand taskbar.
+    if let Ok(Some(monitor)) = win.current_monitor() {
+        let scale = monitor.scale_factor();
+        let size = monitor.size().to_logical::<f64>(scale);
+        let pos = monitor.position().to_logical::<f64>(scale);
+        let at = tauri::LogicalPosition::new(at.x / scale, at.y / scale);
+        let (w, h) = (360.0, 470.0);
+        let x = (at.x - w / 2.0).clamp(pos.x + 8.0, pos.x + size.width - w - 8.0);
+        let y = if at.y > pos.y + size.height / 2.0 {
+            at.y - h - 12.0
+        } else {
+            at.y + 12.0
+        }
+        .clamp(pos.y + 8.0, pos.y + size.height - h - 8.0);
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    }
+    let _ = win.show();
+    let _ = win.set_focus();
+}
+
+/// Build the tray icon and its menu.
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+
+    let open = MenuItem::with_id(app, "open", "Open Dropwire", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+
+    TrayIconBuilder::with_id("dropwire")
+        .icon(tauri::image::Image::from_bytes(include_bytes!(
+            "../icons/tray-idle.png"
+        ))?)
+        .tooltip("Dropwire")
+        .menu(&menu)
+        // Left-click opens the panel; the menu stays on right-click only.
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main(app.clone()),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                position,
+                ..
+            } = event
+            {
+                toggle_tray_window(tray.app_handle(), position);
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
@@ -398,15 +636,68 @@ pub fn run() {
             };
             // Build the engine inside Tauri's tokio runtime. Serverless by default:
             // DHT discovery + n0 free relay fallback.
+            let store = settings::Store::load(&data_dir);
+            let prefs = store.get();
             let core =
                 tauri::async_runtime::block_on(Core::start(CoreConfig::serverless(data_dir)))?;
-            app.manage(AppState { core });
+            // A name chosen during setup outlives the hostname it was derived from.
+            if let Some(name) = prefs.device_name.clone() {
+                let c = core.clone();
+                tauri::async_runtime::block_on(async move { c.set_device_name(name).await }).ok();
+            }
+            app.manage(AppState {
+                core,
+                settings: store,
+            });
+
+            build_tray(app.handle())?;
+
+            // First run opens on the setup screens; afterwards the window is
+            // only shown if the user did not ask us to start hidden in the tray.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Close means "get out of the way", not "quit", when the tray is on:
+            // nearby devices can only reach you while the app is running.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    let keep = window
+                        .app_handle()
+                        .try_state::<AppState>()
+                        .map(|s| s.settings.get().tray_on_close)
+                        .unwrap_or(false);
+                    if keep {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                } else if window.label() == "tray" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            // The tray panel is transient: it closes as soon as it loses focus.
+            if let tauri::WindowEvent::Focused(false) = event {
+                if window.label() == "tray" {
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             my_endpoint_id,
             my_fingerprint,
             device_name,
+            get_settings,
+            set_device_name,
+            set_pref,
+            trust_remember,
+            trust_forget,
+            write_text_file,
+            show_main,
+            hide_tray_window,
+            set_tray_state,
             nearby_start,
             nearby_stop,
             nearby_list,

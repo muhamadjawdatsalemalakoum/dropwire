@@ -79,6 +79,9 @@
             <div class="drop-actions">
               <button class="btn" id="pick-file">Choose files</button>
               <button class="btn-ghost" id="pick-folder">Choose a folder</button>
+              <button class="btn-quiet" data-send-text type="button">
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 10h8M8 14h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Send text
+              </button>
             </div>
             <p class="drop-foot">Both devices stay in control: nothing sends until the other side accepts.</p>
           </div>
@@ -382,7 +385,7 @@
         <p class="label section">This device</p>
         <div class="set-row">
           <span class="set-k"><span class="set-t">Name others see</span></span>
-          <span class="set-v"><span class="val" id="set-device-name">—</span></span>
+          <span class="set-v"><span class="val" id="set-device-name">—</span><button class="btn-quiet sm" id="rename-device">Rename</button></span>
         </div>
         <div class="set-row">
           <span class="set-k"><span class="set-t">Pairing code</span><span class="set-d">Read this aloud to prove it is you</span></span>
@@ -402,6 +405,36 @@
           <span class="set-k"><span class="set-t">Nearby sharing</span><span class="set-d">Off means invisible: no advertising, no incoming requests</span></span>
           <span class="set-v">
             <button class="switch" id="nearby-toggle-2" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing">
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </span>
+        </div>
+
+        <p class="label section">Trusted devices</p>
+        <p class="set-note" id="trusted-intro">A device is remembered after a transfer completes. Trust never grants access on its own: they still confirm on their side, and you still see the file list before anything is saved.</p>
+        <div id="trusted-list" class="trusted-list"></div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Skip the code for these devices</span><span class="set-d">They still confirm on their side. You still see the file list.</span></span>
+          <span class="set-v">
+            <button class="switch" id="skip-code-toggle" type="button" role="switch" aria-checked="false" aria-label="Skip the code for trusted devices">
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </span>
+        </div>
+
+        <p class="label section">Tray &amp; startup</p>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Keep running in the tray when closed</span><span class="set-d">So nearby devices can still reach you</span></span>
+          <span class="set-v">
+            <button class="switch" id="tray-close-toggle" type="button" role="switch" aria-checked="true" aria-label="Keep running in the tray when closed">
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </span>
+        </div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Start at login</span><span class="set-d">So nearby devices can reach you without you opening anything</span></span>
+          <span class="set-v">
+            <button class="switch" id="start-login-toggle" type="button" role="switch" aria-checked="false" aria-label="Start at login">
               <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
             </button>
           </span>
@@ -428,6 +461,154 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ===== trusted device row ===== -->
+  <template id="tpl-trusted">
+    <div class="trusted">
+      <span class="device-icon js-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="17" height="17"><rect x="3" y="5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 20h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </span>
+      <span class="trusted-id">
+        <span class="trusted-top"><span class="device-name js-name"></span><span class="device-os js-os mono hidden"></span></span>
+        <span class="trusted-meta mono js-meta"></span>
+      </span>
+      <button class="btn-quiet sm js-forget" type="button">Forget</button>
+    </div>
+  </template>
+
+  <!-- ===== E2: transfer detail drawer ===== -->
+  <div id="drawer" class="scrim right hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <div class="drawer" role="document">
+      <div class="sheet-head">
+        <span class="label" id="drawer-kind">Transfer</span>
+        <span class="grow"></span>
+        <button class="tb-btn" id="drawer-close" type="button" aria-label="Close details">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <h2 class="sheet-title" id="drawer-title">&mdash;</h2>
+      <p class="sheet-sub" id="drawer-sub"></p>
+
+      <div class="drawer-wire">
+        <svg class="wire" viewBox="0 19 600 68" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <path class="w-track" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <path class="w-fill" pathLength="1" d="M60 60 H280 l18 -22 18 22 H540"/>
+          <circle class="w-node self" cx="60" cy="60" r="8"/>
+          <circle class="w-node peer" cx="540" cy="60" r="8"/>
+        </svg>
+        <div class="wire-readout">
+          <span class="wire-pct" id="drawer-pct">&mdash;</span>
+          <span class="pill" id="drawer-pill"></span>
+          <span class="grow"></span>
+          <span class="wire-ends mono" id="drawer-rate"></span>
+        </div>
+      </div>
+
+      <dl class="facts" id="drawer-facts"></dl>
+
+      <p class="label section">Files</p>
+      <ul class="file-list plain" id="drawer-files"></ul>
+
+      <div class="sheet-actions">
+        <span class="grow"></span>
+        <button class="btn-ghost" id="drawer-copy">Copy code again</button>
+        <button class="btn-quiet" id="drawer-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== G2: send text or clipboard ===== -->
+  <div id="sheet-text" class="scrim hidden" role="dialog" aria-modal="true" aria-labelledby="text-title">
+    <div class="sheet text-sheet" role="document">
+      <div class="sheet-head">
+        <h2 class="sheet-title" id="text-title">Send text</h2>
+        <span class="grow"></span>
+        <button class="tb-btn" id="text-close" type="button" aria-label="Close">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="sheet-sub">Goes over the same encrypted wire, as a single file.</p>
+      <textarea id="text-body" class="text-area mono" spellcheck="false" aria-label="Text to send" placeholder="Paste or type anything&hellip;"></textarea>
+      <div class="text-foot">
+        <button class="btn-quiet sm" id="text-clipboard" type="button">Use clipboard contents</button>
+        <span class="grow"></span>
+        <span class="mono hint" id="text-count">0 lines &middot; 0 bytes</span>
+      </div>
+      <div class="sheet-actions">
+        <span class="grow"></span>
+        <button class="btn-quiet" id="text-cancel">Cancel</button>
+        <button class="btn" id="text-send" disabled>Get a code</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== A1 / A2: first-run setup ===== -->
+  <div id="onboarding" class="onboard hidden">
+    <section class="onboard-step is-active" id="onboard-1">
+      <div class="onboard-inner">
+        <div class="onboard-brand">
+          <svg viewBox="0 0 64 64" width="34" height="34" aria-hidden="true">
+            <path class="brand-wire" pathLength="1" d="M17 36h11l4-8 4 8h11" fill="none" stroke="#D2FF3A" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="17" cy="36" r="6" fill="#D2FF3A"/><circle cx="47" cy="36" r="5" fill="#F2F5EF"/>
+          </svg>
+          <span class="onboard-word">Dropwire</span>
+        </div>
+        <h1 class="onboard-title">A private wire between your devices.</h1>
+        <p class="onboard-lede">Send any file to anyone, directly. No account, no size limit, nothing stored on a server, and nobody in the middle can read a byte.</p>
+        <div class="onboard-points">
+          <div class="onboard-point">
+            <p class="onboard-point-t">Device to device</p>
+            <p class="onboard-point-d">Direct when possible; an encrypted relay only as fallback.</p>
+          </div>
+          <div class="onboard-point">
+            <p class="onboard-point-t">They see it first</p>
+            <p class="onboard-point-d">Names, sizes and count, approved before a byte moves.</p>
+          </div>
+          <div class="onboard-point">
+            <p class="onboard-point-t">Resumable</p>
+            <p class="onboard-point-d">A dropped connection re-sends only the missing pieces.</p>
+          </div>
+        </div>
+        <div class="onboard-actions">
+          <button class="btn btn-lg" id="onboard-start">Set up this device</button>
+          <p class="hint">Takes one screen. Nothing to sign up for.</p>
+        </div>
+        <p class="onboard-foot hint">free &middot; open source &middot; MIT / Apache-2.0 &middot; <span class="onboard-ver"></span></p>
+      </div>
+    </section>
+
+    <section class="onboard-step" id="onboard-2" hidden>
+      <div class="onboard-inner narrow">
+        <p class="label">Step 2 of 2</p>
+        <h1 class="onboard-title sm">Name this device</h1>
+        <p class="onboard-lede">People on your network see this name when you appear as a nearby device. It never leaves your machine otherwise.</p>
+
+        <div class="code-field name-field">
+          <input id="onboard-name" type="text" spellcheck="false" autocomplete="off" aria-label="Device name" maxlength="40" />
+        </div>
+        <p class="hint onboard-fp">Your pairing code, read it aloud to check you are talking to the right device: <code class="mono strong" id="onboard-fp">&mdash;</code></p>
+
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Nearby sharing</span><span class="set-d">Devices on this network can see this one and offer files. Both sides confirm every transfer. Turn it off and you are invisible: no advertising, no incoming requests.</span></span>
+          <span class="set-v">
+            <button class="switch" id="onboard-nearby" type="button" role="switch" aria-checked="true" aria-label="Nearby sharing">
+              <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            </button>
+          </span>
+        </div>
+        <div class="set-row">
+          <span class="set-k"><span class="set-t">Save received files to</span></span>
+          <span class="set-v"><span class="val mono" id="onboard-dest">Downloads</span><button class="btn-ghost sm" id="onboard-dest-change">Change&hellip;</button></span>
+        </div>
+
+        <div class="onboard-actions row">
+          <button class="btn-quiet" id="onboard-back">Back</button>
+          <button class="btn btn-lg" id="onboard-finish">Start using Dropwire</button>
+        </div>
+        <p class="onboard-foot hint">nothing has touched the network yet &middot; <span class="onboard-ver"></span></p>
+      </div>
+    </section>
   </div>
 
   <script src="app.js"></script>

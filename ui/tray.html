@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dropwire</title>
+  <style>html{background:#0B0E13}</style>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body class="tray-body">
+  <!-- The whole app compressed to one job: see what is running, drop something
+       new, get out. Opens anchored to the tray icon, closes on blur. -->
+  <div class="tray-win">
+    <div class="tray-head">
+      <svg viewBox="0 0 64 64" width="16" height="16" aria-hidden="true">
+        <path d="M17 36h11l4-8 4 8h11" fill="none" stroke="#D2FF3A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="17" cy="36" r="6" fill="#D2FF3A"/><circle cx="47" cy="36" r="5" fill="#F2F5EF"/>
+      </svg>
+      <span class="tray-name">Dropwire</span>
+      <span class="grow"></span>
+      <span class="pill direct" id="tray-net">up</span>
+    </div>
+
+    <div class="tray-drop" id="tray-drop">
+      <svg viewBox="0 0 120 60" width="84" height="42" aria-hidden="true">
+        <path d="M16 34 H52 l8 -14 8 14 H104" fill="none" stroke="var(--wire-dim)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="16" cy="34" r="7" fill="var(--wire-dim)"/><circle cx="104" cy="34" r="6" fill="var(--text-faint)"/>
+        <circle class="drift" r="3" fill="var(--wire)" opacity=".7"/>
+      </svg>
+      <p class="tray-drop-title">Drop to send</p>
+      <p class="tray-drop-sub">or paste a code with <kbd id="tray-paste-key">Ctrl</kbd>+<kbd>V</kbd></p>
+    </div>
+
+    <div class="tray-section" id="tray-live-section" hidden>
+      <p class="label">In flight</p>
+      <div id="tray-live" class="tray-rows"></div>
+    </div>
+
+    <div class="tray-section" id="tray-recent-section" hidden>
+      <p class="label">Recent</p>
+      <div id="tray-recent" class="tray-rows"></div>
+    </div>
+
+    <div class="tray-foot">
+      <button class="btn btn-block sm" id="tray-open">Open Dropwire</button>
+    </div>
+  </div>
+
+  <template id="tpl-tray-row">
+    <div class="tray-row">
+      <span class="tray-row-dir js-dir" aria-hidden="true"></span>
+      <span class="tray-row-id">
+        <span class="tray-row-name js-name"></span>
+        <span class="tray-row-meta js-meta"></span>
+      </span>
+      <span class="tray-row-state js-state"></span>
+    </div>
+  </template>
+
+  <script src="tray.js"></script>
+</body>
+</html>

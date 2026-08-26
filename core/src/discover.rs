@@ -370,6 +370,21 @@ impl NearbyState {
         Ok(())
     }
 
+    /// Rename this device. If a session is live the advertisement is
+    /// re-registered under the new name so peers see the change without the
+    /// user having to toggle sharing off and on.
+    pub(crate) fn rename(&mut self, name: String, port: u16) -> Result<()> {
+        if self.device_name == name {
+            return Ok(());
+        }
+        self.device_name = name;
+        if self.is_running() {
+            self.stop();
+            self.start(port)?;
+        }
+        Ok(())
+    }
+
     /// Stop advertising + forget the peer list (peers see us leave via TTL /
     /// their own browse Remove events).
     pub(crate) fn stop(&mut self) {
