@@ -6,6 +6,101 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0-beta.5] - 2026-08-26
+
+The interface rebuild. Dropwire now behaves like a desktop application rather
+than a web page in a window: one fixed frame, its own chrome, and a layout that
+never asks you to scroll or resize to finish a task.
+
+### Added
+- **Frameless window.** Dropwire draws its own title bar, window controls and
+  12px corner on all three platforms, so the app looks the same everywhere
+  instead of inheriting three different system frames.
+- **One canvas, three segments.** The icon rail and four separate views are
+  replaced by a `Send · Receive · Activity` switch. Activity carries a live
+  count. Settings is a labelled control (or `Ctrl+,`), not an icon to guess at.
+- **Activity.** Everything in flight and everything earlier, in one place, with
+  a detail view on any row: peer, pairing code, route, start time, per-file
+  breakdown, and the verified file list. History can now be cleared.
+- **First-run setup.** Two screens: what Dropwire is, then name this device and
+  choose whether to be visible. Nothing touches the network until you finish.
+- **Trusted devices.** A device is remembered after a transfer with it
+  completes. Optionally let trusted devices skip the consent dialog — they
+  still confirm on their side, and you still see the file list before anything
+  is written.
+- **Tray.** A tray icon that reports state at a glance (idle, transferring,
+  complete, needs attention) and a small panel to see what is running, drop
+  something new, or paste a code. Closing the window keeps Dropwire running so
+  nearby devices can still reach you.
+- **Send text.** Send a snippet or your clipboard as a transfer. It travels the
+  same encrypted path as any other file.
+- **Notifications.** Three events, and only three: a transfer finished, an
+  offer arrived while you were away, and a failure that needs a decision.
+  Progress never notifies.
+- Nearby devices now show their platform next to the hostname, which is the
+  fastest way to tell two similarly named machines apart.
+
+### Changed
+- The share code is a one-line field you copy, with the full value one click
+  away. It used to render every character at display size and push the rest of
+  the screen out of view.
+- Send and Receive collapse their entry area once a transfer starts, so the
+  transfer is the subject of the screen rather than competing with a form.
+- Nearby devices sit inside the send surface instead of a separate panel that
+  fell below the fold.
+- The wire is the only progress indicator in the app. Completion is green
+  rather than lime, so "done" can no longer be mistaken for "still running", a
+  dropped connection breaks the wire in red, and resuming is blue.
+- Settings gained the theme picker, the device name, trusted devices, and the
+  tray and startup options.
+
+### Fixed
+- Content no longer scrolls out of the window or hides behind the credit line.
+- The pairing code is never truncated. Shortening it would quietly weaken the
+  check two people make by reading it aloud.
+
+## [0.3.0-beta.4] - 2026-08-25
+
+### Fixed
+- The consent dialog no longer stacks on top of the receive preview, and
+  accepting an offer that has already expired says so instead of failing
+  silently.
+
+## [0.3.0-beta.3] - 2026-08-25
+
+An end-to-end audit of the nearby feature before it shipped, and the fixes it
+turned up.
+
+### Fixed
+- **macOS launch crash.** The always-on discovery threads could abort the whole
+  app. The release profile now unwinds instead of aborting, locks recover
+  rather than cascade, and panics are written to `panic.log` in the app data
+  dir. The macOS bundle is also signed now, so the system treats it
+  consistently across updates.
+- **"Nearby sharing off" now means invisible.** Incoming offers are refused at
+  the consent layer, not merely hidden. Previously anyone who knew this
+  device's id could still raise a dialog, including from outside the network.
+- **Pairing code strengthened.** It is derived from a hash of the whole
+  identity instead of a short prefix that could be guessed at, and the receiver
+  computes it from the authenticated connection rather than trusting what the
+  sender claims.
+- **Accepting a nearby offer** goes through the same verified preview as a code
+  transfer, so the file names and sizes you approve are the ones that arrive.
+- Nearby devices no longer disappear from the list about thirty seconds after
+  they are found while still present.
+- A crafted or colliding network name can no longer remove a different device
+  from the nearby list.
+- Incoming offers survive a burst instead of silently stopping for the rest of
+  the session, a second "Send here" cannot cancel a transfer another device
+  just accepted, a new offer no longer replaces the dialog while you are
+  reading it, and an offer that lapses says so.
+- **Windows firewall rules** are applied during install. The per-user installer
+  could not add them before, so they silently did nothing.
+- CI runs the nearby consent and relay suites, which were gated behind a
+  feature the workflow never enabled, and now includes a macOS job.
+
+## [0.3.0-beta.1] - 2026-08-23
+
 ### Added
 - **Nearby devices with two-sided consent** (issue #2): Dropwire instances on
   the same network discover each other automatically over mDNS/DNS-SD and are
@@ -40,36 +135,6 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - The project is now public and the landing page is live on GitHub Pages.
 - Removed internal-only planning docs and the unused `dropwire.app` domain
   references; the site is GitHub-hosted.
-- Release profile now unwinds on panic instead of aborting, so a fault in a
-  background discovery thread degrades nearby discovery rather than crashing the
-  whole app; the desktop shell also logs panics to `panic.log` in its data dir.
-
-### Fixed
-- **macOS launch crash**: the always-on mDNS threads could abort the process
-  under `panic = "abort"`; switched to unwind + poison-safe locks + a panic hook.
-  The macOS bundle is now ad-hoc signed so Gatekeeper/TCC have a stable identity.
-- **Nearby sharing off now truly means invisible**: incoming offers are declined
-  at the consent layer when Nearby is off (previously the check was computed and
-  discarded, so anyone who knew your endpoint id — over the LAN or the relay —
-  could still pop a consent dialog).
-- **Pairing fingerprint** is now a BLAKE3 hash of the identity (60 bits) instead
-  of a grindable ~21-bit prefix of its hex form, and the receiver derives it from
-  the authenticated remote id rather than a sender-supplied field.
-- **Accepting a nearby offer** now goes through the same verified preview as the
-  code flow (real file names/sizes from the manifest), instead of downloading on
-  the sender's unverified claimed metadata.
-- Nearby devices no longer vanish from the list ~30 seconds after discovery while
-  still present; presence now follows mDNS add/remove events.
-- A crafted or colliding mDNS instance name can no longer evict a different
-  peer from the nearby list (removal matches the exact instance).
-- Incoming offers survive a burst (broadcast-lag no longer permanently kills the
-  offer pump), a second "Send here" can't cancel a transfer another device just
-  accepted, a new offer no longer replaces the consent dialog mid-decision, and a
-  lapsed offer is cleaned up and reported as expired instead of leaking.
-- **Windows firewall rules** are now applied through an elevated step (the
-  per-user installer could not add them before, so they silently did nothing).
-- CI runs the nearby consent + relay suites (they were gated behind a feature the
-  workflow never enabled) and now includes a macOS job.
 
 ## [0.2.3] - 2026-06-17
 
@@ -124,7 +189,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - CI (engine tests on Linux + Windows) and a cross-platform release workflow
   (Windows, macOS, Linux) that publishes downloads automatically.
 
-[Unreleased]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.5...HEAD
+[0.3.0-beta.5]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.4...v0.3.0-beta.5
+[0.3.0-beta.4]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.3...v0.3.0-beta.4
+[0.3.0-beta.3]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.1...v0.3.0-beta.3
+[0.3.0-beta.1]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.2.3...v0.3.0-beta.1
 [0.2.3]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.2.0...v0.2.1

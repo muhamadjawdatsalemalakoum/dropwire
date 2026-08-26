@@ -94,5 +94,7 @@ jobs:
             > Security → "Open Anyway".
           # Publish the release automatically on tag (set true to review as a draft first).
           releaseDraft: false
-          prerelease: false
+          # A -beta / -alpha / -rc tag is a prerelease, so it does not become the
+          # "Latest release" people land on from the repo front page.
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           args: ${{ matrix.args }}
