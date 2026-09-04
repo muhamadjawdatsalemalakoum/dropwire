@@ -39,7 +39,7 @@ jobs:
             args: "--bundles nsis"   # branded NSIS .exe only (skip the dated WiX .msi)
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
