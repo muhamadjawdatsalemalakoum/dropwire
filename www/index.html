@@ -278,37 +278,76 @@
 
         <div class="showcase">
           <figure class="shot-row">
-            <div class="shot-media">
-              <img src="screenshots/send.png" width="1500" height="986" loading="lazy"
-                alt="Dropwire file transfer app: sender screen with a one-time transfer code and QR code ready to share" />
+            <div class="shot-media frameless">
+              <img src="screenshots/app-send.png" width="2560" height="1680" loading="lazy"
+                alt="Dropwire file transfer app sending a folder: a one-time transfer code with its QR, a progress wire at 61 percent on a direct route, and nearby devices listed below" />
             </div>
             <figcaption class="shot-copy">
-              <h3>Pick a file &mdash; get a code &amp; QR</h3>
-              <p>Drag in a file or a whole folder. Dropwire hands you a one-time transfer code and a matching QR &mdash; share it however you like.</p>
+              <h3>Pick a file, get a code and QR</h3>
+              <p>Drag in a file or a whole folder. Dropwire hands you a one-time transfer code and a matching QR. The moment the transfer starts, the picker collapses to a bar so the transfer is the subject of the screen.</p>
             </figcaption>
           </figure>
 
           <figure class="shot-row reverse">
-            <div class="shot-media">
-              <img src="screenshots/preview.png" width="1500" height="625" loading="lazy"
-                alt="Dropwire peer-to-peer transfer preview: recipient verifies file name and size before accepting an encrypted transfer" />
+            <div class="shot-media frameless">
+              <img src="screenshots/app-preview.png" width="2560" height="1680" loading="lazy"
+                alt="Dropwire peer-to-peer transfer preview: six file names and sizes with checkboxes, behind direct and verified-by-the-code badges, waiting for the recipient to accept" />
             </div>
             <figcaption class="shot-copy">
-              <h3>See what&rsquo;s coming &mdash; before you accept</h3>
-              <p>Names, sizes, and count, <strong>verified by the code</strong> so the sender can&rsquo;t fake them. Take only the files you want, or decline in one tap.</p>
+              <h3>See what is coming, before you accept</h3>
+              <p>Names, sizes, and count, <strong>verified by the code</strong> so the sender cannot fake them. Untick anything you do not want. Nothing is saved until you accept.</p>
             </figcaption>
           </figure>
 
           <figure class="shot-row">
-            <div class="shot-media">
-              <img src="screenshots/received.png" width="1500" height="600" loading="lazy"
-                alt="Dropwire transfer complete at 100% with a 'direct' connection badge, end-to-end encrypted" />
+            <div class="shot-media frameless">
+              <img src="screenshots/app-nearby-offer.png" width="2560" height="1680" loading="lazy"
+                alt="A nearby Dropwire device asking to send six files, showing both pairing codes side by side so the two people can compare them aloud" />
             </div>
             <figcaption class="shot-copy">
-              <h3>Straight there &mdash; direct and verified</h3>
-              <p>A live <em>direct</em> vs <em>relayed</em> badge shows how it&rsquo;s travelling, and every byte is checked on arrival.</p>
+              <h3>On the same network, skip the code</h3>
+              <p>Tap a device and it asks them first. Both sides confirm, and each shows a pairing code you read aloud to check you are talking to the right machine. Turn sharing off and you are invisible.</p>
             </figcaption>
           </figure>
+
+          <figure class="shot-row reverse">
+            <div class="shot-media frameless">
+              <img src="screenshots/app-activity.png" width="2560" height="1680" loading="lazy"
+                alt="Dropwire activity list: one transfer in flight at 61 percent, and four earlier transfers marked done, interrupted, and failed" />
+            </div>
+            <figcaption class="shot-copy">
+              <h3>Everything in flight, and everything before</h3>
+              <p>One place for what is running and what already ran, stored on your device only. An interrupted download offers to resume from where it stopped, and any row opens the full detail: route, timing, and the verified file list.</p>
+            </figcaption>
+          </figure>
+
+          <figure class="shot-row">
+            <div class="shot-media frameless">
+              <img src="screenshots/app-light.png" width="2560" height="1680" loading="lazy"
+                alt="Dropwire in its light theme, showing the drop area and the nearby devices list" />
+            </div>
+            <figcaption class="shot-copy">
+              <h3>A window, not a web page</h3>
+              <p>One fixed frame that draws its own title bar on all three platforms, so it looks the same everywhere. Nothing scrolls out of view, nothing needs resizing, and there is a light theme.</p>
+            </figcaption>
+          </figure>
+        </div>
+
+        <div class="install-showcase">
+          <h3 class="install-title">It stays out of the way</h3>
+          <div class="install-pair">
+            <figure>
+              <img class="frameless-img" src="screenshots/app-tray.png" width="720" height="940" loading="lazy"
+                alt="The Dropwire tray panel: a drop area, a list of recent transfers, and an Open Dropwire button" />
+              <figcaption>Drop a file on the tray panel, or paste a code, without opening the window.</figcaption>
+            </figure>
+            <figure>
+              <img class="frameless-img" src="screenshots/app-welcome.png" width="2560" height="1680" loading="lazy"
+                alt="Dropwire first-run screen explaining what it does, with a single Set up this device button" />
+              <figcaption>First run takes two screens. Nothing touches the network until you finish.</figcaption>
+            </figure>
+          </div>
+          <p class="install-note">Closing the window keeps Dropwire running, so people can still reach you.</p>
         </div>
 
         <div class="install-showcase">
@@ -453,6 +492,22 @@
             </div>
             <h3>History that stays on your device</h3>
             <p>Past transfers are listed only on your machine &mdash; never in any cloud. Resend a file in a click, or pick up an interrupted download right where it stopped.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><rect x="3" y="4" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6.2" cy="6.5" r="0.9" fill="currentColor"/><circle cx="9" cy="6.5" r="0.9" fill="currentColor"/></svg>
+            </div>
+            <h3>Feels like a desktop app</h3>
+            <p>One fixed window that draws its own frame on Windows, macOS, and Linux. Nothing scrolls out of view, nothing needs resizing, and one thing is on screen at a time.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24"><path d="M4 19h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><rect x="8.5" y="14.5" width="7" height="4.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 3v9m0 0l-3.2-3.2M12 12l3.2-3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3>Lives in the tray</h3>
+            <p>Closing the window keeps Dropwire reachable. The tray icon reports what is happening, and its panel takes a dropped file or a pasted code without opening anything.</p>
           </article>
 
           <article class="card">
