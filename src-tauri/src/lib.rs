@@ -728,6 +728,16 @@ pub fn run() {
             open_external,
             app_version
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Dropwire");
+        .build(tauri::generate_context!())
+        .expect("error while building Dropwire")
+        .run(|_app, _event| {
+            // macOS: with close-to-tray on, closing the window leaves Dropwire
+            // running with no window. Clicking the dock icon raises Reopen, and
+            // with nothing answering it the app is alive but unreachable: it
+            // reads as frozen and the only way out is Cmd+Q. Bring it back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show_main(_app.clone());
+            }
+        });
 }
