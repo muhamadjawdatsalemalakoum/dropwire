@@ -759,6 +759,9 @@ img, svg { max-width: 100%; }
   align-items: center;
   margin: 0;
 }
+/* Keep the capture in the wide column whichever side it sits on, so
+   alternating rows show the app at one consistent size. */
+.shot-row.reverse { grid-template-columns: 1fr 1.35fr; }
 .shot-row.reverse .shot-media { order: 2; }
 .shot-media img {
   display: block;
@@ -769,6 +772,15 @@ img, svg { max-width: 100%; }
   box-shadow: var(--shadow-lg);
   background: #0e1116;
 }
+/* The app draws its own rounded frame, so these captures need no second one. */
+.shot-media.frameless img,
+img.frameless-img {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+img.frameless-img { display: block; width: 100%; height: auto; }
 .shot-copy { margin: 0; }
 .shot-copy h3 { font-size: clamp(1.2rem, 2.4vw, 1.55rem); margin: 0 0 0.5rem; }
 .shot-copy p { color: var(--ink-soft); margin: 0; font-size: 1.02rem; }

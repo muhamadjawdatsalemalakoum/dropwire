@@ -31,11 +31,12 @@ resumable, and open source.
 
 ---
 
-> **Status:** alpha. The transfer engine and desktop app work end to end on Windows,
-> macOS, and Linux — send a file or folder, send straight to a nearby device with no code,
+> **Status:** beta. The transfer engine and desktop app work end to end on Windows,
+> macOS, and Linux: send a file or folder, send straight to a nearby device with no code,
 > preview before accepting, download only the files you want, resume an interrupted
-> transfer, and run several at once. Polishing toward a public release. See
-> [`ARCHITECTURE.md`](ARCHITECTURE.md) for the design.
+> transfer, and run several at once. The interface was rebuilt in 0.3.0 as a fixed native
+> frame rather than a page in a window. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
+> design and [`CHANGELOG.md`](CHANGELOG.md) for what landed when.
 
 ## Why Dropwire
 
@@ -66,6 +67,13 @@ your files through their servers with size caps and ads. Dropwire is the missing
   device that connects, and others are refused.
 - **Several at once.** Run multiple sends and receives in parallel, each with its own
   live progress and a direct-vs-relayed badge.
+- **A desktop app, not a web page in a window.** One fixed frame that draws its own title
+  bar on all three platforms. Nothing scrolls out of view, nothing needs resizing, and one
+  thing is on screen at a time.
+- **Stays out of the way.** It lives in the tray, so closing the window keeps you reachable
+  by the people you are already talking to. Devices you have transferred with are
+  remembered, and can optionally skip the consent step. Trust never grants access on its
+  own: they still confirm on their side, and you still see the file list first.
 - **Open source.** Dual-licensed MIT / Apache-2.0. Audit it, fork it, self-host it.
 
 ## How it works
@@ -84,6 +92,73 @@ until both sides agree, and the receiver still previews the real file list befor
 Under the hood: each device has a stable cryptographic identity (you "dial a key, not an
 IP"); peers find each other via DNS/DHT discovery; the connection is QUIC with TLS 1.3;
 content is verified end-to-end with BLAKE3 so resume and integrity come for free.
+
+## In the app
+
+One fixed window with its own chrome on Windows, macOS, and Linux. Nothing scrolls out of
+view and nothing needs resizing. These are captures of the shipped interface at its real
+size, with sample transfers in it.
+
+### Send
+
+![Dropwire sending a folder: the one-time transfer code with its QR, the wire at 61 percent on a direct route, and nearby devices listed underneath](www/screenshots/app-send.png)
+
+Drop a file or a folder and you get a one-time code and a matching QR. The code is a field
+you copy, with the full value one click away, rather than a wall of characters that pushes
+the rest of the screen out of view. Once a transfer starts the picker collapses to a bar so
+the transfer is the subject of the screen. Devices on the same network sit underneath, one
+tap away, with their platform next to the hostname so two similarly named machines are easy
+to tell apart.
+
+### Receive
+
+![The verified preview: six file names and sizes, each with a checkbox, behind direct and verified-by-the-code badges](www/screenshots/app-preview.png)
+
+Paste the code and you see the real file list before anything is written: names, sizes, and
+count, committed by the transfer code so the sender cannot fake them. Untick what you do not
+want. Nothing is saved until you accept.
+
+### Nearby devices
+
+![An incoming offer from a device called Loft-MBP, showing both pairing codes side by side to compare](www/screenshots/app-nearby-offer.png)
+
+On the same network you can skip the code entirely. Both sides confirm, and each shows a
+pairing code you read aloud to check you are talking to the right machine. Turn sharing off
+and the device stops advertising and refuses incoming requests.
+
+### Activity
+
+![Activity: one transfer in flight at 61 percent, and four earlier ones marked done, interrupted, and failed](www/screenshots/app-activity.png)
+
+Everything in flight and everything earlier, in one place, with a live count on the tab.
+An interrupted receive offers Resume, a send that never got through offers Retry.
+
+![The detail view for a finished send: status, size, source, start time, BLAKE3 verification, and the full file list](www/screenshots/app-detail.png)
+
+Any row opens a detail view: the peer, the pairing code, the route, when it started, the
+per-file breakdown, and the verified file list.
+
+### First run
+
+![The first-run welcome screen explaining what Dropwire is, with a single Set up this device button](www/screenshots/app-welcome.png)
+
+Two screens: what Dropwire is, then name this device and choose whether to be visible.
+Nothing touches the network until you finish.
+
+### Tray
+
+<img src="www/screenshots/app-tray.png" width="300" alt="The tray panel: a drop area, a recent list, and an Open Dropwire button" />
+
+A tray icon that reports state at a glance, and a small panel to see what is running, drop
+something new, or paste a code. Closing the window keeps Dropwire running so nearby devices
+can still reach you.
+
+### Settings, and a light theme
+
+![Settings: device name, pairing code, device ID, destination folder, nearby sharing, and trusted devices](www/screenshots/app-settings.png)
+
+![Dropwire in its light theme](www/screenshots/app-light.png)
+
 
 ## Repository layout
 

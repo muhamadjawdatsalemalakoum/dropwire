@@ -109,6 +109,13 @@ impl Catalog {
         v
     }
 
+    /// Forget every finished record. In-flight transfers are kept: clearing the
+    /// list must never orphan something the UI is still driving.
+    pub fn clear_finished(&mut self) {
+        self.entries.retain(|_, r| r.status == Status::Active);
+        self.save();
+    }
+
     /// On startup, mark any still-"active" entries as interrupted (the process
     /// clearly didn't finish them).
     pub fn mark_stale_interrupted(&mut self) {

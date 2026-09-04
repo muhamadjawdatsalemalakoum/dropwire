@@ -12,10 +12,30 @@
       {
         "label": "main",
         "title": "Dropwire",
-        "width": 980,
-        "height": 680,
-        "minWidth": 720,
-        "minHeight": 520,
+        "width": 1280,
+        "height": 840,
+        "minWidth": 920,
+        "minHeight": 640,
+        "dragDropEnabled": true,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "center": true,
+        "visible": false
+      },
+      {
+        "label": "tray",
+        "title": "Dropwire",
+        "url": "tray.html",
+        "width": 360,
+        "height": 470,
+        "resizable": false,
+        "decorations": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": true,
+        "shadow": true,
         "dragDropEnabled": true
       }
     ],
@@ -28,8 +48,8 @@
     "targets": "all",
     "category": "Utility",
     "shortDescription": "Free, private, peer-to-peer file transfer.",
-    "longDescription": "Dropwire sends any file straight from one device to another — end-to-end encrypted, resumable, with no account and no server holding your data. Built on iroh.",
-    "copyright": "Copyright © 2026 Dropwire contributors",
+    "longDescription": "Dropwire sends any file straight from one device to another \u2014 end-to-end encrypted, resumable, with no account and no server holding your data. Built on iroh.",
+    "copyright": "Copyright \u00a9 2026 Dropwire contributors",
     "publisher": "Dropwire",
     "homepage": "https://muhamadjawdatsalemalakoum.github.io/dropwire/",
     "icon": [
@@ -45,9 +65,18 @@
       "signingIdentity": "-",
       "dmg": {
         "background": "icons/dmg-background.png",
-        "windowSize": { "width": 660, "height": 440 },
-        "appPosition": { "x": 180, "y": 170 },
-        "applicationFolderPosition": { "x": 480, "y": 170 }
+        "windowSize": {
+          "width": 660,
+          "height": 440
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
       }
     },
     "linux": {

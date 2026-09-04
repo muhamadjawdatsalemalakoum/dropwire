@@ -229,6 +229,13 @@ impl Core {
         self.inner.nearby.lock().await.device_name.clone()
     }
 
+    /// Change the name nearby devices see. Takes effect immediately: a live
+    /// advertisement is re-registered under the new name.
+    pub async fn set_device_name(&self, name: String) -> Result<()> {
+        let port = self.inner.nearby_port;
+        self.inner.nearby.lock().await.rename(name, port)
+    }
+
     /// Subscribe to offers arriving from nearby devices.
     pub fn subscribe_offers(&self) -> broadcast::Receiver<IncomingOffer> {
         self.inner.consent.offer_tx.subscribe()
