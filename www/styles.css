@@ -835,6 +835,22 @@ img.frameless-img { display: block; width: 100%; height: auto; }
 .shot-media img, .install-pair img { cursor: zoom-in; }
 
 /* ------------------------- Demo video embed --------------------------- */
+.video-head {
+  max-width: 720px;
+  margin: 0 auto clamp(1.1rem, 2.5vw, 1.6rem);
+  text-align: center;
+}
+.video-title {
+  font-size: clamp(1.35rem, 3vw, 1.9rem);
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
+}
+.video-sub {
+  color: var(--ink-soft);
+  font-size: 1.02rem;
+  line-height: 1.55;
+  margin: 0;
+}
 .video-embed { max-width: 880px; margin: 0 auto clamp(2.5rem, 6vw, 4rem); }
 .video-embed-btn {
   display: block;
