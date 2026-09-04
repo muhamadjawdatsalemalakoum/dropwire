@@ -6,6 +6,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0-beta.6] - 2026-09-04
+
+Point release for a first-launch bug in beta.5.
+
 ### Fixed
 - **First run could not be escaped.** The setup screen covered the whole
   window, and the window is frameless, so its own title bar was the only way
@@ -207,7 +211,8 @@ turned up.
 - CI (engine tests on Linux + Windows) and a cross-platform release workflow
   (Windows, macOS, Linux) that publishes downloads automatically.
 
-[Unreleased]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.5...HEAD
+[Unreleased]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.6...HEAD
+[0.3.0-beta.6]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.5...v0.3.0-beta.6
 [0.3.0-beta.5]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.3...v0.3.0-beta.4
 [0.3.0-beta.3]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.1...v0.3.0-beta.3
