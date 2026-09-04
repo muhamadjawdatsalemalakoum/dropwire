@@ -6,6 +6,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **First run could not be escaped.** The setup screen covered the whole
+  window, and the window is frameless, so its own title bar was the only way
+  to move or close the app and setup had hidden it. Sheets and the detail
+  drawer captured the bar the same way. Overlays now start below the title
+  bar and stop inside the window border, so the chrome stays live and the
+  frame keeps its rounded corners.
+- The tray panel's only button sat at its text width in the corner: it
+  carried a class the stylesheet never defined.
+- The select-all checkbox in the receive preview used the browser's default
+  accent instead of the app's.
+- Landing page: reversed showcase rows put the screenshot in the narrow
+  column, so alternating rows showed the app at two different sizes.
+
+### Changed
+- The README and the landing page show the 0.3.0 interface. The captures
+  they used were still from 0.2.
+
 ## [0.3.0-beta.5] - 2026-08-26
 
 The interface rebuild. Dropwire now behaves like a desktop application rather
