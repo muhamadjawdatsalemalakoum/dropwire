@@ -92,7 +92,11 @@ a:hover{text-decoration:underline}
   flex:none; height:44px; background:var(--wire-black); border-bottom:1px solid var(--hairline-soft);
   display:flex; align-items:center; gap:12px; padding:0 10px 0 16px;
   border-radius:var(--r-win) var(--r-win) 0 0;
+  position:relative; z-index:100;
 }
+/* Overlays start below the title bar and stop inside the window border, so the
+   frame keeps its corners and its controls stay live. */
+:root{--chrome-h:46px}
 .tb-mark{flex:none; -webkit-app-region:no-drag}
 .tb-name{font-size:12.5px; font-weight:600; color:var(--text-muted)}
 .tb-spacer{flex:1 1 auto}
@@ -387,10 +391,11 @@ a:hover{text-decoration:underline}
 .act-empty-sub{margin:0 0 24px; font-size:13.5px; color:var(--text-faint); max-width:52ch}
 
 /* ================================ OVERLAYS ================================ */
-.scrim{position:fixed; inset:0; background:var(--scrim); display:flex; align-items:center; justify-content:center;
-  padding:24px; z-index:50}
+.scrim{position:fixed; inset:var(--chrome-h) 1px 1px 1px; background:var(--scrim);
+  display:flex; align-items:center; justify-content:center;
+  padding:24px; z-index:50; border-radius:0 0 var(--r-win) var(--r-win)}
 #nearby-offer-modal{z-index:60}
-.sheet{width:100%; max-width:460px; max-height:calc(100vh - 48px); display:flex; flex-direction:column;
+.sheet{width:100%; max-width:460px; max-height:calc(100vh - var(--chrome-h) - 48px); display:flex; flex-direction:column;
   background:var(--surface); border:1px solid var(--hairline); border-radius:var(--r-4);
   box-shadow:var(--elev-pop); padding:var(--sp-5)}
 .sheet.wide{max-width:560px}
@@ -499,8 +504,8 @@ a:hover{text-decoration:underline}
 /* ======================= A1 / A2 first-run setup =========================
    Owns the whole frame while it is up: setup is the only job on screen.
    ------------------------------------------------------------------------ */
-.onboard{position:fixed; inset:0; z-index:80; background:var(--canvas);
-  border-radius:var(--r-win); display:flex; flex-direction:column; overflow:hidden}
+.onboard{position:fixed; inset:var(--chrome-h) 1px 1px 1px; z-index:80; background:var(--canvas);
+  border-radius:0 0 var(--r-win) var(--r-win); display:flex; flex-direction:column; overflow:hidden}
 .onboard-step{flex:1 1 auto; min-height:0; display:none; overflow-y:auto; overscroll-behavior:contain}
 .onboard-step.is-active{display:block}
 .onboard-inner{min-height:100%; max-width:760px; margin:0 auto; padding:56px 48px 40px;
@@ -535,6 +540,7 @@ a:hover{text-decoration:underline}
 .scrim.right{justify-content:flex-end; padding:0}
 .drawer{width:min(460px,100%); height:100%; display:flex; flex-direction:column;
   background:var(--surface); border-left:1px solid var(--hairline); box-shadow:var(--elev-pop);
+  border-radius:0 0 var(--r-win) 0;
   padding:var(--sp-5); animation:drawerIn var(--dur-3) var(--ease-out)}
 @keyframes drawerIn{from{transform:translateX(24px); opacity:0} to{transform:none; opacity:1}}
 .drawer .sheet-title{font-size:20px; margin-bottom:2px}
