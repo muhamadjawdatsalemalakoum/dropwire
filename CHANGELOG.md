@@ -8,9 +8,14 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [0.3.0-beta.6] - 2026-09-04
 
-Point release for a first-launch bug in beta.5.
+Two ways to get stuck, both found on real hardware.
 
 ### Fixed
+- **macOS: closing the window made Dropwire unreachable.** Close means
+  "keep running so nearby devices can still find you", so the window hides
+  rather than quitting. But nothing answered the dock icon, so the app was
+  alive with no way back into it: it read as frozen, and the only way out
+  was Cmd+Q. Clicking the dock icon now brings the window back.
 - **First run could not be escaped.** The setup screen covered the whole
   window, and the window is frameless, so its own title bar was the only way
   to move or close the app and setup had hidden it. Sheets and the detail
