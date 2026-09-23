@@ -6,13 +6,42 @@
 //! never sent anywhere.
 
 use std::error::Error as StdError;
+use std::fmt;
 use std::io;
 
 use crate::error::CoreError;
 use crate::progress::ErrorCode;
 
+/// A failure already described for the person using the app. Attached as the
+/// context of the underlying error, so the log still has the technical cause.
+#[derive(Debug)]
+pub(crate) struct Stopped {
+    pub(crate) code: ErrorCode,
+    pub(crate) message: String,
+}
+
+impl Stopped {
+    pub(crate) fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for Stopped {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl StdError for Stopped {}
+
 /// The code and message a failed transfer ends with.
 pub(crate) fn describe(e: &anyhow::Error) -> (ErrorCode, String) {
+    if let Some(stopped) = e.downcast_ref::<Stopped>() {
+        return (stopped.code, sentence(&stopped.message));
+    }
     if let Some(core) = e.downcast_ref::<CoreError>() {
         return describe_core(core);
     }
@@ -222,5 +251,20 @@ mod tests {
 
         let e = anyhow::anyhow!("inner detail").context("the download stopped");
         assert_eq!(describe(&e).1, "The download stopped: inner detail.");
+    }
+
+    #[test]
+    fn a_described_failure_is_kept_as_is() {
+        let e = anyhow::Error::new(io::Error::other("socket closed")).context(Stopped::new(
+            ErrorCode::Interrupted,
+            "the connection to the sender was lost",
+        ));
+        assert_eq!(
+            describe(&e),
+            (
+                ErrorCode::Interrupted,
+                "The connection to the sender was lost.".to_string()
+            )
+        );
     }
 }

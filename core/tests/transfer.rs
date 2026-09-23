@@ -337,3 +337,62 @@ async fn a_missing_file_fails_with_a_plain_reason() {
         format!("Could not open {}: it is no longer there.", gone.display())
     );
 }
+
+/// When the sender goes away mid-download, the receive ends as interrupted,
+/// not failed: history says Interrupted with what had arrived, and receiving
+/// again once the sender is back finishes the file byte for byte.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_connection_is_interrupted_and_resumable() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("big.bin");
+    let payload = make_payload(64 * 1024 * 1024);
+    std::fs::write(&src, &payload).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(src.clone()).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    let out = work.path().join("out");
+    let (rid, mut rs) = receiver.receive(ticket, out.clone()).await.unwrap();
+    while let Some(ev) = rs.next().await {
+        match ev {
+            Progress::Transferring { offset, total, .. } if offset >= total / 4 => break,
+            Progress::Done { .. } => panic!("finished before the sender went away"),
+            Progress::Error { message, .. } => panic!("early error: {message}"),
+            _ => {}
+        }
+    }
+    // The sender's app closes mid-transfer.
+    sender.shutdown().await.unwrap();
+    let (code, message) = loop {
+        match rs.next().await.expect("stream ended without an outcome") {
+            Progress::Error { code, message, .. } => break (code, message),
+            Progress::Done { .. } => panic!("finished after the sender went away"),
+            _ => {}
+        }
+    };
+    assert_eq!(code, irohcore::ErrorCode::Interrupted, "{message}");
+    assert!(message.contains("pick up where it left off"), "{message}");
+
+    let rec = receiver
+        .transfers()
+        .await
+        .into_iter()
+        .find(|r| r.id == rid)
+        .expect("the receive's record");
+    assert_eq!(rec.status, irohcore::Status::Interrupted);
+    assert!(rec.transferred > 0, "what arrived is recorded");
+
+    // The sender comes back and shares the same file again: same content,
+    // same hash, so the receive picks up the partial data.
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+    let (_rid, mut rs) = receiver.receive(ticket, out.clone()).await.unwrap();
+    wait_done(&mut rs).await;
+    assert!(std::fs::read(out.join("big.bin")).unwrap() == payload);
+}

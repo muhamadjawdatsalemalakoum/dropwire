@@ -20,8 +20,8 @@ use crate::error::{CoreError, Result};
 use crate::export;
 use crate::fail;
 use crate::progress::{
-    Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
-    TransferStats,
+    Direction, ErrorCode, FilePreview, Progress, ProgressStream, Route, TransferId,
+    TransferPreview, TransferStats,
 };
 use crate::store::{self, BLOBS_ALPN};
 use crate::Core;
@@ -172,12 +172,10 @@ impl Core {
             {
                 tracing::warn!("receive {id} failed: {e:#}");
                 let (code, message) = fail::describe(&e);
+                // A dropped connection has already marked the record
+                // Interrupted (resumable); anything else still running failed.
+                core.inner.catalog.lock().await.fail_if_active(id);
                 let _ = tx_err.send(Progress::Error { id, code, message }).await;
-                core.inner
-                    .catalog
-                    .lock()
-                    .await
-                    .set_status(id, Status::Error, None);
             }
             core.inner.active.lock().await.remove(&id);
         });
@@ -432,25 +430,24 @@ async fn run_receive(
         let mut stream = get.stream();
         // Throttle UI progress to ~12/s: blob progress can fire per-chunk.
         let mut last_emit = Instant::now() - Duration::from_millis(200);
+        let mut reached = shown(0);
         loop {
             tokio::select! {
                 _ = token.cancelled() => return finish_cancelled(&core, id, &tx).await,
                 item = stream.next() => match item {
                     Some(GetProgressItem::Progress(read)) => {
+                        reached = shown(read);
                         if last_emit.elapsed() >= Duration::from_millis(80) {
                             last_emit = Instant::now();
-                            let offset = shown(read);
-                            let _ = tx.send(Progress::Transferring { id, offset, total, route: route_now() }).await;
+                            let _ = tx.send(Progress::Transferring { id, offset: reached, total, route: route_now() }).await;
                         }
                     }
                     Some(GetProgressItem::Done(_stats)) => break,
-                    Some(GetProgressItem::Error(e)) if refused(&e) => {
-                        return Err(CoreError::AlreadyClaimed.into())
-                    }
                     Some(GetProgressItem::Error(e)) => {
-                        return Err(anyhow::Error::new(e).context("the download stopped"))
+                        return Err(download_failed(&core, id, Some(e), reached).await)
                     }
-                    None => break,
+                    // The download ended without finishing.
+                    None => return Err(download_failed(&core, id, None, reached).await),
                 }
             }
         }
@@ -572,6 +569,62 @@ fn files_label(count: usize) -> String {
         "1 file".to_string()
     } else {
         format!("{count} files")
+    }
+}
+
+/// What the receiver is told when the connection drops part way.
+const CONNECTION_LOST: &str =
+    "The connection to the sender was lost. Try again to pick up where it left off.";
+
+/// The error a receive ends with when its download fails (`None`: the
+/// download ended without finishing). A lost connection keeps the receive
+/// resumable: its record becomes Interrupted, with what had arrived, and the
+/// data stays held. Problems a retry cannot fix end it as failed.
+async fn download_failed(
+    core: &Core,
+    id: TransferId,
+    e: Option<iroh_blobs::get::GetError>,
+    reached: u64,
+) -> anyhow::Error {
+    use iroh_blobs::get::GetError;
+
+    let interrupted = |cause: Option<GetError>| async move {
+        core.inner
+            .catalog
+            .lock()
+            .await
+            .set_status(id, Status::Interrupted, Some(reached));
+        let stopped = fail::Stopped::new(ErrorCode::Interrupted, CONNECTION_LOST);
+        match cause {
+            Some(cause) => anyhow::Error::new(cause).context(stopped),
+            None => anyhow::Error::new(stopped),
+        }
+    };
+    let Some(e) = e else {
+        return interrupted(None).await;
+    };
+    if refused(&e) {
+        return CoreError::AlreadyClaimed.into();
+    }
+    // Writing what arrived into the app's store failed (a full disk, say).
+    if let Some(io) = e.local_write() {
+        let (code, reason) = fail::io_reason(io);
+        let stopped = fail::Stopped::new(code, format!("could not store what arrived: {reason}"));
+        return anyhow::Error::new(e).context(stopped);
+    }
+    // The connection dropped, timed out, or the sender went away.
+    if e.remote_read().is_some() || e.remote_write().is_some() || e.open().is_some() {
+        return interrupted(Some(e)).await;
+    }
+    match e {
+        // The sender's data stopped short or did not verify: its copy changed
+        // or went away since the code was made.
+        GetError::AtBlobHeaderNext { .. } | GetError::Decode { .. } => anyhow::Error::new(e)
+            .context(fail::Stopped::new(
+                ErrorCode::Other,
+                "The sender could not provide all of the data. Ask them to send it again.",
+            )),
+        _ => anyhow::Error::new(e).context("the download stopped"),
     }
 }
 

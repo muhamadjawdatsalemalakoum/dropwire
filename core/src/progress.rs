@@ -115,6 +115,10 @@ pub enum ErrorCode {
     /// The sender refused this device: another device already used the code,
     /// or the sender stopped sharing it.
     AlreadyClaimed,
+    /// The connection dropped part way through a receive. What arrived is
+    /// kept, the history entry is Interrupted, and trying again picks up where
+    /// it stopped.
+    Interrupted,
     /// A file or folder is no longer there.
     NotFound,
     /// The system refused access to a file or folder, or the drive is
@@ -135,6 +139,7 @@ impl ErrorCode {
         match self {
             ErrorCode::Unreachable => "unreachable",
             ErrorCode::AlreadyClaimed => "alreadyClaimed",
+            ErrorCode::Interrupted => "interrupted",
             ErrorCode::NotFound => "notFound",
             ErrorCode::PermissionDenied => "permissionDenied",
             ErrorCode::DiskFull => "diskFull",
@@ -211,6 +216,7 @@ mod tests {
         for code in [
             ErrorCode::Unreachable,
             ErrorCode::AlreadyClaimed,
+            ErrorCode::Interrupted,
             ErrorCode::NotFound,
             ErrorCode::PermissionDenied,
             ErrorCode::DiskFull,

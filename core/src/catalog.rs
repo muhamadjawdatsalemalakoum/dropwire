@@ -154,6 +154,14 @@ impl Catalog {
         }
     }
 
+    /// Mark an entry failed, unless it already ended some other way (for
+    /// example Interrupted, which keeps it resumable).
+    pub fn fail_if_active(&mut self, id: TransferId) {
+        if self.entries.get(&id.to_string()).map(|r| r.status) == Some(Status::Active) {
+            self.set_status(id, Status::Error, None);
+        }
+    }
+
     /// Rename an entry (a receive learns its files' names once they arrive).
     pub fn set_name(&mut self, id: TransferId, name: String) {
         if let Some(rec) = self.entries.get_mut(&id.to_string()) {
