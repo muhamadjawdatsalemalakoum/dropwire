@@ -49,6 +49,11 @@ hostname = "0.4"
 # same content again. Already in the tree through iroh-blobs.
 blake3 = "1"
 
+# Sets the com.apple.quarantine attribute on received files through a safe API
+# (this crate forbids unsafe code of its own). Already in the tree.
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true }

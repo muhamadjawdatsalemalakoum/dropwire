@@ -3207,6 +3207,7 @@ dependencies = [
  "iroh-mainline-address-lookup",
  "mdns-sd",
  "n0-future",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

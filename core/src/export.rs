@@ -639,6 +639,9 @@ pub(crate) async fn save(
         return Err(why);
     }
 
+    // Before the file appears under its real name, so it is never there unmarked.
+    mark_from_internet(&temp);
+
     // Replace our own empty reservation. A virus scanner can hold a brand-new
     // file open for a moment on Windows, so retry briefly before giving up.
     let mut attempt = 0;
@@ -656,6 +659,46 @@ pub(crate) async fn save(
         }
     }
     Ok(Saved::Written { renamed })
+}
+
+/// Contents of the Windows `Zone.Identifier` stream: zone 3 is the internet.
+#[cfg(windows)]
+const ZONE_IDENTIFIER: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+
+/// Mark a received file as downloaded from the internet, the way browsers and
+/// mail clients do, so Windows SmartScreen and Office Protected View, or
+/// Gatekeeper on macOS, treat it with the same care. Best effort: a file system
+/// that cannot hold the mark (FAT32, exFAT, some network shares) leaves the
+/// file unmarked, and the receive carries on.
+fn mark_from_internet(path: &Path) {
+    #[cfg(windows)]
+    {
+        // The Zone.Identifier stream, zone 3 (internet). No HostUrl or
+        // ReferrerUrl: they would record where the file came from.
+        let mut stream = path.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        if let Err(e) = std::fs::write(&stream, ZONE_IDENTIFIER) {
+            tracing::debug!("could not mark {} as downloaded: {e}", path.display());
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let value = format!("0081;{secs:x};Dropwire;");
+        if let Err(e) = rustix::fs::setxattr(
+            path,
+            "com.apple.quarantine",
+            value.as_bytes(),
+            rustix::fs::XattrFlags::empty(),
+        ) {
+            tracing::debug!("could not mark {} as downloaded: {e}", path.display());
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let _ = path;
 }
 
 #[cfg(test)]

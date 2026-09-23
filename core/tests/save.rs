@@ -302,3 +302,40 @@ async fn one_unwritable_file_does_not_stop_the_rest() {
     assert!(!locked.join("c.bin").exists());
     assert_no_leftovers(&out);
 }
+
+/// Received files carry the same "downloaded from the internet" mark a
+/// browser download does, so the OS applies its usual caution to them.
+#[cfg(any(windows, target_os = "macos"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn received_files_are_marked_as_downloaded() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+
+    let src = work.path().join("invoice.docm");
+    std::fs::write(&src, make_payload(40 * 1024)).unwrap();
+    let out = work.path().join("out");
+    transfer(&sender, &receiver, src, &out).await;
+    let saved = out.join("invoice.docm");
+    assert_eq!(std::fs::read(&saved).unwrap(), make_payload(40 * 1024));
+
+    #[cfg(windows)]
+    {
+        let mut stream = saved.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        let mark = std::fs::read_to_string(&stream).expect("Zone.Identifier stream");
+        assert!(mark.contains("ZoneId=3"), "unexpected mark: {mark:?}");
+        assert!(!mark.contains("Url"), "the mark must not record a source");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut buf = [0u8; 256];
+        let n = rustix::fs::getxattr(saved.as_path(), "com.apple.quarantine", &mut buf[..])
+            .expect("com.apple.quarantine attribute");
+        let mark = String::from_utf8_lossy(&buf[..n]).to_string();
+        assert!(mark.starts_with("0081;"), "unexpected mark: {mark:?}");
+        assert!(mark.contains(";Dropwire;"), "unexpected mark: {mark:?}");
+    }
+}
