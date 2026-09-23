@@ -68,6 +68,12 @@ pub struct NearbyDevice {
     pub addr: Option<String>,
     /// Unix seconds of last sighting.
     pub seen_at: u64,
+    /// Another host on the network announces this same id under a different
+    /// name. The id is only proven once a connection is made, so the name
+    /// shown (the first one seen for the id) may not be the device's own:
+    /// compare the fingerprint before trusting it.
+    #[serde(default)]
+    pub name_conflict: bool,
 }
 
 /// How many base32 chars the human fingerprint carries. 12 chars = 60 bits.
@@ -120,16 +126,85 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Internal peer entry: the public snapshot plus the parsed LAN socket we can
-/// actually dial (mDNS SRV target + port), so consent answers prefer the LAN.
-#[derive(Debug, Clone)]
-pub(crate) struct PeerEntry {
-    pub(crate) device: NearbyDevice,
-    pub(crate) sock: Option<SocketAddr>,
-    /// Full mDNS instance name we resolved this peer from, so a `ServiceRemoved`
-    /// event can be matched to the exact peer that left (never a prefix of some
-    /// other peer's id — see the removal handler).
+/// Most hosts that may claim one id at a time, sockets kept per claim, and
+/// devices kept in all. Past these, newcomers are ignored: an announcement
+/// flood cannot grow the table or the list without end.
+const MAX_CLAIMS: usize = 4;
+const MAX_SOCKS: usize = 8;
+const MAX_PEERS: usize = 128;
+
+/// One mDNS instance's announcement of an endpoint id: what it says about
+/// the device, and where it says the device can be reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Claim {
+    /// Full instance name it was resolved from, so that instance's
+    /// `ServiceRemoved` takes exactly this claim away and nothing else.
     pub(crate) instance: String,
+    pub(crate) name: String,
+    pub(crate) os: Option<String>,
+    pub(crate) socks: Vec<SocketAddr>,
+    pub(crate) seen_at: u64,
+}
+
+/// Everything announced for one endpoint id, first claim first.
+///
+/// The id in an announcement is only a claim: any host on the network can
+/// announce another device's id, and nothing proves it until a connection
+/// is made. So the first claim keeps the name and address shown and later
+/// ones never replace it, a goodbye takes away only its own claim, and an
+/// offer dials every claimed address: the connection's handshake proves
+/// which one is the device, so a false address can never redirect it, and
+/// the real one is still tried.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PeerEntry {
+    pub(crate) claims: Vec<Claim>,
+}
+
+impl PeerEntry {
+    /// The public snapshot of device `eid`, from its first claim.
+    fn device(&self, eid: &str) -> Option<NearbyDevice> {
+        let first = self.claims.first()?;
+        Some(NearbyDevice {
+            endpoint_id: eid.to_string(),
+            name: first.name.clone(),
+            fingerprint: NearbyDevice::fingerprint_for(eid),
+            os: first.os.clone(),
+            addr: first.socks.first().map(|s| s.to_string()),
+            seen_at: first.seen_at,
+            name_conflict: self.claims.iter().any(|c| c.name != first.name),
+        })
+    }
+
+    /// Every claimed LAN socket, the first claim's first, without repeats.
+    fn sockets(&self) -> Vec<SocketAddr> {
+        let mut out: Vec<SocketAddr> = Vec::new();
+        for sock in self.claims.iter().flat_map(|c| c.socks.iter()) {
+            if !out.contains(sock) {
+                out.push(*sock);
+            }
+        }
+        out
+    }
+}
+
+/// A Dropwire announcement read from one resolved mDNS instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Announcement {
+    pub(crate) instance: String,
+    /// The announced endpoint id, in its canonical form.
+    pub(crate) eid: String,
+    pub(crate) name: String,
+    pub(crate) os: Option<String>,
+    pub(crate) socks: Vec<SocketAddr>,
+}
+
+/// What one mDNS event changes in a peer table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Change {
+    /// An instance announced (or re-announced) a device.
+    Seen(Announcement),
+    /// The instance with this full name left.
+    Gone(String),
 }
 
 /// Peer tables fed by the browse (each `NearbyState.peers`).
@@ -245,75 +320,120 @@ fn pump(receiver: mdns_sd::Receiver<ServiceEvent>, id: u64) {
         if let ServiceEvent::SearchStopped(_) = event {
             return;
         }
+        // Never let a malformed packet take discovery down: a panic while
+        // reading or folding one untrusted event (here or in a dependency)
+        // only skips that event.
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| change_of(&event)));
+        let Ok(Some(change)) = read else {
+            continue;
+        };
         let disc = discovery();
         if disc.browse != Some(id) {
             return; // stopped, or replaced by a newer browse
         }
         for table in &disc.tables {
-            // Never let a malformed packet take discovery down: a panic while
-            // folding one untrusted event (here or in a dependency) only
-            // skips that event.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                apply_event(table, &event);
+                apply(table, &change);
             }));
         }
     }
 }
 
-/// Fold one mDNS event into one peer table.
-fn apply_event(peers: &PeerTable, event: &ServiceEvent) {
+/// What `event` changes, if it is about a Dropwire device.
+fn change_of(event: &ServiceEvent) -> Option<Change> {
     match event {
         ServiceEvent::ServiceResolved(info) => {
             let props = info.get_properties();
-            let Some(other_eid) = props.get_property_val_str(TXT_EID).map(str::to_owned) else {
-                return; // not a Dropwire v1 announcement
-            };
+            // Not a Dropwire announcement, or an id that is not one.
+            let eid = parse_eid(props.get_property_val_str(TXT_EID)?).ok()?;
             let name = props
                 .get_property_val_str(TXT_NAME)
                 .map(str::to_owned)
                 .unwrap_or_else(|| "Dropwire device".into());
             let os = props.get_property_val_str(TXT_OS).map(str::to_owned);
-            let sock = info
-                .get_addresses_v4()
-                .into_iter()
-                .next()
-                .map(|ip| SocketAddr::new(IpAddr::V4(ip), info.get_port()));
-            let entry = PeerEntry {
-                device: NearbyDevice {
-                    fingerprint: NearbyDevice::fingerprint_for(&other_eid),
-                    os,
-                    addr: sock.as_ref().map(|s| s.to_string()),
-                    endpoint_id: other_eid.clone(),
-                    name,
-                    seen_at: now_secs(),
-                },
-                sock,
-                instance: info.get_fullname().to_string(),
+            let port = info.get_port();
+            let mut socks: Vec<SocketAddr> = if port == 0 {
+                Vec::new()
+            } else {
+                info.get_addresses_v4()
+                    .into_iter()
+                    .map(|ip| SocketAddr::new(IpAddr::V4(ip), port))
+                    .collect()
             };
-            peers
-                .lock()
-                .unwrap_or_else(poisoned)
-                .insert(other_eid, entry);
+            socks.sort();
+            socks.truncate(MAX_SOCKS);
+            Some(Change::Seen(Announcement {
+                instance: info.get_fullname().to_string(),
+                eid: eid.to_string(),
+                name,
+                os,
+                socks,
+            }))
         }
-        ServiceEvent::ServiceRemoved(_ty, full_name) => {
-            // Remove the ONE peer resolved from this exact instance name. The
-            // earlier version matched any stored id that *started with* the
-            // instance's 8-hex suffix, so a crafted or colliding instance name
-            // could evict a different peer (a LAN denial-of-visibility). Match
-            // the full instance string instead: unambiguous, unspoofable-against
-            // a third party.
-            let mut guard = peers.lock().unwrap_or_else(poisoned);
-            let gone: Vec<String> = guard
-                .iter()
-                .filter(|(_, e)| &e.instance == full_name)
-                .map(|(k, _)| k.clone())
-                .collect();
-            for k in gone {
-                guard.remove(&k);
-            }
-        }
-        _ => {}
+        ServiceEvent::ServiceRemoved(_ty, full_name) => Some(Change::Gone(full_name.clone())),
+        _ => None,
     }
+}
+
+/// Fold one change into one peer table.
+pub(crate) fn apply(table: &PeerTable, change: &Change) {
+    let mut peers = table.lock().unwrap_or_else(poisoned);
+    match change {
+        Change::Seen(seen) => see(&mut peers, seen),
+        Change::Gone(instance) => forget(&mut peers, instance),
+    }
+}
+
+/// Record `seen` as its instance's claim on its id. The claim is updated in
+/// place if that instance made it already; otherwise it queues behind the
+/// claims made before it and never displaces them.
+fn see(peers: &mut HashMap<String, PeerEntry>, seen: &Announcement) {
+    // An instance speaks for one id at a time: if it named another before,
+    // that claim is withdrawn.
+    for (eid, entry) in peers.iter_mut() {
+        if *eid != seen.eid {
+            entry.claims.retain(|c| c.instance != seen.instance);
+        }
+    }
+    peers.retain(|_, entry| !entry.claims.is_empty());
+
+    let claim = Claim {
+        instance: seen.instance.clone(),
+        name: seen.name.clone(),
+        os: seen.os.clone(),
+        socks: seen.socks.clone(),
+        seen_at: now_secs(),
+    };
+    if let Some(entry) = peers.get_mut(&seen.eid) {
+        if let Some(mine) = entry
+            .claims
+            .iter_mut()
+            .find(|c| c.instance == seen.instance)
+        {
+            *mine = claim;
+        } else if entry.claims.len() < MAX_CLAIMS {
+            entry.claims.push(claim);
+        }
+    } else if peers.len() < MAX_PEERS {
+        peers.insert(
+            seen.eid.clone(),
+            PeerEntry {
+                claims: vec![claim],
+            },
+        );
+    }
+}
+
+/// The instance `instance` left: drop its claim, and the device with it if
+/// no other claim is left. Matched on the full instance name, never a prefix
+/// of an id. (Any host can send a goodbye for any name; one for somebody
+/// else's name takes away only the claim made under that name, which the
+/// daemon would drop from its cache as well.)
+fn forget(peers: &mut HashMap<String, PeerEntry>, instance: &str) {
+    for entry in peers.values_mut() {
+        entry.claims.retain(|c| c.instance != instance);
+    }
+    peers.retain(|_, entry| !entry.claims.is_empty());
 }
 
 /// Recover a mutex guard even if a previous holder panicked. A poisoned lock
@@ -473,25 +593,28 @@ impl NearbyState {
             .peers
             .lock()
             .unwrap_or_else(poisoned)
-            .values()
-            .filter(|e| e.device.endpoint_id != self.self_eid)
-            .map(|e| e.device.clone())
+            .iter()
+            .filter(|(eid, _)| **eid != self.self_eid)
+            .filter_map(|(eid, entry)| entry.device(eid))
             .collect();
         devs.sort_by_key(|d| d.name.to_lowercase());
         devs
     }
 
-    /// Look up one peer's LAN socket address by hex endpoint id. None while
-    /// sharing is off: a hidden device dials no one it found on the LAN.
-    pub(crate) fn peer_socket(&self, eid_hex: &str) -> Option<SocketAddr> {
+    /// Every LAN socket announced for one peer (hex endpoint id), first
+    /// claim first. Some may belong to a host that only claims the id: the
+    /// dial proves which is the device. Empty while sharing is off, since a
+    /// hidden device dials no one it found on the LAN.
+    pub(crate) fn peer_sockets(&self, eid_hex: &str) -> Vec<SocketAddr> {
         if !self.is_running() || eid_hex == self.self_eid {
-            return None;
+            return Vec::new();
         }
         self.peers
             .lock()
             .unwrap_or_else(poisoned)
             .get(eid_hex)
-            .and_then(|e| e.sock)
+            .map(PeerEntry::sockets)
+            .unwrap_or_default()
     }
 }
 
@@ -789,5 +912,145 @@ mod tests {
         assert_eq!(without_local_domain("desktop-7"), "desktop-7");
         assert_eq!(without_local_domain(".local"), "");
         assert!(!default_device_name().is_empty());
+    }
+
+    fn seen(instance: &str, eid: &str, name: &str, ip: [u8; 4]) -> Change {
+        Change::Seen(Announcement {
+            instance: instance.to_string(),
+            eid: eid.to_string(),
+            name: name.to_string(),
+            os: Some("linux".into()),
+            socks: vec![SocketAddr::from((ip, 4242))],
+        })
+    }
+
+    fn gone(instance: &str) -> Change {
+        Change::Gone(instance.to_string())
+    }
+
+    fn shown(table: &PeerTable, eid: &str) -> Option<NearbyDevice> {
+        table.lock().unwrap().get(eid).and_then(|e| e.device(eid))
+    }
+
+    fn sockets(table: &PeerTable, eid: &str) -> Vec<SocketAddr> {
+        table
+            .lock()
+            .unwrap()
+            .get(eid)
+            .map(PeerEntry::sockets)
+            .unwrap_or_default()
+    }
+
+    /// Another host announcing Bob's id under its own name and address
+    /// neither renames Bob nor takes his address; it is flagged, and its
+    /// address is only tried alongside Bob's.
+    #[test]
+    fn a_second_claim_on_an_id_never_replaces_the_first() {
+        let table = PeerTable::default();
+        apply(&table, &seen("bob", EID, "Bob", [10, 0, 0, 2]));
+        apply(
+            &table,
+            &seen("mallory", EID, "Alice-Laptop", [10, 0, 0, 66]),
+        );
+        let dev = shown(&table, EID).unwrap();
+        assert_eq!(dev.name, "Bob");
+        assert_eq!(dev.addr.as_deref(), Some("10.0.0.2:4242"));
+        assert!(dev.name_conflict);
+        assert_eq!(
+            sockets(&table, EID),
+            [
+                SocketAddr::from(([10, 0, 0, 2], 4242)),
+                SocketAddr::from(([10, 0, 0, 66], 4242))
+            ]
+        );
+    }
+
+    /// A goodbye takes away only the claim made under its own name.
+    #[test]
+    fn a_goodbye_takes_only_its_own_claim() {
+        let table = PeerTable::default();
+        apply(&table, &seen("bob", EID, "Bob", [10, 0, 0, 2]));
+        apply(
+            &table,
+            &seen("mallory", EID, "Alice-Laptop", [10, 0, 0, 66]),
+        );
+        apply(&table, &gone("mallory"));
+        let dev = shown(&table, EID).unwrap();
+        assert_eq!(dev.name, "Bob");
+        assert!(!dev.name_conflict);
+        assert_eq!(sockets(&table, EID).len(), 1);
+
+        apply(&table, &gone("bob"));
+        assert!(shown(&table, EID).is_none());
+        assert!(table.lock().unwrap().is_empty());
+    }
+
+    /// A rename is a new instance: the new name shows once the old instance
+    /// says goodbye. A re-announcement of the same instance updates it.
+    #[test]
+    fn a_renamed_device_shows_its_new_name() {
+        let table = PeerTable::default();
+        apply(&table, &seen("bob-old", EID, "Bob", [10, 0, 0, 2]));
+        apply(&table, &seen("bob-new", EID, "Bobby", [10, 0, 0, 2]));
+        assert_eq!(shown(&table, EID).unwrap().name, "Bob");
+        apply(&table, &gone("bob-old"));
+        let dev = shown(&table, EID).unwrap();
+        assert_eq!(dev.name, "Bobby");
+        assert!(!dev.name_conflict);
+
+        apply(&table, &seen("bob-new", EID, "Robert", [10, 0, 0, 3]));
+        let entry = table.lock().unwrap()[EID].clone();
+        assert_eq!(entry.claims.len(), 1);
+        assert_eq!(entry.device(EID).unwrap().name, "Robert");
+        assert_eq!(entry.sockets(), [SocketAddr::from(([10, 0, 0, 3], 4242))]);
+    }
+
+    /// An instance speaks for one id: announcing another moves its claim.
+    #[test]
+    fn an_instance_that_names_another_id_moves() {
+        let other = "cd34".repeat(16);
+        let table = PeerTable::default();
+        apply(&table, &seen("x", EID, "X", [10, 0, 0, 9]));
+        apply(&table, &seen("x", &other, "X", [10, 0, 0, 9]));
+        assert!(shown(&table, EID).is_none());
+        assert_eq!(shown(&table, &other).unwrap().name, "X");
+    }
+
+    /// A flood of announcements cannot grow the table without end, and the
+    /// first claims stay put.
+    #[test]
+    fn claims_and_devices_are_capped() {
+        let table = PeerTable::default();
+        apply(&table, &seen("bob", EID, "Bob", [10, 0, 0, 2]));
+        for i in 0..MAX_CLAIMS + 3 {
+            apply(
+                &table,
+                &seen(&format!("fake-{i}"), EID, "Fake", [10, 0, 1, i as u8]),
+            );
+        }
+        assert_eq!(table.lock().unwrap()[EID].claims.len(), MAX_CLAIMS);
+        assert_eq!(shown(&table, EID).unwrap().name, "Bob");
+
+        for i in 0..MAX_PEERS + 5 {
+            apply(
+                &table,
+                &seen(
+                    &format!("dev-{i}"),
+                    &format!("{i:064x}"),
+                    "D",
+                    [10, 0, 2, 1],
+                ),
+            );
+        }
+        assert_eq!(table.lock().unwrap().len(), MAX_PEERS);
+        assert_eq!(shown(&table, EID).unwrap().name, "Bob");
+    }
+
+    #[test]
+    fn a_removal_event_names_its_instance() {
+        let event = ServiceEvent::ServiceRemoved(NEARBY_SERVICE.into(), "bob._dropwire".into());
+        assert_eq!(change_of(&event), Some(gone("bob._dropwire")));
+        let other = ServiceEvent::SearchStarted("x".into());
+        assert_eq!(change_of(&other), None);
     }
 }

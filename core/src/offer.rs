@@ -417,23 +417,20 @@ impl Core {
             return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
         }
 
-        // Dial priority: mDNS LAN socket → explicit hint → engine lookup.
+        // Dial every LAN socket announced for this id, plus the hint (else
+        // the engine looks the id up). Another host can announce this id with
+        // its own address, but the handshake proves which one is the device:
+        // a false address can never redirect the offer, and the real one is
+        // still tried.
         let lan = {
             let state = self.inner.nearby.lock().await;
-            state.peer_socket(&eid_hex)
+            state.peer_sockets(&eid_hex)
         };
-        let dial_addr = match lan {
-            Some(sock) => EndpointAddr::from_parts(peer, [TransportAddr::Ip(sock)]).with_addrs(
-                addr_hint
-                    .as_ref()
-                    .map(|a| a.addrs.iter().cloned())
-                    .unwrap_or_default(),
-            ),
-            None => match addr_hint {
-                Some(a) => EndpointAddr::from_parts(peer, a.addrs.iter().cloned()),
-                None => EndpointAddr::from_parts(peer, []),
-            },
-        };
+        let hint: Vec<TransportAddr> = addr_hint
+            .map(|a| a.addrs.into_iter().collect())
+            .unwrap_or_default();
+        let dial_addr =
+            EndpointAddr::from_parts(peer, lan.into_iter().map(TransportAddr::Ip).chain(hint));
 
         let device_name = self.device_name().await;
         let frame = Frame::Offer {
@@ -610,24 +607,17 @@ impl Core {
     /// tests have no multicast.
     #[cfg(feature = "test-utils")]
     pub fn test_see_nearby_peer(&self, eid_hex: &str) {
-        let entry = crate::discover::PeerEntry {
-            device: NearbyDevice {
-                endpoint_id: eid_hex.to_string(),
-                name: "Test device".to_string(),
-                fingerprint: NearbyDevice::fingerprint_for(eid_hex),
-                os: None,
-                addr: None,
-                seen_at: 0,
-            },
-            sock: None,
+        let seen = crate::discover::Announcement {
             instance: format!("test-{eid_hex}"),
+            eid: eid_hex.to_string(),
+            name: "Test device".to_string(),
+            os: None,
+            socks: Vec::new(),
         };
-        self.inner
-            .consent
-            .nearby_peers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(eid_hex.to_string(), entry);
+        crate::discover::apply(
+            &self.inner.consent.nearby_peers,
+            &crate::discover::Change::Seen(seen),
+        );
     }
 
     /// TEST-ONLY: whether this process is browsing the local network for
