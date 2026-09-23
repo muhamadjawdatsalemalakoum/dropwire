@@ -5,25 +5,32 @@ Dropwire is a security- and privacy-sensitive product. We take reports seriously
 ## Reporting a vulnerability
 
 **Please do not open public issues for security problems.** Report privately through
-**[GitHub Security Advisories](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new)**
+**[GitHub private vulnerability reporting](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new)**
 (the repo's *Security → Report a vulnerability* button) with details and, if possible, a proof of
 concept. We'll acknowledge within a few days and keep you updated through to a fix and coordinated
 disclosure.
+
+If that link does not show you a report form, start a
+[Discussion](https://github.com/muhamadjawdatsalemalakoum/dropwire/discussions) that only says you
+have a security report and asks a maintainer to contact you. Leave every detail of the problem out
+of it. A maintainer will open a private security advisory and invite you to it, and the details go
+there.
 
 ## What Dropwire guarantees
 
 - **End-to-end encryption.** Connections use QUIC with TLS 1.3 (via `rustls`). Data is encrypted
   between the two devices; intermediaries cannot read it.
 - **No server holds your files.** Transfers are peer-to-peer. When a direct connection can't be
-  made, traffic falls back to a relay that **only forwards already-encrypted packets** — it cannot
-  decrypt them, and Dropwire runs no relay of its own (it uses the public iroh relay network).
+  made, traffic falls back to a relay that **only forwards already-encrypted packets**. It cannot
+  decrypt them, and Dropwire runs no relay of its own (it uses n0's public iroh relays).
 - **No accounts, no tracking.** There is no sign-in, no telemetry, and no analytics. Identity is a
   per-device public key; the only capability shared is the per-transfer ticket.
 
 ## Trust boundary
 
 The transfer **ticket** is the capability: anyone who has it can fetch that content while the
-sender is serving it. Treat it like a one-time password — share it only with the intended recipient.
+sender is serving it. Treat it like a one-time password and share it only with the intended
+recipient.
 
 ## Known limitations (be honest)
 
@@ -35,5 +42,6 @@ sender is serving it. Treat it like a one-time password — share it only with t
 
 ## Supported versions
 
-Dropwire is pre-1.0; security fixes target the latest `main`. Pinned dependencies of note:
-`iroh 1.0`, `iroh-blobs 0.10x` (pre-1.0, wrapped behind our `irohcore` API).
+Dropwire is pre-1.0. Security fixes land on `main` and ship in the next release, so only the
+latest release is supported. Pinned dependencies of note: `iroh 1.0`, `iroh-blobs 0.10x` (pre-1.0,
+wrapped behind our `irohcore` API).

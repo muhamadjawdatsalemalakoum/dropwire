@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
+  # Lets a maintainer check any branch or tag on demand, e.g. the commit about
+  # to be tagged for a release.
+  workflow_dispatch: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,6 +15,8 @@ env:
 
 jobs:
   # Engine: format, lint, build, and test the `irohcore` crate on all three desktop OSes.
+  # --locked everywhere so a Cargo.lock that is out of step with the manifests
+  # fails CI instead of being quietly re-resolved.
   engine:
     name: engine (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -24,7 +29,7 @@ jobs:
         # macOS job exercises.
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -40,33 +45,84 @@ jobs:
       - name: Clippy
         # test-utils so the gated integration tests (nearby consent, relay) are
         # linted too, not just the shipping lib.
-        run: cargo clippy -p irohcore --all-targets --features test-utils -- -D warnings
+        run: cargo clippy -p irohcore --all-targets --features test-utils --locked -- -D warnings
 
       - name: Build
-        run: cargo build -p irohcore --verbose
+        run: cargo build -p irohcore --locked --verbose
 
       - name: Test
         # test-utils is REQUIRED for the nearby consent suite and the relay
         # tests ([[test]] required-features in core/Cargo.toml). Without it those
         # entire suites were silently skipped in CI.
-        run: cargo test -p irohcore --features test-utils --verbose
+        run: cargo test -p irohcore --features test-utils --locked --verbose
 
-  # Placeholder for the desktop bundle job, enabled once `src-tauri` lands (M2).
-  # Uses tauri-apps/tauri-action to produce signed installers per OS.
-  #
-  # bundle:
-  #   name: bundle (${{ matrix.os }})
-  #   needs: engine
-  #   runs-on: ${{ matrix.os }}
-  #   strategy:
-  #     matrix:
-  #       os: [ubuntu-latest, macos-latest, windows-latest]
-  #   steps:
-  #     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-  #     - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-  #     - uses: actions/setup-node@v4
-  #       with: { node-version: 20 }
-  #     - run: npm ci
-  #     - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
-  #       env:
-  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # Desktop shell: lint, build, and test the `dropwire` crate (Tauri v2) on all three
+  # desktop OSes. Without this the shell, its platform-gated code, and any
+  # dependency bump that only touches it were first compiled by the release
+  # workflow after a tag was pushed. Bundling installers stays in release.yml.
+  shell:
+    name: shell (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install Linux dependencies
+        # Same WebKitGTK stack the release build installs.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Clippy
+        run: cargo clippy -p dropwire --all-targets --locked -- -D warnings
+
+      - name: Build
+        # A full build, not just a check, so linking against the platform
+        # webview libraries is exercised too.
+        run: cargo build -p dropwire --locked
+
+      - name: Test
+        run: cargo test -p dropwire --locked
+
+  # The rust-version in Cargo.toml is a promise to anyone packaging Dropwire.
+  # Check the engine on exactly that toolchain, so the promise breaks CI the
+  # day a dependency bump needs a newer rustc. Linux only, engine only: the
+  # shell's Linux build needs the WebKitGTK stack, and on stable clippy
+  # already holds the shell's std usage to the same rust-version.
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the declared rust-version
+        id: msrv
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Check the engine on the minimum supported Rust
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+$MSRV" check -p irohcore --all-targets --features test-utils --locked

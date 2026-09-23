@@ -1,6 +1,6 @@
 [package]
 name = "dropwire"
-description = "Dropwire — free, private, peer-to-peer file transfer."
+description = "Dropwire: free, private, peer-to-peer file transfer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

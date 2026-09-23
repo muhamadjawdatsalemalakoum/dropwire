@@ -3,10 +3,10 @@
 ## Layout
 
 ```
-core/        irohcore — the transfer engine (only crate that imports iroh / iroh-blobs)
+core/        irohcore: the transfer engine (only crate that imports iroh / iroh-blobs)
 src-tauri/   the desktop app shell (Tauri v2): commands, window, config, icons
 ui/          the app frontend (vanilla HTML/CSS/JS; loaded by Tauri as frontendDist)
-infra/       OPTIONAL self-hosted relay + DNS (not needed — the app is serverless by default)
+infra/       OPTIONAL self-hosted relay + DNS (not needed: the app is serverless by default)
 www/         marketing landing page (static)
 docs/        PRIVACY.md, this file, and other docs
 ```
@@ -16,14 +16,15 @@ speak only `irohcore`'s stable API (`Core`, `Progress`, `CoreConfig`).
 
 ## Prerequisites
 
-- **Rust** (stable) — https://rustup.rs
+- **Rust** 1.91 or newer, from https://rustup.rs (`rust-toolchain.toml` selects the stable channel).
 - **A C toolchain** for the native crypto/QUIC deps:
   - **Windows:** Visual Studio Build Tools with the *Desktop development with C++* workload, plus
-    WebView2 (ships with Windows 11). Build from a shell that has the MSVC env loaded — either the
+    WebView2 (ships with Windows 11). Build from a shell that has the MSVC env loaded: either the
     "x64 Native Tools" prompt, or import `vcvars64.bat` before running cargo (see below).
   - **macOS:** Xcode command line tools.
-  - **Linux:** `webkit2gtk` + `libsoup` dev packages (see Tauri's Linux prerequisites) and a C compiler.
-- **Node** is *not* required — the UI is plain HTML/CSS/JS with no build step.
+  - **Linux:** the WebKitGTK 4.1 stack and a C compiler. On Debian/Ubuntu, the same packages CI
+    installs: `sudo apt install build-essential libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev`.
+- **Node** is *not* required; the UI is plain HTML/CSS/JS with no build step.
 
 ### Windows: loading the MSVC environment for cargo
 
@@ -36,24 +37,36 @@ cmd /c "`"$vcvars`" && set" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') {
 ## Engine (fast inner loop)
 
 ```sh
-cargo test  -p irohcore                              # roundtrip (file + folder) tests
-cargo test  -p irohcore -- --ignored resume_after_interrupt   # the 64 MB interrupt+resume test
-cargo clippy -p irohcore --all-targets -- -D warnings
+cargo test   -p irohcore --features test-utils                    # the full engine suite, as CI runs it
+cargo test   -p irohcore --test transfer resume_after_interrupt   # just the 64 MB interrupt + resume test
+cargo clippy -p irohcore --all-targets --features test-utils -- -D warnings
 cargo fmt --all
 ```
 
-The engine tests use `Infra::LocalOnly` (no relay/discovery) so they're hermetic and network-free.
+`--features test-utils` matters. The nearby consent and relay integration tests declare it as a
+required feature (`[[test]] required-features` in `core/Cargo.toml`), so without it cargo skips
+those suites without a word and still reports success.
+
+The engine tests use `Infra::LocalOnly` (loopback only, no relay or discovery) and the relay tests
+run their own in-process relay, so the suite is hermetic and needs no network. Two opt-in tests
+do touch a real network and are `#[ignore]`d by default:
+
+```sh
+cargo test -p irohcore --test transfer roundtrip_serverless -- --ignored                   # public DHT + n0's relay
+cargo test -p irohcore --features test-utils --test nearby_mdns -- --ignored --nocapture   # live mDNS on your LAN
+```
 
 ## Running the desktop app
 
 ```sh
-cargo run -p dropwire        # builds the shell + engine and opens the window
+cargo run    -p dropwire                                  # builds the shell + engine and opens the window
+cargo clippy -p dropwire --all-targets -- -D warnings     # lint the shell, as CI does on all three OSes
 ```
 
 No dev server is needed (the UI is static and loaded from `../ui`). The app starts with the
 serverless config: Mainline-DHT discovery + n0's free public relay fallback.
 
-## Building installers (M5)
+## Building installers
 
 Requires the Tauri CLI:
 
@@ -62,8 +75,9 @@ cargo install tauri-cli --version "^2"
 cargo tauri build           # produces platform installers under target/release/bundle/
 ```
 
-Code signing (Windows cert, Apple Developer ID + notarization) is a release-time step — see the
-release checklist. Unsigned local installers build fine for testing.
+Code signing (Windows cert, Apple Developer ID + notarization) is a release-time step. See the
+signing notes at the top of `.github/workflows/release.yml`; release builds are unsigned by default,
+and unsigned local installers build fine for testing.
 
 ## Regenerating app icons
 

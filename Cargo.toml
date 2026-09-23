@@ -1,7 +1,5 @@
-# Dropwire — Cargo workspace
-# `src-tauri` is added as a member once the desktop shell lands (M2); keeping the
-# workspace at `core` only for now lets `cargo build`/`test` stay green while the
-# engine is built and verified first.
+# Dropwire Cargo workspace: `core` (the transfer engine, crate `irohcore`) and
+# `src-tauri` (the desktop shell, crate `dropwire`). Both build into ./target.
 [workspace]
 resolver = "2"
 members = ["core", "src-tauri"]
@@ -13,7 +11,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/muhamadjawdatsalemalakoum/dropwire"
 homepage = "https://muhamadjawdatsalemalakoum.github.io/dropwire/"
 authors = ["Dropwire contributors"]
-rust-version = "1.82"
+# The floor set by the pinned iroh 1.0 / iroh-blobs 0.103 line (both declare
+# 1.91). Raise it whenever those pins move to a release that needs a newer rustc.
+rust-version = "1.91"
 
 # Pinned exactly: iroh core is stable (1.0); iroh-blobs is pre-1.0 (0.10x line) and
 # wrapped behind the `irohcore` crate so its churn never leaks past one boundary.

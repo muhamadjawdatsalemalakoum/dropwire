@@ -48,7 +48,7 @@
     "targets": "all",
     "category": "Utility",
     "shortDescription": "Free, private, peer-to-peer file transfer.",
-    "longDescription": "Dropwire sends any file straight from one device to another \u2014 end-to-end encrypted, resumable, with no account and no server holding your data. Built on iroh.",
+    "longDescription": "Dropwire sends any file straight from one device to another. It is end-to-end encrypted and resumable, with no account and no server holding your data. Built on iroh.",
     "copyright": "Copyright \u00a9 2026 Dropwire contributors",
     "publisher": "Dropwire",
     "homepage": "https://muhamadjawdatsalemalakoum.github.io/dropwire/",
