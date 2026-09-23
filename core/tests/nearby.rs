@@ -121,9 +121,11 @@ async fn nearby_offer_accept_transfers() {
     let dir2 = tempdir::dir();
     let sender = local_core(dir.path()).await;
     let receiver = local_core(dir2.path()).await;
-    // Incoming offers are gated on nearby being ON (invisible while off); enable
-    // it here without standing up a real mDNS daemon.
+    // Incoming offers are gated on nearby being ON (invisible while off) and on
+    // the sender being seen on the local network; set both here without
+    // standing up a real mDNS daemon.
     receiver.test_set_nearby_running(true);
+    receiver.test_see_nearby_peer(&sender.endpoint_id());
 
     // Receiver subscribes BEFORE the offer is sent (no missed broadcasts).
     let mut offers = receiver.subscribe_offers();
@@ -192,6 +194,7 @@ async fn nearby_offer_decline_blocks_transfer() {
     let sender = local_core(dir.path()).await;
     let receiver = local_core(dir2.path()).await;
     receiver.test_set_nearby_running(true);
+    receiver.test_see_nearby_peer(&sender.endpoint_id());
     let mut offers = receiver.subscribe_offers();
 
     let src = dir.path().join("secret.txt");
@@ -350,6 +353,7 @@ async fn offer_names_the_send_it_offers() {
     let sender = local_core(dir.path()).await;
     let receiver = local_core(dir2.path()).await;
     receiver.test_set_nearby_running(true);
+    receiver.test_see_nearby_peer(&sender.endpoint_id());
     let mut offers = receiver.subscribe_offers();
 
     let older = dir.path().join("older.txt");
@@ -396,7 +400,9 @@ async fn offer_never_takes_a_send_from_its_receiver() {
     let r1 = local_core(d1.path()).await;
     let r2 = local_core(d2.path()).await;
     r1.test_set_nearby_running(true);
+    r1.test_see_nearby_peer(&sender.endpoint_id());
     r2.test_set_nearby_running(true);
+    r2.test_see_nearby_peer(&sender.endpoint_id());
     let mut r1_offers = r1.subscribe_offers();
     let mut r2_offers = r2.subscribe_offers();
 
@@ -455,6 +461,7 @@ async fn declined_offer_keeps_the_send_and_shuts_the_decliner_out() {
     let bob = local_core(bob_dir.path()).await;
     let carol = local_core(carol_dir.path()).await;
     bob.test_set_nearby_running(true);
+    bob.test_see_nearby_peer(&sender.endpoint_id());
     let mut offers = bob.subscribe_offers();
 
     let src = dir.path().join("plans.pdf");
@@ -553,6 +560,7 @@ async fn cancelling_a_send_withdraws_its_offer() {
     let sender = local_core(dir.path()).await;
     let bob = local_core(bob_dir.path()).await;
     bob.test_set_nearby_running(true);
+    bob.test_see_nearby_peer(&sender.endpoint_id());
     let mut offers = bob.subscribe_offers();
     let mut withdrawals = bob.subscribe_offer_withdrawals();
 
@@ -603,6 +611,7 @@ async fn withdrawing_an_offer_keeps_the_send() {
     let bob = local_core(bob_dir.path()).await;
     let carol = local_core(carol_dir.path()).await;
     bob.test_set_nearby_running(true);
+    bob.test_see_nearby_peer(&sender.endpoint_id());
     let mut offers = bob.subscribe_offers();
     let mut withdrawals = bob.subscribe_offer_withdrawals();
 
@@ -652,7 +661,9 @@ async fn a_send_has_one_offer_at_a_time() {
     let bob = local_core(bob_dir.path()).await;
     let carol = local_core(carol_dir.path()).await;
     bob.test_set_nearby_running(true);
+    bob.test_see_nearby_peer(&sender.endpoint_id());
     carol.test_set_nearby_running(true);
+    carol.test_see_nearby_peer(&sender.endpoint_id());
     let mut bob_offers = bob.subscribe_offers();
     let mut carol_offers = carol.subscribe_offers();
 
@@ -711,6 +722,7 @@ async fn offer_of_someone_elses_code_is_declined_unseen() {
     let (_id, mut z_stream) = z.send(src).await.unwrap();
     let z_code = wait_ready(&mut z_stream).await;
     let x = raw_endpoint().await;
+    receiver.test_see_nearby_peer(&x.id().to_string());
 
     let answer = tokio::time::timeout(
         Duration::from_secs(10),
@@ -734,6 +746,53 @@ async fn offer_of_someone_elses_code_is_declined_unseen() {
     assert_eq!(offer.from_endpoint_id, x.id().to_string());
     receiver.respond_offer(offer.offer_id, false).await.unwrap();
     assert_eq!(pending.await.unwrap().as_deref(), Some("offerDecline"));
+}
+
+/// Only a device seen on the local network can raise an offer dialog. Any
+/// other device that knows this one's id (every shared code carries it) is
+/// declined unseen, even with Nearby on. Once it is seen nearby, its offers
+/// show, and a new offer lets it back in after the earlier "no".
+#[tokio::test]
+async fn offer_from_a_device_not_seen_nearby_is_declined_unseen() {
+    let dir = tempdir::dir();
+    let r_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+
+    let src = dir.path().join("far.txt");
+    std::fs::write(&src, make_payload(16 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
+        .await
+        .expect("offer");
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+    let surfaced = tokio::time::timeout(Duration::from_millis(300), offers.recv()).await;
+    assert!(surfaced.is_err(), "an offer from afar must not be shown");
+
+    // Now the receiver sees the sender on its network.
+    receiver.test_see_nearby_peer(&sender.endpoint_id());
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
+        .await
+        .expect("offer again");
+    let offer = next_offer(&mut offers).await;
+    receiver
+        .respond_offer(offer.offer_id, true)
+        .await
+        .expect("accept");
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+    let dest = r_dir.path().join("out");
+    let (_rid, mut rx) = receiver.receive(offer.ticket, dest.clone()).await.unwrap();
+    wait_done(&mut rx).await;
+    assert_eq!(
+        std::fs::read(dest.join("far.txt")).unwrap(),
+        make_payload(16 * 1024)
+    );
 }
 
 /// The pairing fingerprint must depend on the WHOLE identity, not a short

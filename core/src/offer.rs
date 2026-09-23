@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use crate::catalog::Status;
 use crate::control::CTRL_ALPN;
-use crate::discover::{parse_eid, NearbyDevice};
+use crate::discover::{parse_eid, NearbyDevice, PeerTable};
 use crate::error::{CoreError, Result};
 use crate::progress::{Direction, TransferId};
 use crate::{Core, CtrlMsg};
@@ -215,6 +215,9 @@ pub(crate) struct ConsentCtx {
     /// is "invisible" while off must actually hold at the consent layer, not
     /// just for mDNS advertising.
     pub(crate) nearby_running: Arc<std::sync::atomic::AtomicBool>,
+    /// The live mDNS peer table: devices this one currently sees on the local
+    /// network. Only they can raise an offer dialog here.
+    pub(crate) nearby_peers: PeerTable,
     /// Verdict wait-list: offer_id → a oneshot the UI's answer is sent down.
     /// The control handler parks the sender's offer connection here until the
     /// local user responds, then the verdict travels back in-band.
@@ -560,6 +563,31 @@ impl Core {
         EndpointAddr::from_parts(endpoint.id(), loopback.map(TransportAddr::Ip))
     }
 
+    /// TEST-ONLY: make this device see `eid_hex` on the local network, as if
+    /// mDNS had found it, so its offers pass the visibility gate. Hermetic
+    /// tests have no multicast.
+    #[cfg(feature = "test-utils")]
+    pub fn test_see_nearby_peer(&self, eid_hex: &str) {
+        let entry = crate::discover::PeerEntry {
+            device: NearbyDevice {
+                endpoint_id: eid_hex.to_string(),
+                name: "Test device".to_string(),
+                fingerprint: NearbyDevice::fingerprint_for(eid_hex),
+                os: None,
+                addr: None,
+                seen_at: 0,
+            },
+            sock: None,
+            instance: format!("test-{eid_hex}"),
+        };
+        self.inner
+            .consent
+            .nearby_peers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(eid_hex.to_string(), entry);
+    }
+
     /// TEST-ONLY: flip the "nearby sharing on" flag that gates incoming offers,
     /// without standing up the real mDNS daemon. Production sets this via
     /// [`Core::start_nearby`] / [`Core::stop_nearby`].
@@ -691,6 +719,22 @@ pub(crate) fn route_offer(
         .nearby_running
         .load(std::sync::atomic::Ordering::Relaxed);
     if !running {
+        let frame = Frame::OfferDecline { offer_id };
+        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        return;
+    }
+
+    // Nearby means nearby: only a device this one currently sees on the local
+    // network (by its authenticated id) can raise a dialog. Anyone else who
+    // learned our id, from a code we shared or over the relay, is declined
+    // unseen, however it names itself.
+    let visible = ctx
+        .nearby_peers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(&remote.to_string());
+    if !visible {
+        tracing::debug!(%remote, "offer from a device not seen nearby");
         let frame = Frame::OfferDecline { offer_id };
         ctx.resolve_verdict(&frame.offer_id_str(), frame);
         return;

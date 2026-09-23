@@ -145,6 +145,7 @@ impl Core {
             offer_tx,
             incoming_offers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             nearby_running: nearby.running_flag(),
+            nearby_peers: nearby.peer_table(),
             verdict_waiters: Arc::new(std::sync::Mutex::new(HashMap::new())),
             decline_tx,
             withdrawn_tx,

@@ -166,3 +166,55 @@ async fn mdns_peers_survive_a_toggle_and_a_rename() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+/// Over real mDNS, a device can offer to one that sees it: the receiver's
+/// visibility gate, fed by the live peer table, lets the offer through. (These
+/// engines listen on loopback only, so the dial uses the loopback address as a
+/// hint next to the LAN socket mDNS gave.)
+#[tokio::test]
+#[ignore = "requires a live multicast-capable network; run with --ignored"]
+async fn mdns_offer_reaches_a_device_that_sees_the_sender() {
+    use tokio_stream::StreamExt;
+
+    let (a, b, dirs) = pair("offer").await;
+    assert!(sees(&b, &a.endpoint_id(), 20).await, "B never discovered A");
+    assert!(sees(&a, &b.endpoint_id(), 20).await, "A never discovered B");
+    let mut offers = b.subscribe_offers();
+
+    let src = dirs[0].join("hello.txt");
+    std::fs::write(&src, b"hello over the local network").unwrap();
+    let (id, mut stream) = a.send(src).await.unwrap();
+    while let Some(ev) = stream.next().await {
+        if let irohcore::Progress::Ready { .. } = ev {
+            break;
+        }
+    }
+
+    let (_oid, mut updates) = a
+        .offer_nearby_dial(b.endpoint_id(), id, Some(b.test_dial_addr()))
+        .await
+        .unwrap();
+    let offer = tokio::time::timeout(Duration::from_secs(15), offers.recv())
+        .await
+        .expect("the offer never reached B")
+        .unwrap();
+    assert_eq!(offer.from_endpoint_id, a.endpoint_id());
+    b.respond_offer(offer.offer_id, true).await.unwrap();
+    let verdict = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            match updates.next().await {
+                Some(irohcore::OfferUpdate::Waiting) => continue,
+                other => return other,
+            }
+        }
+    })
+    .await
+    .expect("no verdict");
+    assert_eq!(verdict, Some(irohcore::OfferUpdate::Accepted));
+
+    let _ = a.shutdown().await;
+    let _ = b.shutdown().await;
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

@@ -127,7 +127,7 @@ pub(crate) struct PeerEntry {
 }
 
 /// Peer tables subscribed to mDNS events (each `NearbyState.peers`).
-type PeerTable = Arc<StdMutex<HashMap<String, PeerEntry>>>;
+pub(crate) type PeerTable = Arc<StdMutex<HashMap<String, PeerEntry>>>;
 
 /// All live peer tables receiving fanned-out events.
 static SUBSCRIBERS: OnceLock<StdMutex<Vec<PeerTable>>> = OnceLock::new();
@@ -264,7 +264,9 @@ pub(crate) struct NearbyState {
     /// Display name advertised to others.
     pub(crate) device_name: String,
     /// Live peers: hex endpoint id → entry. One table for the life of this
-    /// state, following the network from the first start on (see `start`).
+    /// state, following the network from the first start on (see `start`),
+    /// so a handle taken once, like the consent gate's, always sees the
+    /// current peers.
     pub(crate) peers: PeerTable,
     /// This state's subscription slot in [`SUBSCRIBERS`] (dropped ⇒ removed).
     _slot: Option<SubscriptionSlot>,
@@ -305,6 +307,13 @@ impl NearbyState {
     /// The shared flag consumers watch (consent visibility gating).
     pub(crate) fn running_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
         self.running.clone()
+    }
+
+    /// A handle to the live peer table (consent visibility gating). It stays
+    /// current across start and stop: the table is never replaced. It holds
+    /// peers seen while sharing was off too, so check the running flag first.
+    pub(crate) fn peer_table(&self) -> PeerTable {
+        self.peers.clone()
     }
 
     pub(crate) fn new(self_eid: String, device_name: String) -> Self {
