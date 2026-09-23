@@ -169,7 +169,7 @@ ui/            # the desktop app's frontend (plain HTML/CSS/JS, no build step)
 www/           # static landing page
 docs/          # PRIVACY.md, DEVELOPING.md, and other docs
 branding/      # brand assets (logo, wordmark, icons)
-infra/         # self-hosted relay + DNS server configs and deploy scripts
+infra/         # optional self-hosted relay + DNS configs (the released app does not use them)
 ARCHITECTURE.md
 ```
 
