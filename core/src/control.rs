@@ -12,7 +12,9 @@
 //! presence/chat and (b) the consent verdict carrier for offers — the sender
 //! reads its answer off its own outgoing connection, so no dial-back is needed.
 
-use iroh::endpoint::Connection;
+use std::time::Duration;
+
+use iroh::endpoint::{Connection, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_blobs::ticket::BlobTicket;
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,14 @@ pub(crate) const CTRL_ALPN: &[u8] = b"dropwire/ctrl/1";
 
 /// Control frames are tiny JSON messages; cap the read to a sane size.
 const MAX_FRAME: usize = 64 * 1024;
+
+/// How long a peer has to open its stream and send its one frame. One that
+/// stalls is dropped rather than holding a connection and a task.
+const STREAM_WAIT: Duration = Duration::from_secs(10);
+
+/// How long the reply gets to flush before the connection is let go, so a
+/// peer that never reads it (or never closes) cannot hold it open.
+const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
 /// A control-plane message exchanged out-of-band from the file transfer.
 /// (Public vocabulary; consent frames live in [`crate::offer::Frame`].)
@@ -51,11 +61,20 @@ pub(crate) struct Ctrl {
 
 impl ProtocolHandler for Ctrl {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
-        let (mut send, mut recv) = connection.accept_bi().await?;
-        let bytes = recv
-            .read_to_end(MAX_FRAME)
-            .await
-            .map_err(AcceptError::from_err)?;
+        let opened = tokio::time::timeout(STREAM_WAIT, async {
+            let (send, mut recv) = connection.accept_bi().await?;
+            let bytes = recv
+                .read_to_end(MAX_FRAME)
+                .await
+                .map_err(AcceptError::from_err)?;
+            Ok::<_, AcceptError>((send, bytes))
+        })
+        .await;
+        // Too slow: dropping the connection closes it.
+        let Ok(opened) = opened else {
+            return Ok(());
+        };
+        let (mut send, bytes) = opened?;
 
         // The dialer authenticated itself via the QUIC/TLS handshake — this is
         // the *proven* identity of the other endpoint, not a self-claimed field.
@@ -107,39 +126,42 @@ impl ProtocolHandler for Ctrl {
                 let answer = verdict.unwrap_or(offer::Frame::OfferDecline {
                     offer_id: offer_id.clone(),
                 });
-                if let Ok(echo) = serde_json::to_vec(&answer) {
-                    let _ = send.write_all(&echo).await;
-                }
-                let _ = send.finish();
-                let _ = connection.closed().await;
+                reply(&connection, &mut send, serde_json::to_vec(&answer).ok()).await;
             }
             Ok(other_frame) => {
                 offer::route_other(&self.core_ctx, remote, other_frame.clone());
-                if let Ok(echo) = serde_json::to_vec(&other_frame) {
-                    let _ = send.write_all(&echo).await;
-                }
-                let _ = send.finish();
-                // Brief hold so the echo flushes before the QUIC close.
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed())
-                        .await;
+                reply(
+                    &connection,
+                    &mut send,
+                    serde_json::to_vec(&other_frame).ok(),
+                )
+                .await;
             }
             Err(_) => {
                 // Legacy/plain presence frames (older peers, direct tests).
-                if let Ok(msg) = serde_json::from_slice::<CtrlMsg>(&bytes) {
-                    if let Ok(echo) = serde_json::to_vec(&msg) {
-                        let _ = send.write_all(&echo).await;
-                    }
+                let msg = serde_json::from_slice::<CtrlMsg>(&bytes).ok();
+                let echo = msg.as_ref().and_then(|m| serde_json::to_vec(m).ok());
+                if let Some(msg) = msg {
                     let _ = self.core_ctx.ctrl_tx.send(msg);
                 }
-                let _ = send.finish();
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed())
-                        .await;
+                reply(&connection, &mut send, echo).await;
             }
         }
         Ok(())
     }
+}
+
+/// Send `echo` (if any) back on the frame's stream, then hold briefly so it
+/// flushes before the QUIC close. Bounded by [`CLOSE_GRACE`] as a whole.
+async fn reply(connection: &Connection, send: &mut SendStream, echo: Option<Vec<u8>>) {
+    let _ = tokio::time::timeout(CLOSE_GRACE, async {
+        if let Some(echo) = echo {
+            let _ = send.write_all(&echo).await;
+        }
+        let _ = send.finish();
+        connection.closed().await
+    })
+    .await;
 }
 
 impl Core {

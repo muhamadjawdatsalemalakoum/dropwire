@@ -795,6 +795,22 @@ async fn offer_from_a_device_not_seen_nearby_is_declined_unseen() {
     );
 }
 
+/// A peer that connects and never sends a frame is dropped after a short
+/// wait, instead of holding the connection open.
+#[tokio::test]
+async fn a_silent_control_connection_is_dropped() {
+    let r_dir = tempdir::dir();
+    let receiver = local_core(r_dir.path()).await;
+    let x = raw_endpoint().await;
+    let conn = x
+        .connect(receiver.test_dial_addr(), b"dropwire/ctrl/1")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(20), conn.closed())
+        .await
+        .expect("a silent connection must not be held open");
+}
+
 /// The pairing fingerprint must depend on the WHOLE identity, not a short
 /// prefix of its hex form. The old algorithm ignored everything past ~6 hex
 /// chars, leaving ~21 grindable bits; the hashed one spreads every bit across
