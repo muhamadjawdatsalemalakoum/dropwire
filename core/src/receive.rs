@@ -427,6 +427,14 @@ async fn run_receive(
     // Hold everything this receive fetches, and whatever an earlier attempt left,
     // until it is saved (or the receive is cancelled or cleared from history).
     store::hold_receive(store, id, hash).await?;
+    // An earlier unfinished receive of the same files into the same folder
+    // (the code entered again, or Try again) is carried on by this one: drop
+    // its history entry, so there is no second Resume, and its hold, now that
+    // this receive holds the same data.
+    let retired = core.inner.catalog.lock().await.retire_superseded(id);
+    for old in retired {
+        store::release_receive(store, old).await;
+    }
 
     // What this receive needs: everything, or the collection's structure (its
     // hash list and names) plus the chosen files.

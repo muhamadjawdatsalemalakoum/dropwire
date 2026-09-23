@@ -169,6 +169,44 @@ impl Catalog {
         }
     }
 
+    /// Forget the unfinished receives that the receive `id` takes over: the
+    /// same content into the same folder, wanting no file that `id` does not
+    /// also fetch. Their Resume would only repeat this one, so history keeps a
+    /// single entry. Returns the ids forgotten.
+    pub fn retire_superseded(&mut self, id: TransferId) -> Vec<TransferId> {
+        let Some(new) = self.entries.get(&id.to_string()) else {
+            return Vec::new();
+        };
+        let takes_over = |old: &TransferRecord| match (&new.selected, &old.selected) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(now), Some(then)) => {
+                let now: std::collections::HashSet<_> = now.iter().collect();
+                then.iter().all(|i| now.contains(i))
+            }
+        };
+        let retired: Vec<TransferId> = self
+            .entries
+            .values()
+            .filter(|old| {
+                old.id != id
+                    && old.direction == Direction::Receive
+                    && matches!(old.status, Status::Interrupted | Status::Error)
+                    && old.hash == new.hash
+                    && old.dest == new.dest
+                    && takes_over(old)
+            })
+            .map(|old| old.id)
+            .collect();
+        for old in &retired {
+            self.entries.remove(&old.to_string());
+        }
+        if !retired.is_empty() {
+            self.save();
+        }
+        retired
+    }
+
     /// Mark an entry failed, unless it already ended some other way (for
     /// example Interrupted, which keeps it resumable).
     pub fn fail_if_active(&mut self, id: TransferId) {
@@ -412,6 +450,49 @@ mod tests {
         assert_eq!(rec.status, Status::Interrupted);
         assert_eq!(rec.file_count, 0);
         assert_eq!(rec.selected, None);
+    }
+
+    #[test]
+    fn a_new_receive_takes_over_unfinished_ones_of_the_same_files() {
+        let mut cat = Catalog::default();
+        let add = |cat: &mut Catalog, status, hash: &str, dest: &str, sel: Option<Vec<usize>>| {
+            let mut rec = record("x");
+            rec.status = status;
+            rec.hash = hash.into();
+            rec.dest = Some(dest.into());
+            rec.selected = sel;
+            let id = rec.id;
+            cat.upsert(rec);
+            id
+        };
+        let interrupted = add(&mut cat, Status::Interrupted, "h", "/d", None);
+        let failed = add(&mut cat, Status::Error, "h", "/d", Some(vec![1]));
+        let other_folder = add(&mut cat, Status::Interrupted, "h", "/e", None);
+        let other_content = add(&mut cat, Status::Interrupted, "g", "/d", None);
+        let finished = add(&mut cat, Status::Done, "h", "/d", None);
+        let cancelled = add(&mut cat, Status::Cancelled, "h", "/d", None);
+        let running = add(&mut cat, Status::Active, "h", "/d", None);
+
+        // A selection only takes over receives it covers.
+        let partial = add(&mut cat, Status::Active, "h", "/d", Some(vec![1, 2]));
+        let mut gone = cat.retire_superseded(partial);
+        assert_eq!(gone, vec![failed]);
+        assert!(cat.get(interrupted).is_some());
+
+        // A whole-transfer receive covers any selection.
+        let whole = add(&mut cat, Status::Active, "h", "/d", None);
+        gone = cat.retire_superseded(whole);
+        assert_eq!(gone, vec![interrupted]);
+        for kept in [
+            other_folder,
+            other_content,
+            finished,
+            cancelled,
+            running,
+            partial,
+        ] {
+            assert!(cat.get(kept).is_some());
+        }
     }
 
     #[test]
