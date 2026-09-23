@@ -34,6 +34,59 @@ fn connect_timeout(infra: &crate::Infra) -> Duration {
     }
 }
 
+/// Most files one transfer may list. Far above any real folder send, and low
+/// enough that a crafted code cannot make preview or receive walk (and probe)
+/// millions of entries.
+const MAX_FILES: usize = 100_000;
+
+/// Largest names blob we agree to fetch and parse. Real ones hold a short path
+/// per file, so even a full 100 000-file transfer stays well under this.
+const MAX_META_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Byte cap for the collection's hash list: one 32-byte hash per file plus the
+/// names blob. Anything larger is refused before a single size is probed.
+const MAX_HASH_SEQ_BYTES: u64 = (MAX_FILES as u64 + 1) * 32;
+
+/// What the receiver is told when a transfer is over the limits above.
+const TOO_LARGE: &str = "this transfer is too large to open: it lists more than 100000 files, \
+     or its list of names is bigger than 16 MB";
+
+/// Fetch the collection's hash list and every child's verified size, refusing
+/// transfers over the file-count limit before any size is probed.
+async fn fetch_sizes(
+    conn: &iroh::endpoint::Connection,
+    hash: &iroh_blobs::Hash,
+) -> Result<Vec<u64>> {
+    match get_hash_seq_and_sizes(conn, hash, MAX_HASH_SEQ_BYTES, None).await {
+        Ok((_hash_seq, sizes)) => {
+            check_manifest(&sizes, MAX_FILES, MAX_META_BYTES)?;
+            Ok(sizes.to_vec())
+        }
+        // Raised for a hash list over `MAX_HASH_SEQ_BYTES` (or one that is not a
+        // whole number of hashes): either way, not something we will open.
+        Err(iroh_blobs::get::GetError::BadRequest { .. }) => {
+            Err(CoreError::Other(anyhow!(TOO_LARGE)))
+        }
+        Err(e) => Err(CoreError::Other(
+            anyhow::Error::new(e).context("fetch sizes"),
+        )),
+    }
+}
+
+/// Bounds on the sender-controlled manifest: `sizes[0]` is the names blob and
+/// `sizes[1..]` are the files. Runs before the names blob is fetched.
+fn check_manifest(sizes: &[u64], max_files: usize, max_meta: u64) -> Result<()> {
+    let Some(&meta) = sizes.first() else {
+        return Err(CoreError::Other(anyhow!(
+            "this transfer's file list is empty or damaged"
+        )));
+    };
+    if meta > max_meta || sizes.len() - 1 > max_files {
+        return Err(CoreError::Other(anyhow!(TOO_LARGE)));
+    }
+    Ok(())
+}
+
 impl Core {
     /// Download the content referenced by `ticket` into `dest`, resuming from any
     /// partial data already in the local store.
@@ -133,10 +186,9 @@ impl Core {
 
         // Per-file verified sizes (last chunk only) — no bodies. The collection's
         // HashSeq is [metadata, file0, file1, …], so sizes[0] is the metadata blob
-        // and sizes[1..] are the file sizes.
-        let (_hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &hash, 1024 * 1024 * 32, None)
-            .await
-            .context("fetch sizes")?;
+        // and sizes[1..] are the file sizes. Oversized manifests stop here, before
+        // the names blob is fetched.
+        let sizes = fetch_sizes(&conn, &hash).await?;
         let route = detect_route(&conn);
 
         // Fetch ONLY the collection structure into the store — the HashSeq root and
@@ -235,13 +287,31 @@ async fn run_receive(
     };
 
     // Total size for the progress bar (provider advertises sizes up front).
-    let (_hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &hash, 1024 * 1024 * 32, None)
-        .await
-        .context("fetch sizes")?;
+    // Oversized manifests are refused here, before anything is fetched.
+    let sizes = fetch_sizes(&conn, &hash).await?;
+    // The chosen files as a lookup table (one flag per file), so the export
+    // loop checks membership in O(1). Out-of-range and repeated indices drop out.
+    let wanted: Option<Vec<bool>> = selected.map(|idx| {
+        let mut flags = vec![false; sizes.len() - 1];
+        for i in idx {
+            if let Some(f) = flags.get_mut(i) {
+                *f = true;
+            }
+        }
+        flags
+    });
+    let is_wanted = |i: usize| {
+        wanted
+            .as_ref()
+            .is_none_or(|w| w.get(i).copied().unwrap_or(false))
+    };
     // Total bytes to fetch: the whole transfer, or just the selected files.
-    let total: u64 = match &selected {
+    let total: u64 = match &wanted {
         None => sizes.iter().sum(),
-        Some(idx) => idx.iter().filter_map(|&i| sizes.get(i + 1)).copied().sum(),
+        Some(_) => (0..sizes.len() - 1)
+            .filter(|&i| is_wanted(i))
+            .map(|i| sizes[i + 1])
+            .sum(),
     };
 
     // Record (active).
@@ -271,19 +341,19 @@ async fn run_receive(
         .local(hf)
         .await
         .context("inspect local store")?;
-    let request = match &selected {
+    let request = match &wanted {
         None => local.missing(),
-        Some(idx) => {
+        Some(_) => {
             let mut b = GetRequest::builder()
                 .root(ChunkRanges::all())
                 .child(0, ChunkRanges::all());
-            for &i in idx {
+            for i in (0..sizes.len() - 1).filter(|&i| is_wanted(i)) {
                 b = b.child((i as u64) + 1, ChunkRanges::all());
             }
             b.build(hash)
         }
     };
-    if selected.is_some() || !local.is_complete() {
+    if wanted.is_some() || !local.is_complete() {
         let get = store.remote().execute_get(conn, request);
         let mut stream = get.stream();
         // Throttle UI progress to ~12/s: blob progress can fire per-chunk.
@@ -318,10 +388,8 @@ async fn run_receive(
         .context("load collection")?;
     std::fs::create_dir_all(&dest)?;
     for (i, (name, child_hash)) in collection.iter().enumerate() {
-        if let Some(idx) = &selected {
-            if !idx.contains(&i) {
-                continue;
-            }
+        if !is_wanted(i) {
+            continue;
         }
         let target = dest.join(sanitize_rel(name));
         if let Some(parent) = target.parent() {
@@ -407,4 +475,31 @@ fn sanitize_rel(name: &str) -> PathBuf {
         out.push("file");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_within_limits_is_accepted() {
+        assert!(check_manifest(&[100, 1, 2, 3], 3, 100).is_ok());
+    }
+
+    #[test]
+    fn manifest_with_too_many_files_is_refused() {
+        let err = check_manifest(&[10, 1, 2, 3, 4], 3, 100).unwrap_err();
+        assert!(err.to_string().contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn manifest_with_oversized_names_is_refused() {
+        let err = check_manifest(&[101, 1], 3, 100).unwrap_err();
+        assert!(err.to_string().contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn empty_manifest_is_refused() {
+        assert!(check_manifest(&[], 3, 100).is_err());
+    }
 }

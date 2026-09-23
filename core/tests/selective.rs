@@ -81,3 +81,34 @@ async fn receive_selected_single_file_from_folder() {
         "unselected content must not be fetched (store grew to {store_bytes} bytes)"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn receive_selected_ignores_repeated_and_out_of_range_indices() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let dir = work.path().join("set");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.bin"), make_payload(1000)).unwrap();
+    std::fs::write(dir.join("b.bin"), make_payload(2000)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    // Index 0 twice, plus one far past the end: only a.bin is wanted.
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver
+        .receive_selected(ticket, out.clone(), vec![0, 0, 99])
+        .await
+        .unwrap();
+    wait_done(&mut rs).await;
+
+    assert_eq!(
+        std::fs::read(out.join("set").join("a.bin")).unwrap(),
+        make_payload(1000)
+    );
+    assert!(!out.join("set").join("b.bin").exists());
+}
