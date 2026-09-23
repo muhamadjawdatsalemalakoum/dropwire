@@ -47,9 +47,15 @@ jobs:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Cache cargo
+        # The default workspace (". -> target") is the real one: src-tauri is a
+        # member of the root workspace, so everything builds into ./target and
+        # the key follows the root Cargo.lock. A tag run can only restore a cache
+        # saved under the same tag, so this pays off when a failed leg is re-run;
+        # cache-on-failure keeps a leg that compiled and then failed while
+        # bundling from compiling everything again on the re-run.
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: "src-tauri -> target"
+          cache-on-failure: true
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
