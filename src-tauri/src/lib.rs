@@ -687,7 +687,139 @@ fn set_tray_icon(app: &AppHandle, state_name: &str) {
     }
 }
 
-/// Position the tray panel near the tray icon and show it.
+/// A rectangle in one coordinate space: points on macOS, physical pixels on
+/// Windows and Linux.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Area {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+impl Area {
+    fn contains(&self, px: f64, py: f64) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+}
+
+/// Top-left corner for a `panel`-sized tray panel opened by a click at `click`.
+/// It is centered on the click, above it when the click is in the lower half of
+/// the work area (a bottom taskbar) and below it otherwise (a top menu bar),
+/// then pulled inside the work area, `margin` from its edges. That also keeps
+/// it off side taskbars and out from under a notched menu bar. A work area
+/// smaller than the panel pins it to the top-left corner.
+fn place_panel(
+    click: (f64, f64),
+    work: Area,
+    panel: (f64, f64),
+    gap: f64,
+    margin: f64,
+) -> (f64, f64) {
+    let (w, h) = panel;
+    let x = click.0 - w / 2.0;
+    let y = if click.1 > work.y + work.h / 2.0 {
+        click.1 - h - gap
+    } else {
+        click.1 + gap
+    };
+    // Plain min/max rather than clamp(): clamp panics when the panel is
+    // larger than the work area.
+    let fit = |v: f64, lo: f64, span: f64, size: f64| {
+        v.max(lo + margin).min(lo + span - size - margin).max(lo)
+    };
+    (fit(x, work.x, work.w, w), fit(y, work.y, work.h, h))
+}
+
+/// Put the tray panel next to the tray icon that was clicked, on the monitor
+/// that holds the icon, inside that monitor's work area.
+fn position_tray_panel(
+    app: &AppHandle,
+    win: &tauri::WebviewWindow,
+    click: tauri::PhysicalPosition<f64>,
+) {
+    // macOS reports monitor geometry as points times each monitor's own scale,
+    // so only points line up across mixed-scale displays. The cursor position
+    // there is points times the primary monitor's scale. Windows reports
+    // everything, click included, in one physical virtual-screen space.
+    #[cfg(target_os = "macos")]
+    let (per_monitor_unit, (cx, cy)) = {
+        let primary = app
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map_or(1.0, |m| m.scale_factor());
+        let c = app.cursor_position().unwrap_or(click);
+        (true, (c.x / primary, c.y / primary))
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (per_monitor_unit, (cx, cy)) = (false, (click.x, click.y));
+
+    let unit = |m: &tauri::Monitor| {
+        if per_monitor_unit {
+            m.scale_factor()
+        } else {
+            1.0
+        }
+    };
+    let bounds = |m: &tauri::Monitor| {
+        let k = unit(m);
+        Area {
+            x: f64::from(m.position().x) / k,
+            y: f64::from(m.position().y) / k,
+            w: f64::from(m.size().width) / k,
+            h: f64::from(m.size().height) / k,
+        }
+    };
+    let monitor = app
+        .available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|m| bounds(m).contains(cx, cy))
+        .or_else(|| win.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(m) = monitor else {
+        return;
+    };
+    let k = unit(&m);
+    let wa = m.work_area();
+    let work = Area {
+        x: f64::from(wa.position.x) / k,
+        y: f64::from(wa.position.y) / k,
+        w: f64::from(wa.size.width) / k,
+        h: f64::from(wa.size.height) / k,
+    };
+    // Panel size and spacing in logical px, scaled into the same space. The
+    // size comes from the window itself (tauri.conf.json), measured in its
+    // current scale.
+    let logical =
+        win.outer_size()
+            .ok()
+            .zip(win.scale_factor().ok())
+            .map_or((360.0, 470.0), |(size, s)| {
+                let l = size.to_logical::<f64>(s);
+                (l.width, l.height)
+            });
+    let s = m.scale_factor() / k;
+    let (x, y) = place_panel(
+        (cx, cy),
+        work,
+        (logical.0 * s, logical.1 * s),
+        12.0 * s,
+        8.0 * s,
+    );
+    if per_monitor_unit {
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    } else {
+        let _ = win.set_position(tauri::PhysicalPosition::new(
+            x.round() as i32,
+            y.round() as i32,
+        ));
+    }
+}
+
+/// Toggle the tray panel: hide it if it is open, otherwise open it next to the
+/// tray icon.
 fn toggle_tray_window(app: &AppHandle, at: tauri::PhysicalPosition<f64>) {
     let Some(win) = app.get_webview_window("tray") else {
         return;
@@ -696,23 +828,7 @@ fn toggle_tray_window(app: &AppHandle, at: tauri::PhysicalPosition<f64>) {
         let _ = win.hide();
         return;
     }
-    // Anchor the panel to the icon, then clamp it inside the work area so it
-    // never opens half off-screen on a bottom or right-hand taskbar.
-    if let Ok(Some(monitor)) = win.current_monitor() {
-        let scale = monitor.scale_factor();
-        let size = monitor.size().to_logical::<f64>(scale);
-        let pos = monitor.position().to_logical::<f64>(scale);
-        let at = tauri::LogicalPosition::new(at.x / scale, at.y / scale);
-        let (w, h) = (360.0, 470.0);
-        let x = (at.x - w / 2.0).clamp(pos.x + 8.0, pos.x + size.width - w - 8.0);
-        let y = if at.y > pos.y + size.height / 2.0 {
-            at.y - h - 12.0
-        } else {
-            at.y + 12.0
-        }
-        .clamp(pos.y + 8.0, pos.y + size.height - h - 8.0);
-        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-    }
+    position_tray_panel(app, &win, at);
     let _ = win.show();
     let _ = win.set_focus();
 }
@@ -1001,6 +1117,121 @@ mod tests {
         assert!(is_store_locked(&err), "not recognized as a lock: {err:?}");
         first.shutdown().await.expect("shutdown");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const PANEL: (f64, f64) = (360.0, 470.0);
+
+    fn inside(p: (f64, f64), work: Area, margin: f64) -> bool {
+        p.0 >= work.x + margin
+            && p.1 >= work.y + margin
+            && p.0 + PANEL.0 <= work.x + work.w - margin
+            && p.1 + PANEL.1 <= work.y + work.h - margin
+    }
+
+    /// Windows, taskbar at the bottom: the click is below the work area, so the
+    /// panel opens above it and stays clear of the taskbar and the right edge.
+    #[test]
+    fn panel_clears_a_bottom_taskbar() {
+        let work = Area {
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1032.0,
+        };
+        let p = place_panel((1800.0, 1060.0), work, PANEL, 12.0, 8.0);
+        assert!(inside(p, work, 8.0), "{p:?}");
+        assert!(
+            p.1 + PANEL.1 < 1060.0,
+            "panel must open above the icon: {p:?}"
+        );
+    }
+
+    /// Taskbar on the left or right: the panel is pushed off it horizontally.
+    #[test]
+    fn panel_clears_a_side_taskbar() {
+        let left = Area {
+            x: 62.0,
+            y: 0.0,
+            w: 1858.0,
+            h: 1080.0,
+        };
+        let p = place_panel((30.0, 1000.0), left, PANEL, 12.0, 8.0);
+        assert!(inside(p, left, 8.0), "{p:?}");
+
+        let right = Area {
+            x: 0.0,
+            y: 0.0,
+            w: 1858.0,
+            h: 1080.0,
+        };
+        let p = place_panel((1890.0, 1000.0), right, PANEL, 12.0, 8.0);
+        assert!(inside(p, right, 8.0), "{p:?}");
+    }
+
+    /// macOS menu bar (a notched one is taller): the click is above the work
+    /// area, so the panel opens below the menu bar, not under it.
+    #[test]
+    fn panel_opens_below_a_top_menu_bar() {
+        let work = Area {
+            x: 0.0,
+            y: 37.0,
+            w: 1512.0,
+            h: 945.0,
+        };
+        let p = place_panel((1300.0, 12.0), work, PANEL, 12.0, 8.0);
+        assert!(inside(p, work, 8.0), "{p:?}");
+        assert!(p.1 >= 37.0 + 8.0, "{p:?}");
+    }
+
+    /// A secondary display left of the primary has negative coordinates.
+    #[test]
+    fn panel_stays_on_a_display_with_negative_coordinates() {
+        let work = Area {
+            x: -1920.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1040.0,
+        };
+        let p = place_panel((-100.0, 1060.0), work, PANEL, 12.0, 8.0);
+        assert!(inside(p, work, 8.0), "{p:?}");
+    }
+
+    /// A work area smaller than the panel (a 1080p screen at 250 percent is
+    /// 432 points tall) must not panic; the panel starts at the top-left.
+    #[test]
+    fn panel_on_a_tiny_screen_does_not_panic() {
+        let work = Area {
+            x: 0.0,
+            y: 0.0,
+            w: 768.0,
+            h: 408.0,
+        };
+        let p = place_panel((700.0, 420.0), work, PANEL, 12.0, 8.0);
+        assert!(p.0 >= 0.0 && p.0 + PANEL.0 <= 768.0, "{p:?}");
+        assert_eq!(p.1, 0.0, "{p:?}");
+
+        let work = Area {
+            x: 100.0,
+            y: 50.0,
+            w: 300.0,
+            h: 200.0,
+        };
+        let p = place_panel((250.0, 240.0), work, PANEL, 12.0, 8.0);
+        assert_eq!(p, (100.0, 50.0));
+    }
+
+    #[test]
+    fn area_contains_its_top_left_but_not_its_far_edges() {
+        let a = Area {
+            x: -10.0,
+            y: 5.0,
+            w: 20.0,
+            h: 10.0,
+        };
+        assert!(a.contains(-10.0, 5.0));
+        assert!(a.contains(9.9, 14.9));
+        assert!(!a.contains(10.0, 5.0));
+        assert!(!a.contains(0.0, 15.0));
     }
 
     /// Any other start failure is reported as it is, not as "already running".
