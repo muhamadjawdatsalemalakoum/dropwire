@@ -143,7 +143,8 @@ pub enum OfferUpdate {
     Accepted,
     /// They declined.
     Declined,
-    /// Couldn't deliver / timed out / they went away.
+    /// Couldn't deliver / timed out / they went away. `reason` is a whole plain
+    /// sentence, meant to be shown as it is.
     Failed { reason: String },
 }
 
@@ -432,6 +433,22 @@ impl Core {
     }
 }
 
+/// Why an offer failed, as the sender reads it in [`OfferUpdate::Failed`]:
+/// whole sentences, shown as they are.
+const OFFER_UNREACHABLE: &str =
+    "Could not reach this device. Check that Dropwire is open on it with Nearby turned on.";
+const OFFER_DROPPED: &str = "The connection dropped before they answered. Try again.";
+const OFFER_NO_ANSWER: &str = "They did not answer in time.";
+const OFFER_UNREADABLE: &str =
+    "Their answer could not be read. Check that both devices run the latest Dropwire.";
+
+/// Log the technical detail of an offer failure (locally only) and hand back
+/// the plain reason.
+fn offer_failed(reason: &str, detail: impl std::fmt::Display) -> String {
+    tracing::warn!("nearby offer failed: {detail}");
+    reason.to_string()
+}
+
 /// Deliver the offer and read the verdict off our own connection (echoed).
 async fn deliver_offer(
     endpoint: &Endpoint,
@@ -443,26 +460,33 @@ async fn deliver_offer(
         endpoint.connect(dial_addr, CTRL_ALPN),
     )
     .await
-    .map_err(|_| "neighbor unreachable".to_string())?
-    .map_err(|e| format!("connect failed: {e}"))?;
+    .map_err(|_| offer_failed(OFFER_UNREACHABLE, "connect timed out"))?
+    .map_err(|e| offer_failed(OFFER_UNREACHABLE, format!("connect: {e:#}")))?;
 
     let (mut send, mut recv) = conn
         .open_bi()
         .await
-        .map_err(|e| format!("stream open failed: {e}"))?;
-    let bytes = serde_json::to_vec(&frame).map_err(|e| e.to_string())?;
-    send.write_all(&bytes).await.map_err(|e| e.to_string())?;
-    send.finish().map_err(|e| e.to_string())?;
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("open stream: {e:#}")))?;
+    let bytes = serde_json::to_vec(&frame)
+        .map_err(|e| offer_failed("Could not prepare the offer.", format!("encode: {e}")))?;
+    send.write_all(&bytes)
+        .await
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("write: {e:#}")))?;
+    send.finish()
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("finish: {e:#}")))?;
 
     let answer = tokio::time::timeout(ANSWER_TIMEOUT, recv.read_to_end(64 * 1024))
         .await
-        .map_err(|_| "they didn't answer in time".to_string())?
-        .map_err(|e| format!("read failed: {e}"))?;
+        .map_err(|_| offer_failed(OFFER_NO_ANSWER, "no answer in time"))?
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("read: {e:#}")))?;
 
     match serde_json::from_slice::<Frame>(&answer) {
         Ok(Frame::OfferAccept { .. }) => Ok(OfferUpdate::Accepted),
         Ok(Frame::OfferDecline { .. }) => Ok(OfferUpdate::Declined),
-        _ => Err("unexpected answer".into()),
+        _ => Err(offer_failed(
+            OFFER_UNREADABLE,
+            format!("unexpected answer of {} bytes", answer.len()),
+        )),
     }
 }
 
