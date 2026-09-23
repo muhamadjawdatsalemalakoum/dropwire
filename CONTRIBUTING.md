@@ -37,6 +37,6 @@ licensed under the same terms.
 ## Reporting bugs / security issues
 
 - Regular bugs: open an issue with steps to reproduce.
-- Security vulnerabilities: **do not** open a public issue — report privately via
-  [GitHub Security Advisories](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new)
-  (see [`SECURITY.md`](SECURITY.md)).
+- Security vulnerabilities: **do not** open a public issue. Report privately via
+  [GitHub private vulnerability reporting](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new).
+  [`SECURITY.md`](SECURITY.md) covers what to do if that form is not available to you.
