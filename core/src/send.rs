@@ -3,9 +3,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
+use futures_lite::StreamExt;
+use iroh_blobs::api::blobs::{AddPathOptions, AddProgressItem, ImportMode};
 use iroh_blobs::api::TempTag;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::protocol::{ChunkRanges, ChunkRangesExt, ChunkRangesSeq};
@@ -82,22 +84,14 @@ async fn run_send(
     // Each file's size, in collection order, so a request can be sized.
     let mut sizes: Vec<u64> = Vec::with_capacity(files.len());
     let mut imported = 0u64;
+    // Numbers on the card from the start, not a bare "Preparing...".
+    let _ = tx.send(Progress::Importing { id, done: 0, total }).await;
     for (name, p) in files {
-        if token.is_cancelled() {
+        let Some((tt, len)) = import_file(store, &p, &token, &tx, id, imported, total).await?
+        else {
             let _ = tx.send(Progress::Cancelled { id }).await;
             return Ok(());
-        }
-        // VERIFY (ARCHITECTURE.md §13): AddProgress::temp_tag() on iroh-blobs 0.103.
-        let tt = store
-            .add_path_with_opts(AddPathOptions {
-                path: p.clone(),
-                mode: ImportMode::TryReference,
-                format: BlobFormat::Raw,
-            })
-            .temp_tag()
-            .await
-            .with_context(|| format!("import {}", p.display()))?;
-        let len = file_len(&p);
+        };
         entries.push((name, tt.hash()));
         tags.push(tt);
         sizes.push(len);
@@ -111,6 +105,9 @@ async fn run_send(
             .await;
     }
 
+    // What was actually imported, in case a file changed size since the listing.
+    let total = imported;
+
     // 3. Bundle into a Collection (a HashSeq) — uniform for single file or folder.
     let files_count = entries.len();
     let collection: Collection = entries.into_iter().collect();
@@ -120,9 +117,13 @@ async fn run_send(
     // 4. Mint the ticket from our endpoint address. For relay-backed modes, wait
     //    (time-boxed) for a relay handshake so the address is reachable; skip in
     //    local-only mode where there is no relay (online() would never resolve).
+    //    A cancel cuts the wait short (and is caught just below).
     let endpoint = core.inner.router.endpoint();
     if !matches!(core.inner.config.infra, crate::Infra::LocalOnly) {
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), endpoint.online()).await;
+        tokio::select! {
+            _ = token.cancelled() => {}
+            _ = tokio::time::timeout(Duration::from_secs(10), endpoint.online()) => {}
+        }
     }
     let addr = endpoint.addr();
     let ticket = BlobTicket::new(addr, hash, BlobFormat::HashSeq);
@@ -279,6 +280,64 @@ async fn run_send(
 /// File length, tolerating missing metadata.
 fn file_len(p: &Path) -> u64 {
     std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+}
+
+/// Import one file into the store (by reference where it can), reporting
+/// progress while it is hashed: `before` bytes of the send's `total` are
+/// already done. Returns the tag that keeps it alive and its size, or `None`
+/// if the send was cancelled first. Dropping the import's progress stream
+/// makes the store stop hashing at its next progress report, so a cancel does
+/// not sit through the rest of a large file.
+async fn import_file(
+    store: &iroh_blobs::store::fs::FsStore,
+    path: &Path,
+    token: &CancellationToken,
+    tx: &mpsc::Sender<Progress>,
+    id: TransferId,
+    before: u64,
+    total: u64,
+) -> anyhow::Result<Option<(TempTag, u64)>> {
+    let mut items = store
+        .add_path_with_opts(AddPathOptions {
+            path: path.to_path_buf(),
+            mode: ImportMode::TryReference,
+            format: BlobFormat::Raw,
+        })
+        .stream()
+        .await;
+    let mut size = None;
+    // A few updates a second is plenty, and `try_send` never holds up hashing.
+    let mut last = Instant::now();
+    loop {
+        let item = tokio::select! {
+            biased;
+            _ = token.cancelled() => return Ok(None),
+            item = items.next() => item,
+        };
+        match item {
+            Some(AddProgressItem::Size(n)) => size = Some(n),
+            // By reference there is no copy: hashing is the whole import.
+            Some(AddProgressItem::OutboardProgress(offset)) => {
+                if last.elapsed() >= Duration::from_millis(100) {
+                    last = Instant::now();
+                    let _ = tx.try_send(Progress::Importing {
+                        id,
+                        done: before + offset,
+                        total,
+                    });
+                }
+            }
+            Some(AddProgressItem::Done(tt)) => {
+                let len = size.unwrap_or_else(|| file_len(path));
+                return Ok(Some((tt, len)));
+            }
+            Some(AddProgressItem::Error(e)) => {
+                return Err(anyhow::Error::from(e).context(format!("import {}", path.display())))
+            }
+            Some(AddProgressItem::CopyProgress(_) | AddProgressItem::CopyDone) => {}
+            None => anyhow::bail!("import {} ended unexpectedly", path.display()),
+        }
+    }
 }
 
 /// Enumerate files to send, with forward-slash relative names. A directory keeps
