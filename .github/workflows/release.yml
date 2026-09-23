@@ -85,18 +85,18 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Dropwire ${{ github.ref_name }}"
           releaseBody: |
-            **Dropwire ${{ github.ref_name }}** — free, private, peer-to-peer file transfer.
+            **Dropwire ${{ github.ref_name }}**: free, private, peer-to-peer file transfer.
 
             Send any file straight from one device to another: end-to-end encrypted, resumable,
             no account, no server holding your data. Built on iroh.
 
             ### Downloads
-            - **Windows** — `_x64-setup.exe`
-            - **macOS** — `_universal.dmg` (Apple Silicon + Intel)
-            - **Linux** — `.AppImage`, `.deb`, or `.rpm`
+            - **Windows**: `_x64-setup.exe`
+            - **macOS**: `_universal.dmg` (Apple Silicon + Intel)
+            - **Linux**: `.AppImage`, `.deb`, or `.rpm`
 
-            > Builds are currently **unsigned**, so the OS may warn about an unverified developer —
-            > on Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
+            > Builds are currently **unsigned**, so the OS may warn about an unverified developer.
+            > On Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
             > Security → "Open Anyway".
           # Publish the release automatically on tag (set true to review as a draft first).
           releaseDraft: false
