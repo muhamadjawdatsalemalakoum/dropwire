@@ -32,6 +32,11 @@ pub enum CoreError {
     )]
     AlreadyClaimed,
 
+    /// The folder chosen for a receive cannot be used. Checked before anything
+    /// is downloaded.
+    #[error("Cannot save to {path}: {reason}. Choose another folder.")]
+    Destination { path: String, reason: String },
+
     #[error("transfer not found: {0}")]
     NotFound(String),
 
@@ -46,18 +51,21 @@ impl CoreError {
             CoreError::Io(e) => crate::fail::io_reason(e).0,
             CoreError::Unreachable(_) => ErrorCode::Unreachable,
             CoreError::AlreadyClaimed => ErrorCode::AlreadyClaimed,
-            CoreError::InvalidTicket(_) | CoreError::NotFound(_) | CoreError::Other(_) => {
-                ErrorCode::Other
-            }
+            CoreError::InvalidTicket(_)
+            | CoreError::Destination { .. }
+            | CoreError::NotFound(_)
+            | CoreError::Other(_) => ErrorCode::Other,
         }
     }
 
     /// A stable name for this kind of error, for callers that show different
-    /// help for each: `invalidTicket` for a code that cannot be read, or one of
-    /// the [`ErrorCode`] names (`unreachable`, `alreadyClaimed`, ..., `other`).
+    /// help for each: `invalidTicket` for a code that cannot be read,
+    /// `destination` for a folder that cannot be saved to, or one of the
+    /// [`ErrorCode`] names (`unreachable`, `alreadyClaimed`, ..., `other`).
     pub fn kind(&self) -> &'static str {
         match self {
             CoreError::InvalidTicket(_) => "invalidTicket",
+            CoreError::Destination { .. } => "destination",
             other => other.code().as_str(),
         }
     }

@@ -1,6 +1,6 @@
 //! Receiving: parse a ticket, resume/download, export to disk.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context};
@@ -75,6 +75,31 @@ async fn fetch_sizes(
     }
 }
 
+/// Make sure a receive can save into `dest` before anything is downloaded: it
+/// must be a full path to a folder that exists (or can be created) and can be
+/// written to.
+fn check_destination(dest: &Path, id: TransferId) -> Result<PathBuf> {
+    let refuse = |reason: String| CoreError::Destination {
+        path: dest.display().to_string(),
+        reason,
+    };
+    let why = |e: std::io::Error| match e.kind() {
+        std::io::ErrorKind::NotFound => refuse("the drive or folder is not available".into()),
+        _ => refuse(fail::io_reason(&e).1),
+    };
+    if !dest.is_absolute() {
+        return Err(refuse("it is not a full folder path".into()));
+    }
+    if dest.exists() && !dest.is_dir() {
+        return Err(refuse("it is a file, not a folder".into()));
+    }
+    std::fs::create_dir_all(dest).map_err(why)?;
+    let probe = dest.join(format!(".dropwire-write-test-{id}"));
+    std::fs::File::create_new(&probe).map_err(why)?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(dest.to_path_buf())
+}
+
 /// Whether the sender turned this device away: a code is served to the first
 /// device that uses it, and to nobody once the sender stops sharing it.
 fn refused(e: &iroh_blobs::get::GetError) -> bool {
@@ -130,6 +155,11 @@ impl Core {
             .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
 
         let id = TransferId::new();
+        // A folder that cannot be saved to is refused now, not after the
+        // whole transfer has downloaded.
+        let dest = tokio::task::spawn_blocking(move || check_destination(&dest, id))
+            .await
+            .map_err(|e| CoreError::Other(anyhow!("check the folder: {e}")))??;
         let (tx, rx) = mpsc::channel(64);
         let token = CancellationToken::new();
         self.inner.active.lock().await.insert(id, token.clone());

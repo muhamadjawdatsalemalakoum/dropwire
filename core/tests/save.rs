@@ -339,3 +339,72 @@ async fn received_files_are_marked_as_downloaded() {
         assert!(mark.contains(";Dropwire;"), "unexpected mark: {mark:?}");
     }
 }
+
+/// A folder that cannot be saved to is refused before anything is downloaded
+/// or recorded, with a message that names the folder.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unusable_destination_is_refused_up_front() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+    let src = work.path().join("a.bin");
+    std::fs::write(&src, make_payload(1024)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    // A relative path would depend on where the app happened to start.
+    let err = receiver
+        .receive(ticket.clone(), PathBuf::from("Dropwire"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), "destination", "{err:?}");
+    assert!(
+        err.to_string().starts_with("Cannot save to Dropwire:"),
+        "{err}"
+    );
+
+    // A file where the folder should be.
+    let file = work.path().join("not-a-folder");
+    std::fs::write(&file, b"x").unwrap();
+    let err = receiver
+        .receive_selected(ticket, file, vec![0])
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), "destination", "{err:?}");
+    assert!(err.to_string().contains("a file, not a folder"), "{err}");
+
+    assert!(
+        receiver.transfers().await.is_empty(),
+        "nothing is recorded for a refused receive"
+    );
+}
+
+/// A folder the app may not write to is refused up front too.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_only_destination_is_refused_up_front() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+    let src = work.path().join("a.bin");
+    std::fs::write(&src, make_payload(1024)).unwrap();
+    let locked = work.path().join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    let result = receiver.receive(ticket, locked.clone()).await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), "destination", "{err:?}");
+    assert!(err.to_string().contains("access was denied"), "{err}");
+}
