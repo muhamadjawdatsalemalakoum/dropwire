@@ -200,6 +200,18 @@ mod addressed {
         ticket.parse::<BlobTicket>().unwrap().hash()
     }
 
+    /// A bare loopback endpoint that speaks the blobs protocol directly.
+    async fn raw_endpoint() -> iroh::Endpoint {
+        iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .relay_mode(iroh::endpoint::RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr("127.0.0.1:0")
+            .unwrap()
+            .bind()
+            .await
+            .unwrap()
+    }
+
     /// Nothing is re-served after a restart. The sender presses Resend, which
     /// re-imports the same source into the same collection hash, so a
     /// receiver's old code works again (and an interrupted download resumes).
@@ -290,15 +302,7 @@ mod addressed {
         let root = hash_of(&ticket);
         let child = Hash::new(&payload);
 
-        // A bare loopback endpoint speaking the blobs protocol directly.
-        let raw = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
-            .relay_mode(iroh::endpoint::RelayMode::Disabled)
-            .clear_ip_transports()
-            .bind_addr("127.0.0.1:0")
-            .unwrap()
-            .bind()
-            .await
-            .unwrap();
+        let raw = raw_endpoint().await;
         let conn = raw
             .connect(sender.test_dial_addr(), iroh_blobs::ALPN)
             .await
@@ -337,5 +341,72 @@ mod addressed {
 
         // That requester now holds the code; everyone else is turned away.
         assert_refused(r1.inspect(ticket).await, "a second device after the first");
+    }
+    /// Cancel stops a transfer that is already moving, not just new requests.
+    /// The client reads a little and then pauses, so QUIC flow control holds
+    /// the sender mid-file while it cancels; once reading resumes, the rest of
+    /// the file must never arrive.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancel_stops_a_transfer_in_flight() {
+        use iroh_blobs::api::remote::GetProgressItem;
+
+        let work = tempfile::tempdir().unwrap();
+        let send_data = tempfile::tempdir().unwrap();
+
+        let src = work.path().join("big.bin");
+        let payload = make_payload(16 * 1024 * 1024);
+        std::fs::write(&src, &payload).unwrap();
+
+        let sender = local_core(send_data.path()).await;
+        let (sid, mut ss) = sender.send(src).await.unwrap();
+        let ticket = wait_ready(&mut ss).await;
+
+        let raw = raw_endpoint().await;
+        let conn = raw
+            .connect(sender.test_dial_addr(), iroh_blobs::ALPN)
+            .await
+            .unwrap();
+        let store = MemStore::new();
+        let mut get = store
+            .remote()
+            .execute_get(conn, GetRequest::all(hash_of(&ticket)))
+            .stream();
+
+        let started = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                match get.next().await {
+                    Some(GetProgressItem::Progress(n)) if n > 0 => return,
+                    Some(GetProgressItem::Progress(_)) => {}
+                    Some(GetProgressItem::Done(_)) => panic!("finished before the cancel"),
+                    Some(GetProgressItem::Error(e)) => panic!("failed before the cancel: {e:#}"),
+                    None => panic!("request ended before the cancel"),
+                }
+            }
+        });
+        started.await.expect("no bytes arrived");
+
+        sender.cancel(sid).await;
+        wait_cancelled(&mut ss).await;
+
+        let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                match get.next().await {
+                    Some(GetProgressItem::Progress(_)) => {}
+                    Some(GetProgressItem::Done(_)) => return Ok(()),
+                    Some(GetProgressItem::Error(e)) => return Err(format!("{e:#}")),
+                    None => return Err("request ended".to_string()),
+                }
+            }
+        })
+        .await
+        .expect("the stopped transfer never ended");
+        assert!(
+            outcome.is_err(),
+            "a cancelled send must not finish a transfer that was in flight"
+        );
+        assert!(
+            !store.has(Hash::new(&payload)).await.unwrap(),
+            "the file must not arrive complete after the cancel"
+        );
     }
 }

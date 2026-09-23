@@ -119,11 +119,13 @@ async fn run_send(
     // 5. Register for provider events on this hash, record, and announce.
     let hash_key = hash.to_string();
     let (ev_tx, mut ev_rx) = mpsc::unbounded_channel::<ProviderEvent>();
-    core.inner
-        .serving
-        .lock()
-        .await
-        .insert(hash_key.clone(), ev_tx);
+    core.inner.serving.lock().await.insert(
+        hash_key.clone(),
+        Serving {
+            events: ev_tx,
+            token: token.clone(),
+        },
+    );
     {
         let mut cat = core.inner.catalog.lock().await;
         cat.upsert(Catalog::new_record(
@@ -230,6 +232,16 @@ fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
     Ok(out)
 }
 
+/// A live send's entry in `serving`: the gate's allow-list, and where provider
+/// events for that hash go.
+#[derive(Clone)]
+pub(crate) struct Serving {
+    /// Provider events for this hash are routed here.
+    pub(crate) events: mpsc::UnboundedSender<ProviderEvent>,
+    /// The owning send's token. Requests in flight stop when it fires.
+    pub(crate) token: CancellationToken,
+}
+
 /// Sender-side events distilled from iroh-blobs provider events, routed per hash.
 pub(crate) enum ProviderEvent {
     PeerJoined,
@@ -263,12 +275,13 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                 let hash_key = m.request.hash.to_string();
                 let conn_id = m.connection_id;
                 let endpoint = core.inner.conns.lock().await.get(&conn_id).copied();
-                let Some(tx) = approve_one_to_one(&core, &hash_key, endpoint).await else {
+                let Some(route) = approve_one_to_one(&core, &hash_key, endpoint).await else {
                     let _ = m.tx.send(Err(AbortReason::Permission)).await;
                     continue;
                 };
                 let _ = m.tx.send(Ok(())).await;
 
+                let Serving { events: tx, token } = route;
                 let _ = tx.send(ProviderEvent::PeerJoined);
                 let mut stream = m.rx; // irpc receiver of per-request RequestUpdate
                 tokio::spawn(async move {
@@ -276,7 +289,16 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                     // Throttle UI progress to ~12/s (provider progress is per-chunk).
                     let mut last =
                         std::time::Instant::now() - std::time::Duration::from_millis(200);
-                    while let Ok(Some(update)) = stream.recv().await {
+                    loop {
+                        let update = tokio::select! {
+                            // The send ended (cancelled, dismissed, replaced).
+                            // Returning drops `stream`, and the provider aborts
+                            // this request at its next write, so a transfer in
+                            // flight stops too instead of running to the end.
+                            _ = token.cancelled() => break,
+                            update = stream.recv() => update,
+                        };
+                        let Ok(Some(update)) = update else { break };
                         match update {
                             RequestUpdate::Started(s) => total = s.size,
                             RequestUpdate::Progress(p) => {
@@ -338,10 +360,10 @@ async fn approve_one_to_one(
     core: &Core,
     hash_key: &str,
     endpoint: Option<iroh::EndpointId>,
-) -> Option<mpsc::UnboundedSender<ProviderEvent>> {
+) -> Option<Serving> {
     let eid = endpoint?;
     let serving = core.inner.serving.lock().await;
-    let tx = serving.get(hash_key)?;
+    let entry = serving.get(hash_key)?;
     let mut bound = core.inner.bound.lock().await;
     match bound.get(hash_key) {
         None => {
@@ -350,5 +372,5 @@ async fn approve_one_to_one(
         Some(existing) if *existing == eid => {}
         Some(_) => return None,
     }
-    Some(tx.clone())
+    Some(entry.clone())
 }

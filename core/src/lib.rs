@@ -68,7 +68,7 @@ pub(crate) struct Inner {
     /// Live sends, keyed by content hash (hex). This is the allow-list of the
     /// one-to-one gate: only these roots are served. Also routes provider
     /// events to the right transfer's progress stream.
-    pub(crate) serving: Mutex<HashMap<String, mpsc::UnboundedSender<send::ProviderEvent>>>,
+    pub(crate) serving: Mutex<HashMap<String, send::Serving>>,
     /// Live connections: `connection_id` → the peer's `EndpointId`. Populated from
     /// provider connect events so a get request can be attributed to a device.
     pub(crate) conns: Mutex<HashMap<u64, iroh::EndpointId>>,
