@@ -730,9 +730,15 @@ pub fn run() {
                         .try_state::<AppState>()
                         .map(|s| s.settings.get().tray_on_close)
                         .unwrap_or(false);
+                    api.prevent_close();
                     if keep {
-                        api.prevent_close();
                         let _ = window.hide();
+                    } else {
+                        // With the tray off, closing the window is quitting.
+                        // Letting just this window go is not enough: the hidden
+                        // tray panel keeps the process alive, still serving and
+                        // advertising, with no way back to the window.
+                        window.app_handle().exit(0);
                     }
                 } else if window.label() == "tray" {
                     api.prevent_close();
@@ -784,6 +790,14 @@ pub fn run() {
         .expect("error while building Dropwire")
         .run(|app, event| match event {
             tauri::RunEvent::Exit => shutdown_engine(app),
+            // Nothing can bring the main window back once it is destroyed, so
+            // however that happens, the app goes with it rather than running on
+            // unreachable behind the hidden tray panel.
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } if label == "main" => app.exit(0),
             // macOS: with close-to-tray on, closing the window leaves Dropwire
             // running with no window. Clicking the dock icon raises Reopen, and
             // with nothing answering it the app is alive but unreachable: it
