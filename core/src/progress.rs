@@ -96,7 +96,14 @@ pub enum Progress {
         total: u64,
     },
     /// Sender: content imported, ticket minted, now serving.
-    Ready { id: TransferId, ticket: String },
+    Ready {
+        id: TransferId,
+        ticket: String,
+        /// Links in a chosen folder that were left out because they point
+        /// outside it (or to a folder, or to nothing). Usually 0.
+        #[serde(default)]
+        skipped: usize,
+    },
     /// Sender: a receiver started downloading file content.
     PeerJoined { id: TransferId },
     /// Receiver (and, later, sender): bytes are moving.

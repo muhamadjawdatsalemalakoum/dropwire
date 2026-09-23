@@ -75,7 +75,7 @@ async fn run_send(
         .unwrap_or_else(|| "transfer".to_string());
 
     // 1. Enumerate files (single file -> one entry; directory -> recursive).
-    let files = collect_files(&path)?;
+    let (files, skipped) = collect_files(&path)?;
     let total: u64 = files.iter().map(|(_, p)| file_len(p)).sum();
 
     // 2. Import each file, holding the TempTags so nothing is GC'd while serving.
@@ -184,6 +184,7 @@ async fn run_send(
         .send(Progress::Ready {
             id,
             ticket: ticket_str,
+            skipped,
         })
         .await;
 
@@ -340,9 +341,22 @@ async fn import_file(
     }
 }
 
+/// Why a folder send was refused before any code was made. Shown as-is.
+const EMPTY_FOLDER: &str = "This folder has no files to send.";
+const ONLY_OUTSIDE_LINKS: &str =
+    "This folder only has links to things outside it, so there is nothing to send.";
+
 /// Enumerate files to send, with forward-slash relative names. A directory keeps
-/// its top-level name so the receiver recreates the tree.
-fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
+/// its top-level name so the receiver recreates the tree. Also returns how many
+/// links in a folder were left out.
+///
+/// A link inside a folder is sent (as the file it points to, under the link's
+/// name) only when it points to a file inside that same folder, so a link can
+/// never carry something from elsewhere on the disk along with it. Links to
+/// anything else (outside the folder, to a folder, or to nothing) are left out
+/// and counted, so the sender can be told. Links to folders are never followed,
+/// so there are no loops. A folder with nothing to send is refused.
+fn collect_files(path: &Path) -> anyhow::Result<(Vec<(String, PathBuf)>, usize)> {
     use walkdir::WalkDir;
 
     let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
@@ -351,19 +365,35 @@ fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .context("file has no name")?;
-        return Ok(vec![(name, path.to_path_buf())]);
+        return Ok((vec![(name, path.to_path_buf())], 0));
     }
 
     let base = path
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
+    let root = std::fs::canonicalize(path).with_context(|| format!("open {}", path.display()))?;
     let mut out = Vec::new();
+    let mut skipped = 0usize;
     for entry in WalkDir::new(path).follow_links(false) {
         let entry = entry?;
-        if !entry.file_type().is_file() {
+        let ft = entry.file_type();
+        let file = if ft.is_file() {
+            entry.path().to_path_buf()
+        } else if ft.is_dir() {
             continue;
-        }
+        } else if entry.path_is_symlink() {
+            match std::fs::canonicalize(entry.path()) {
+                Ok(target) if target.starts_with(&root) && target.is_file() => target,
+                _ => {
+                    skipped += 1;
+                    continue;
+                }
+            }
+        } else {
+            // Not a file at all (a socket, a device): nothing to send.
+            continue;
+        };
         let rel = entry.path().strip_prefix(path).unwrap_or(entry.path());
         let rel_str = rel.to_string_lossy().replace('\\', "/");
         let name = if base.is_empty() {
@@ -371,10 +401,17 @@ fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
         } else {
             format!("{base}/{rel_str}")
         };
-        out.push((name, entry.path().to_path_buf()));
+        out.push((name, file));
+    }
+    if out.is_empty() {
+        anyhow::bail!(if skipped > 0 {
+            ONLY_OUTSIDE_LINKS
+        } else {
+            EMPTY_FOLDER
+        });
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(out)
+    Ok((out, skipped))
 }
 
 /// A live send's entry in `serving`: the gate's allow-list, and where provider

@@ -2,9 +2,10 @@
 //! and what can and cannot be sent.
 
 mod common;
+use std::path::Path;
 use std::time::Duration;
 
-use common::local_core;
+use common::{local_core, make_payload, wait_done};
 use irohcore::{Progress, ProgressStream};
 use tokio_stream::StreamExt;
 
@@ -84,5 +85,145 @@ async fn cancel_while_preparing_mints_no_code() {
     assert!(
         !sender.transfers().await.iter().any(|r| r.id == sid),
         "a send cancelled while preparing leaves no record"
+    );
+}
+
+/// How a send ended up before any code: its Ready (with how many links were
+/// left out) or its error message.
+async fn outcome(stream: &mut ProgressStream) -> Result<(String, usize), String> {
+    let seen = read_until(stream, "Ready or Error", |ev| {
+        matches!(ev, Progress::Ready { .. } | Progress::Error { .. })
+    })
+    .await;
+    match seen.last() {
+        Some(Progress::Ready {
+            ticket, skipped, ..
+        }) => Ok((ticket.clone(), *skipped)),
+        Some(Progress::Error { message, .. }) => Err(message.clone()),
+        _ => unreachable!(),
+    }
+}
+
+/// An empty folder (even one with empty folders in it) is refused with a
+/// plain reason, and no code or record is made for nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_folder_is_refused() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let dir = work.path().join("empty");
+    std::fs::create_dir_all(dir.join("nested").join("deeper")).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let (sid, mut ss) = sender.send(dir).await.unwrap();
+    assert_eq!(
+        outcome(&mut ss).await,
+        Err("This folder has no files to send.".to_string())
+    );
+    assert!(!sender.transfers().await.iter().any(|r| r.id == sid));
+}
+
+/// Make a symlink to a file or folder. Creating one on Windows can need
+/// Developer Mode or admin rights; `false` means this machine cannot.
+fn link(target: &Path, link: &Path, dir: bool) -> bool {
+    #[cfg(unix)]
+    let made = {
+        let _ = dir;
+        std::os::unix::fs::symlink(target, link)
+    };
+    #[cfg(windows)]
+    let made = if dir {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    };
+    match made {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("cannot make symlinks here ({e}); skipping");
+            false
+        }
+    }
+}
+
+/// A link inside a folder is sent (as the file, under the link's name) when
+/// it points to a file in that folder. Links that point outside it, to a
+/// folder, or to nothing are left out, and the sender is told how many.
+/// Nothing from outside the chosen folder is ever sent.
+#[tokio::test(flavor = "multi_thread")]
+async fn folder_links_stay_inside_the_folder() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let dir = work.path().join("proj");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.txt"), make_payload(3000)).unwrap();
+    std::fs::write(dir.join("sub").join("b.txt"), make_payload(500)).unwrap();
+    let secret = work.path().join("secret.txt");
+    std::fs::write(&secret, b"not for sending").unwrap();
+
+    if !link(&dir.join("a.txt"), &dir.join("inside.txt"), false) {
+        return;
+    }
+    assert!(link(&secret, &dir.join("outside.txt"), false));
+    assert!(link(&dir.join("sub"), &dir.join("sub-link"), true));
+    assert!(link(
+        &work.path().join("missing.txt"),
+        &dir.join("gone.txt"),
+        false
+    ));
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    let (ticket, skipped) = outcome(&mut ss).await.expect("the folder is sent");
+    assert_eq!(
+        skipped, 3,
+        "outside, folder and dangling links are left out"
+    );
+
+    let preview = receiver.inspect(ticket.clone()).await.unwrap();
+    let mut names: Vec<_> = preview.files.iter().map(|f| f.name.clone()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["proj/a.txt", "proj/inside.txt", "proj/sub/b.txt"],
+        "only the folder's own files, the inside link included"
+    );
+
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver.receive(ticket, out.clone()).await.unwrap();
+    wait_done(&mut rs).await;
+    assert_eq!(
+        std::fs::read(out.join("proj").join("inside.txt")).unwrap(),
+        make_payload(3000),
+        "the inside link arrives as the file it points to"
+    );
+    assert!(!out.join("proj").join("outside.txt").exists());
+}
+
+/// A folder of nothing but links to elsewhere has nothing to send, and says
+/// why rather than making a code for an empty transfer.
+#[tokio::test(flavor = "multi_thread")]
+async fn folder_of_outside_links_is_refused() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+
+    let dir = work.path().join("links");
+    std::fs::create_dir_all(&dir).unwrap();
+    let elsewhere = work.path().join("elsewhere.txt");
+    std::fs::write(&elsewhere, b"stays here").unwrap();
+    if !link(&elsewhere, &dir.join("elsewhere.txt"), false) {
+        return;
+    }
+
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    assert_eq!(
+        outcome(&mut ss).await,
+        Err(
+            "This folder only has links to things outside it, so there is nothing to send."
+                .to_string()
+        )
     );
 }
