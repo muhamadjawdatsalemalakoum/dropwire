@@ -32,6 +32,18 @@ impl Core {
     /// Import `path` (a file or folder), start serving it, and stream progress.
     /// The key event is `Progress::Ready { ticket }` — the string to share.
     pub async fn send(&self, path: PathBuf) -> Result<(TransferId, ProgressStream)> {
+        self.send_many(vec![path]).await
+    }
+
+    /// Like [`Core::send`], for several files and folders at once: one code
+    /// for all of them. Each keeps its own top-level name; when two share one,
+    /// the later gets a number ("photo.jpg", "photo (2).jpg") so nothing is
+    /// overwritten on the receiving side. The same path given twice is sent
+    /// once.
+    pub async fn send_many(&self, paths: Vec<PathBuf>) -> Result<(TransferId, ProgressStream)> {
+        if paths.is_empty() {
+            return Err(anyhow::anyhow!("nothing was chosen to send").into());
+        }
         let id = TransferId::new();
         let (tx, rx) = mpsc::channel(64);
         let token = CancellationToken::new();
@@ -40,7 +52,7 @@ impl Core {
         let core = self.clone();
         let tx_err = tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_send(core.clone(), id, path, tx, token).await {
+            if let Err(e) = run_send(core.clone(), id, paths, tx, token).await {
                 let _ = tx_err
                     .send(Progress::Error {
                         id,
@@ -63,19 +75,19 @@ impl Core {
 async fn run_send(
     core: Core,
     id: TransferId,
-    path: PathBuf,
+    paths: Vec<PathBuf>,
     tx: mpsc::Sender<Progress>,
     token: CancellationToken,
 ) -> anyhow::Result<()> {
     let store = &core.inner.store;
 
-    let display_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "transfer".to_string());
-
     // 1. Enumerate files (single file -> one entry; directory -> recursive).
-    let (files, skipped) = collect_files(&path)?;
+    let Listing {
+        files,
+        skipped,
+        display_name,
+        roots,
+    } = list_paths(&paths)?;
     let total: u64 = files.iter().map(|(_, p)| file_len(p)).sum();
 
     // 2. Import each file, holding the TempTags so nothing is GC'd while serving.
@@ -167,18 +179,30 @@ async fn run_send(
         core.inner.bound.lock().await.remove(&hash_key);
     }
     {
-        let mut cat = core.inner.catalog.lock().await;
-        cat.upsert(Catalog::new_record(
+        // `source` stays the one chosen path, for a send of one thing (and
+        // for older builds reading this history). `sources` lists everything
+        // chosen, so a send of several things can be sent again as a whole.
+        let sources: Vec<String> = roots
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        let source = match sources.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        };
+        let mut rec = Catalog::new_record(
             id,
             Direction::Send,
             display_name,
             ticket_str.clone(),
             hash_key.clone(),
             None,
-            Some(path.to_string_lossy().to_string()),
+            source,
             files_count,
             total,
-        ));
+        );
+        rec.sources = sources;
+        core.inner.catalog.lock().await.upsert(rec);
     }
     let _ = tx
         .send(Progress::Ready {
@@ -341,21 +365,138 @@ async fn import_file(
     }
 }
 
-/// Why a folder send was refused before any code was made. Shown as-is.
+/// Why a send was refused before any code was made, when what was chosen
+/// holds no files. Shown as-is.
 const EMPTY_FOLDER: &str = "This folder has no files to send.";
 const ONLY_OUTSIDE_LINKS: &str =
     "This folder only has links to things outside it, so there is nothing to send.";
+const EMPTY_FOLDERS: &str = "These folders have no files to send.";
+const ONLY_OUTSIDE_LINKS_MANY: &str =
+    "These folders only have links to things outside them, so there is nothing to send.";
 
-/// Enumerate files to send, with forward-slash relative names. A directory keeps
-/// its top-level name so the receiver recreates the tree. Also returns how many
-/// links in a folder were left out.
+/// Everything chosen for one send, ready to import.
+struct Listing {
+    /// Every file, named as the receiver will see it, in collection order.
+    files: Vec<(String, PathBuf)>,
+    /// Links left out (see [`collect_files`]).
+    skipped: usize,
+    /// The name for the card and history: the one thing chosen, or
+    /// "<first> and N more".
+    display_name: String,
+    /// The distinct chosen paths, in order.
+    roots: Vec<PathBuf>,
+}
+
+/// List the files of every chosen path, one after the other. Each keeps its
+/// own top-level name (a file's name, a folder's name); when one clashes with
+/// an earlier one, ignoring case since most desktop file systems do, it is
+/// numbered ("photo (2).jpg", "pics (2)") so no file overwrites another on the
+/// receiving side. The same path chosen twice is listed once.
+fn list_paths(paths: &[PathBuf]) -> anyhow::Result<Listing> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut files = Vec::new();
+    let mut skipped = 0usize;
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut first_name = None;
+    for path in paths {
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        let (mut listed, left_out) = collect_files(path)?;
+        skipped += left_out;
+
+        // This path's top-level names, renamed where an earlier path has one.
+        let mut renamed: HashMap<String, String> = HashMap::new();
+        for (name, _) in &listed {
+            let (top, rest) = split_top(name);
+            if !renamed.contains_key(top) {
+                let unique = unique_name(top, rest.is_some(), &mut taken);
+                renamed.insert(top.to_string(), unique);
+            }
+        }
+        for (name, _) in &mut listed {
+            let (top, rest) = split_top(name);
+            let new_top = &renamed[top];
+            if new_top != top {
+                *name = match rest {
+                    Some(rest) => format!("{new_top}/{rest}"),
+                    None => new_top.clone(),
+                };
+            }
+        }
+
+        if first_name.is_none() {
+            first_name = Some(
+                path.file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "transfer".to_string()),
+            );
+        }
+        files.extend(listed);
+        roots.push(path.clone());
+    }
+
+    if files.is_empty() {
+        anyhow::bail!(match (roots.len() > 1, skipped > 0) {
+            (false, false) => EMPTY_FOLDER,
+            (false, true) => ONLY_OUTSIDE_LINKS,
+            (true, false) => EMPTY_FOLDERS,
+            (true, true) => ONLY_OUTSIDE_LINKS_MANY,
+        });
+    }
+    let first = first_name.unwrap_or_else(|| "transfer".to_string());
+    let display_name = match roots.len() {
+        0 | 1 => first,
+        n => format!("{first} and {} more", n - 1),
+    };
+    Ok(Listing {
+        files,
+        skipped,
+        display_name,
+        roots,
+    })
+}
+
+/// A listed name's top-level part, and the rest of it if there is more.
+fn split_top(name: &str) -> (&str, Option<&str>) {
+    match name.split_once('/') {
+        Some((top, rest)) => (top, Some(rest)),
+        None => (name, None),
+    }
+}
+
+/// `name`, or the first free "name (2)", "name (3)"... that nothing in `taken`
+/// has (ignoring case), which is then taken. A file keeps its extension last:
+/// "photo (2).jpg".
+fn unique_name(name: &str, is_dir: bool, taken: &mut std::collections::HashSet<String>) -> String {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 && !is_dir => name.split_at(i),
+        _ => (name, ""),
+    };
+    let mut candidate = name.to_string();
+    let mut n = 1;
+    while !taken.insert(candidate.to_lowercase()) {
+        n += 1;
+        candidate = format!("{stem} ({n}){ext}");
+    }
+    candidate
+}
+
+/// Enumerate the files of one chosen path, with forward-slash relative names.
+/// A directory keeps its top-level name so the receiver recreates the tree.
+/// Also returns how many links in a folder were left out.
 ///
 /// A link inside a folder is sent (as the file it points to, under the link's
 /// name) only when it points to a file inside that same folder, so a link can
 /// never carry something from elsewhere on the disk along with it. Links to
 /// anything else (outside the folder, to a folder, or to nothing) are left out
 /// and counted, so the sender can be told. Links to folders are never followed,
-/// so there are no loops. A folder with nothing to send is refused.
+/// so there are no loops. An empty folder lists nothing ([`list_paths`] refuses
+/// a send with nothing in it).
 fn collect_files(path: &Path) -> anyhow::Result<(Vec<(String, PathBuf)>, usize)> {
     use walkdir::WalkDir;
 
@@ -402,13 +543,6 @@ fn collect_files(path: &Path) -> anyhow::Result<(Vec<(String, PathBuf)>, usize)>
             format!("{base}/{rel_str}")
         };
         out.push((name, file));
-    }
-    if out.is_empty() {
-        anyhow::bail!(if skipped > 0 {
-            ONLY_OUTSIDE_LINKS
-        } else {
-            EMPTY_FOLDER
-        });
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok((out, skipped))

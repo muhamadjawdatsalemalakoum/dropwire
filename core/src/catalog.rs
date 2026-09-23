@@ -37,9 +37,15 @@ pub struct TransferRecord {
     pub hash: String,
     /// Destination directory for receives.
     pub dest: Option<String>,
-    /// Source path for sends (lets a send be re-shared from history).
+    /// Source path for sends (lets a send be re-shared from history). Set only
+    /// when one file or folder was sent; see `sources` for a send of several.
     #[serde(default)]
     pub source: Option<String>,
+    /// Every path chosen for a send, in order (one or more). Empty on
+    /// receives and on records written before this field existed, which have
+    /// only `source`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
     /// Number of files in the transfer (0 for records created before this
     /// field existed). Surfaced in nearby-offer summaries.
     #[serde(default)]
@@ -153,6 +159,7 @@ impl Catalog {
             hash,
             dest,
             source,
+            sources: Vec::new(),
             file_count,
             total_bytes,
             transferred: 0,

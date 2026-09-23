@@ -227,3 +227,112 @@ async fn folder_of_outside_links_is_refused() {
         )
     );
 }
+
+/// Several files and folders chosen together go out under one code. Each
+/// keeps its own name; clashing names are numbered (ignoring case, as most
+/// desktop file systems do) so nothing is overwritten on arrival, and the
+/// same path chosen twice is sent once.
+#[tokio::test(flavor = "multi_thread")]
+async fn several_paths_share_one_code() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    for d in ["one", "two", "three"] {
+        std::fs::create_dir_all(work.path().join(d)).unwrap();
+    }
+    let first = work.path().join("one").join("photo.jpg");
+    let second = work.path().join("two").join("photo.jpg");
+    let third = work.path().join("three").join("Photo.JPG");
+    std::fs::write(&first, make_payload(1000)).unwrap();
+    std::fs::write(&second, make_payload(2000)).unwrap();
+    std::fs::write(&third, make_payload(3000)).unwrap();
+    let pics = work.path().join("pics");
+    std::fs::create_dir_all(pics.join("sub")).unwrap();
+    std::fs::write(pics.join("sub").join("x.bin"), make_payload(4000)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let chosen = vec![
+        first.clone(),
+        second.clone(),
+        third.clone(),
+        pics.clone(),
+        first.clone(),
+    ];
+    let (sid, mut ss) = sender.send_many(chosen).await.unwrap();
+    let (ticket, _) = outcome(&mut ss).await.expect("several paths are sent");
+
+    let preview = receiver.inspect(ticket.clone()).await.unwrap();
+    let names: Vec<_> = preview.files.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "photo.jpg",
+            "photo (2).jpg",
+            "Photo (3).JPG",
+            "pics/sub/x.bin"
+        ],
+        "one entry per file, in the order chosen, with clashes numbered"
+    );
+    assert_eq!(preview.total_bytes, 1000 + 2000 + 3000 + 4000);
+
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver.receive(ticket, out.clone()).await.unwrap();
+    wait_done(&mut rs).await;
+    assert_eq!(
+        std::fs::read(out.join("photo.jpg")).unwrap(),
+        make_payload(1000)
+    );
+    assert_eq!(
+        std::fs::read(out.join("photo (2).jpg")).unwrap(),
+        make_payload(2000)
+    );
+    assert_eq!(
+        std::fs::read(out.join("Photo (3).JPG")).unwrap(),
+        make_payload(3000)
+    );
+    assert_eq!(
+        std::fs::read(out.join("pics").join("sub").join("x.bin")).unwrap(),
+        make_payload(4000)
+    );
+
+    // History: named after the first thing chosen, and it remembers all of
+    // them (so it can be sent again as a whole), but no single source.
+    let rec = sender
+        .transfers()
+        .await
+        .into_iter()
+        .find(|r| r.id == sid)
+        .expect("the send is on record");
+    assert_eq!(rec.name, "photo.jpg and 3 more");
+    assert_eq!(rec.file_count, 4);
+    assert_eq!(rec.source, None, "no one path stands for the whole send");
+    let path = |p: &Path| p.to_string_lossy().to_string();
+    assert_eq!(
+        rec.sources,
+        vec![path(&first), path(&second), path(&third), path(&pics)]
+    );
+}
+
+/// Several empty folders are refused the same way one is.
+#[tokio::test(flavor = "multi_thread")]
+async fn several_empty_folders_are_refused() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let a = work.path().join("a");
+    let b = work.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send_many(vec![a, b]).await.unwrap();
+    assert_eq!(
+        outcome(&mut ss).await,
+        Err("These folders have no files to send.".to_string())
+    );
+    assert!(
+        sender.send_many(Vec::new()).await.is_err(),
+        "nothing chosen is an error straight away"
+    );
+}
