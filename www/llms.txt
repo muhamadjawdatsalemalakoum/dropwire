@@ -12,7 +12,7 @@ Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, mac
 
 ## How it works
 1. Pick a file or folder
-2. Share a one-time transfer code (or QR), or tap a nearby device on the same network
+2. Share the one-time transfer code (the recipient pastes it into Receive), or tap a nearby device on the same network
 3. Recipient previews names/sizes/count (verified by the code), accepts, and receives — end-to-end encrypted
 
 ## Key features
