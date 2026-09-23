@@ -1,7 +1,5 @@
-# Dropwire — Cargo workspace
-# `src-tauri` is added as a member once the desktop shell lands (M2); keeping the
-# workspace at `core` only for now lets `cargo build`/`test` stay green while the
-# engine is built and verified first.
+# Dropwire Cargo workspace: `core` (the transfer engine, crate `irohcore`) and
+# `src-tauri` (the desktop shell, crate `dropwire`). Both build into ./target.
 [workspace]
 resolver = "2"
 members = ["core", "src-tauri"]
