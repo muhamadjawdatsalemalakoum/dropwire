@@ -8,6 +8,7 @@ use anyhow::Context;
 use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
 use iroh_blobs::api::TempTag;
 use iroh_blobs::format::collection::Collection;
+use iroh_blobs::protocol::{ChunkRanges, ChunkRangesExt, ChunkRangesSeq};
 use iroh_blobs::provider::events::{AbortReason, ProviderMessage, RequestUpdate};
 use iroh_blobs::ticket::BlobTicket;
 use iroh_blobs::{BlobFormat, Hash};
@@ -78,6 +79,8 @@ async fn run_send(
     // 2. Import each file, holding the TempTags so nothing is GC'd while serving.
     let mut tags: Vec<TempTag> = Vec::with_capacity(files.len());
     let mut entries: Vec<(String, Hash)> = Vec::with_capacity(files.len());
+    // Each file's size, in collection order, so a request can be sized.
+    let mut sizes: Vec<u64> = Vec::with_capacity(files.len());
     let mut imported = 0u64;
     for (name, p) in files {
         if token.is_cancelled() {
@@ -94,9 +97,11 @@ async fn run_send(
             .temp_tag()
             .await
             .with_context(|| format!("import {}", p.display()))?;
+        let len = file_len(&p);
         entries.push((name, tt.hash()));
         tags.push(tt);
-        imported += file_len(&p);
+        sizes.push(len);
+        imported += len;
         let _ = tx
             .send(Progress::Importing {
                 id,
@@ -154,6 +159,7 @@ async fn run_send(
                 events: ev_tx,
                 token: token.clone(),
                 delivered: delivered.clone(),
+                sizes: sizes.into(),
             },
         );
         // A new share starts unbound: the first device to use it takes it.
@@ -183,17 +189,28 @@ async fn run_send(
     // 6. Serve, surfacing sender-side progress from provider events, until the user
     //    cancels. Holding `tags` + `collection_tag` keeps the content alive.
     let mut completed = false;
-    // Requests being served right now. Every request that joins ends with
-    // exactly one Done or Aborted.
+    // Downloads of file content being served right now. Every one that joins
+    // ends with exactly one Done or Aborted. (A preview never joins.)
     let mut in_flight = 0usize;
+    // Whether "previewing" is what the card says now, so the two requests of
+    // a preview (or a download's size check) report it once.
+    let mut previewing = false;
     loop {
         tokio::select! {
             // Once cancelled, report nothing more but the Cancelled below.
             biased;
             _ = token.cancelled() => break,
             ev = ev_rx.recv() => match ev {
+                Some(ProviderEvent::Previewing) => {
+                    // A size check while content is already moving is no news.
+                    if in_flight == 0 && !previewing {
+                        previewing = true;
+                        let _ = tx.send(Progress::Previewing { id }).await;
+                    }
+                }
                 Some(ProviderEvent::PeerJoined) => {
                     in_flight += 1;
+                    previewing = false;
                     let _ = tx.send(Progress::PeerJoined { id }).await;
                 }
                 Some(ProviderEvent::Progress { offset, total: t }) => {
@@ -202,13 +219,21 @@ async fn run_send(
                         .send(Progress::Transferring { id, offset, total, route: Route::Unknown })
                         .await;
                 }
-                Some(ProviderEvent::Done { bytes, seconds }) => {
+                Some(ProviderEvent::Done { bytes, body, seconds }) => {
                     in_flight = in_flight.saturating_sub(1);
                     completed = true;
                     delivered.store(true, Ordering::Release);
-                    core.inner.catalog.lock().await.set_status(id, Status::Done, Some(bytes));
+                    // Record how much of the transfer the receiver now holds
+                    // (all of it, unless it chose some files), not the bytes
+                    // this one request moved: a resumed download moves less.
+                    core.inner
+                        .catalog
+                        .lock()
+                        .await
+                        .set_status(id, Status::Done, Some(body.min(total)));
                     let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds } }).await;
-                    // keep serving — another receiver may still fetch — until cancelled.
+                    // Keep serving until cancelled: the same device may come
+                    // back for it (the one-to-one gate still applies).
                 }
                 Some(ProviderEvent::Aborted) => {
                     in_flight = in_flight.saturating_sub(1);
@@ -220,6 +245,7 @@ async fn run_send(
                     }
                 }
                 Some(ProviderEvent::Declined) => {
+                    previewing = false;
                     let _ = tx.send(Progress::Declined { id }).await;
                 }
                 None => break,
@@ -302,24 +328,56 @@ pub(crate) struct Serving {
     /// The owning send's token. Requests in flight stop when it fires, and a
     /// newer send of the same content fires it to take over.
     pub(crate) token: CancellationToken,
-    /// Set once the send has delivered its content.
+    /// Set once a download of the send's content finished (a preview never
+    /// counts).
     pub(crate) delivered: Arc<AtomicBool>,
+    /// Each file's size, in collection order (file `i` is request offset
+    /// `i + 2`). Tells a download from a preview, and sizes a download.
+    pub(crate) sizes: Arc<[u64]>,
 }
 
 /// Sender-side events distilled from iroh-blobs provider events, routed per hash.
 pub(crate) enum ProviderEvent {
+    /// A request for no file content: the receiver's preview or size check.
+    Previewing,
+    /// A download of file content started.
     PeerJoined,
     Progress {
         offset: u64,
         total: u64,
     },
+    /// A download finished. `bytes` went over the wire; `body` is the full
+    /// size of the files it asked for.
     Done {
         bytes: u64,
+        body: u64,
         seconds: f64,
     },
     Aborted,
     /// The bound device declined from the preview (see [`consume_declines`]).
     Declined,
+}
+
+/// How many bytes of file content a request asks for, or `None` if it asks
+/// for none. A collection's hash sequence is `[names, file0, file1, ...]`, so
+/// request offset 0 is the root, 1 the names blob, and `i + 2` file `i`.
+///
+/// The receiver's preview asks for the root and the names only, and its size
+/// check adds each file's last chunk (the proof of the file's size). Neither
+/// is a delivery. Anything more of a file is: the whole of it, or the ranges a
+/// resumed download is still missing. The sum is of the requested files' full
+/// sizes.
+fn requested_body(ranges: &ChunkRangesSeq, sizes: &[u64]) -> Option<u64> {
+    let size_only = ChunkRanges::last_chunk();
+    let mut body = None;
+    // Zipped with `sizes` to stay bounded: a size check's ranges repeat
+    // forever, and only real files count.
+    for (r, size) in ranges.iter_infinite().skip(2).zip(sizes) {
+        if !r.is_empty() && *r != size_only {
+            *body.get_or_insert(0) += size;
+        }
+    }
+    body
 }
 
 /// Consume the global provider-event stream from the blobs server and route each
@@ -351,13 +409,22 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                     let _ = m.tx.send(Err(AbortReason::Permission)).await;
                     continue;
                 };
+                // Only a download of file content is a delivery: it alone
+                // joins, reports progress, and ends in Done or Aborted. A
+                // preview or size check says "previewing" and nothing else.
+                let body = requested_body(&m.request.ranges, &route.sizes);
                 let _ = m.tx.send(Ok(())).await;
 
                 let Serving {
                     events: tx, token, ..
                 } = route;
-                let _ = tx.send(ProviderEvent::PeerJoined);
-                let mut stream = m.rx; // irpc receiver of per-request RequestUpdate
+                let _ = tx.send(match body {
+                    Some(_) => ProviderEvent::PeerJoined,
+                    None => ProviderEvent::Previewing,
+                });
+                // Drain the per-request updates even for a preview: dropping
+                // this receiver early makes the provider abort the request.
+                let mut stream = m.rx;
                 tokio::spawn(async move {
                     let mut total = 0u64;
                     let mut completed = false;
@@ -374,6 +441,9 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                             update = stream.recv() => update,
                         };
                         let Ok(Some(update)) = update else { break };
+                        let Some(body) = body else {
+                            continue;
+                        };
                         match update {
                             RequestUpdate::Started(s) => total = s.size,
                             RequestUpdate::Progress(p) => {
@@ -389,6 +459,7 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                                 completed = true;
                                 let _ = tx.send(ProviderEvent::Done {
                                     bytes: c.stats.payload_bytes_sent,
+                                    body,
                                     seconds: c.stats.duration.as_secs_f64(),
                                 });
                                 break;
@@ -398,8 +469,9 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                     }
                     // Anything short of completion counts as the receiver
                     // leaving, including an update stream that just closed.
-                    // (Not when the send itself ended: that is no news.)
-                    if !completed && !token.is_cancelled() {
+                    // (Not when the send itself ended: that is no news. And
+                    // not for a preview, which never joined.)
+                    if body.is_some() && !completed && !token.is_cancelled() {
                         let _ = tx.send(ProviderEvent::Aborted);
                     }
                 });

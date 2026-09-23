@@ -97,7 +97,7 @@ pub enum Progress {
     },
     /// Sender: content imported, ticket minted, now serving.
     Ready { id: TransferId, ticket: String },
-    /// Sender: a receiver connected.
+    /// Sender: a receiver started downloading file content.
     PeerJoined { id: TransferId },
     /// Receiver (and, later, sender): bytes are moving.
     Transferring {
@@ -106,7 +106,8 @@ pub enum Progress {
         total: u64,
         route: Route,
     },
-    /// Transfer completed successfully.
+    /// Transfer completed successfully. On a send: a receiver finished
+    /// downloading the file content it asked for (a preview never counts).
     Done {
         id: TransferId,
         stats: TransferStats,
@@ -124,6 +125,10 @@ pub enum Progress {
     /// declined. Its binding is released and the send keeps serving, so the
     /// code now works for the next device that uses it.
     Declined { id: TransferId },
+    /// Sender: the receiver is looking at the file list (a preview, or the
+    /// size check before its download). No file content has been asked for
+    /// yet; `peerJoined` follows if it starts downloading.
+    Previewing { id: TransferId },
 }
 
 impl Progress {
@@ -138,7 +143,8 @@ impl Progress {
             | Progress::Error { id, .. }
             | Progress::Cancelled { id, .. }
             | Progress::PeerLeft { id, .. }
-            | Progress::Declined { id, .. } => *id,
+            | Progress::Declined { id, .. }
+            | Progress::Previewing { id, .. } => *id,
         }
     }
 }

@@ -3,11 +3,13 @@
 //! These use `Infra::LocalOnly` (no relay, no discovery) so they're hermetic:
 //! the receiver dials the direct addresses embedded in the ticket over loopback.
 
-use irohcore::{Core, CoreConfig, Progress};
+use std::time::Duration;
+
+use irohcore::{Core, CoreConfig, Progress, Status};
 use tokio_stream::StreamExt;
 
 mod common;
-use common::{drain_until_terminal, local_core, make_payload, wait_done, wait_ready};
+use common::{drain_for, drain_until_terminal, local_core, make_payload, wait_done, wait_ready};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn roundtrip_single_file() {
@@ -153,8 +155,44 @@ async fn roundtrip_serverless() {
     assert_eq!(std::fs::read(out.join("hello.bin")).unwrap(), payload);
 }
 
+/// Read a SEND stream up to and including its first Done, then a short quiet
+/// window more, and return everything it said. The sender's Done can land
+/// just after the receiver's, and the extra window catches a second one.
+async fn send_events_through_done(stream: &mut irohcore::ProgressStream) -> Vec<Progress> {
+    let mut seen = Vec::new();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(ev) = stream.next().await {
+            if let Progress::Error { message, .. } = &ev {
+                panic!("sender error: {message}");
+            }
+            let done = matches!(ev, Progress::Done { .. });
+            seen.push(ev);
+            if done {
+                return;
+            }
+        }
+        panic!("send stream ended before Done: {seen:?}");
+    })
+    .await
+    .expect("timed out waiting for the sender's Done");
+    seen.extend(drain_for(stream, Duration::from_millis(500)).await);
+    seen
+}
+
+/// The bytes each Done on a send stream reports, in order.
+fn done_bytes(seen: &[Progress]) -> Vec<u64> {
+    seen.iter()
+        .filter_map(|e| match e {
+            Progress::Done { stats, .. } => Some(stats.bytes),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The SENDER sees live progress (via iroh-blobs provider events): when a
-/// receiver fetches, the send stream emits PeerJoined → Transferring… → Done.
+/// receiver downloads, the send stream says "previewing" for the size check,
+/// then PeerJoined, Transferring, and exactly one Done that covers the whole
+/// payload.
 #[tokio::test(flavor = "multi_thread")]
 async fn sender_sees_progress() {
     let work = tempfile::tempdir().unwrap();
@@ -171,32 +209,106 @@ async fn sender_sees_progress() {
     let (_sid, mut ss) = sender.send(src).await.unwrap();
     let ticket = wait_ready(&mut ss).await;
 
-    // Drive the receiver to completion in the background.
     let out = work.path().join("out");
     let (_rid, mut rs) = receiver.receive(ticket, out).await.unwrap();
-    tokio::spawn(async move { while rs.next().await.is_some() {} });
+    wait_done(&mut rs).await;
+    let seen = send_events_through_done(&mut ss).await;
 
-    // The sender stream should report a peer joining and the transfer completing.
-    let (peer, done) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
-        let (mut peer, mut done) = (false, false);
-        while let Some(ev) = ss.next().await {
-            match ev {
-                Progress::PeerJoined { .. } => peer = true,
-                Progress::Done { .. } => {
-                    done = true;
-                    break;
-                }
-                Progress::Error { message, .. } => panic!("sender error: {message}"),
-                _ => {}
-            }
-        }
-        (peer, done)
-    })
-    .await
-    .expect("timed out waiting for sender-side progress");
+    let position = |want: fn(&Progress) -> bool| seen.iter().position(want);
+    let previewing = position(|e| matches!(e, Progress::Previewing { .. }));
+    let joined = position(|e| matches!(e, Progress::PeerJoined { .. }));
+    let moving = position(|e| matches!(e, Progress::Transferring { .. }));
+    assert!(joined.is_some(), "sender should see PeerJoined: {seen:?}");
+    assert!(
+        previewing.is_some() && previewing < joined,
+        "the size check comes first, and is only a preview: {seen:?}"
+    );
+    assert!(
+        moving > joined,
+        "sender should see bytes moving after the receiver joins: {seen:?}"
+    );
+    assert_eq!(
+        seen.iter()
+            .filter(|e| matches!(e, Progress::PeerJoined { .. }))
+            .count(),
+        1,
+        "one download, one join: {seen:?}"
+    );
+    let dones = done_bytes(&seen);
+    assert_eq!(dones.len(), 1, "one download, one Done: {seen:?}");
+    assert!(
+        dones[0] >= payload.len() as u64,
+        "the Done must be the real delivery, not a probe ({} bytes of {})",
+        dones[0],
+        payload.len()
+    );
+}
 
-    assert!(peer, "sender should see PeerJoined");
-    assert!(done, "sender should see Done");
+/// A preview is not a delivery. The receiver looking at the file list must
+/// not make the sender say "Sent" or record the send as done; the sender is
+/// told the receiver is looking. The download that follows is the delivery,
+/// and it is reported once.
+#[tokio::test(flavor = "multi_thread")]
+async fn inspect_does_not_complete_send() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("report.bin");
+    let payload = make_payload(2 * 1024 * 1024);
+    std::fs::write(&src, &payload).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+
+    let (sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+    let record = || async {
+        sender
+            .transfers()
+            .await
+            .into_iter()
+            .find(|r| r.id == sid)
+            .expect("the send is on record")
+    };
+
+    let preview = receiver.inspect(ticket.clone()).await.unwrap();
+    assert_eq!(preview.file_count, 1);
+    let seen = drain_for(&mut ss, Duration::from_secs(2)).await;
+    assert!(
+        !seen.iter().any(|e| matches!(
+            e,
+            Progress::Done { .. } | Progress::PeerJoined { .. } | Progress::Transferring { .. }
+        )),
+        "a preview is not a delivery: {seen:?}"
+    );
+    assert_eq!(
+        seen.iter()
+            .filter(|e| matches!(e, Progress::Previewing { .. }))
+            .count(),
+        1,
+        "the sender is told once that the receiver is looking: {seen:?}"
+    );
+    assert_eq!(
+        record().await.status,
+        Status::Active,
+        "a preview must not record the send as done"
+    );
+
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver.receive(ticket, out.clone()).await.unwrap();
+    wait_done(&mut rs).await;
+    assert_eq!(std::fs::read(out.join("report.bin")).unwrap(), payload);
+
+    let seen = send_events_through_done(&mut ss).await;
+    assert_eq!(
+        done_bytes(&seen).len(),
+        1,
+        "preview then download is one delivery: {seen:?}"
+    );
+    let rec = record().await;
+    assert_eq!(rec.status, Status::Done);
+    assert_eq!(rec.transferred, payload.len() as u64);
 }
 
 /// When the receiver goes away mid-file (it cancels, or its connection drops),

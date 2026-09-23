@@ -72,6 +72,15 @@ pub fn dir_size(dir: &Path) -> u64 {
     total
 }
 
+/// Everything a stream reports until it has been quiet for `window`.
+pub async fn drain_for(stream: &mut ProgressStream, window: Duration) -> Vec<Progress> {
+    let mut seen = Vec::new();
+    while let Ok(Some(ev)) = tokio::time::timeout(window, stream.next()).await {
+        seen.push(ev);
+    }
+    seen
+}
+
 /// Drain a stream until any terminal event (Done / Error / Cancelled).
 pub async fn drain_until_terminal(stream: &mut ProgressStream) {
     while let Some(ev) = stream.next().await {
