@@ -404,9 +404,20 @@ impl Core {
 
     /// TEST-ONLY: this endpoint's dial address, so hermetic tests can hand
     /// one core another's address directly (same shape a ticket carries).
+    ///
+    /// Built from the bound sockets on loopback rather than `endpoint.addr()`:
+    /// right after bind the endpoint may not have gathered its interface
+    /// addresses yet (slower on machines with many adapters), and with no relay
+    /// or discovery in local-only mode an address-less dial just times out.
     #[cfg(feature = "test-utils")]
     pub fn test_dial_addr(&self) -> iroh::EndpointAddr {
-        self.inner.router.endpoint().addr()
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+        let endpoint = self.inner.router.endpoint();
+        let loopback = endpoint.bound_sockets().into_iter().map(|s| match s {
+            SocketAddr::V4(v4) => SocketAddr::from((Ipv4Addr::LOCALHOST, v4.port())),
+            SocketAddr::V6(v6) => SocketAddr::from((Ipv6Addr::LOCALHOST, v6.port())),
+        });
+        EndpointAddr::from_parts(endpoint.id(), loopback.map(TransportAddr::Ip))
     }
 
     /// TEST-ONLY: flip the "nearby sharing on" flag that gates incoming offers,
