@@ -40,6 +40,11 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
 /// Connect timeout for both sides of the consent handshake.
 const CONSENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Why an offer was refused before it went out. Shown to the sender as-is.
+const SEND_ENDED: &str = "This send has ended. Start a new one to offer it.";
+const SEND_TAKEN: &str =
+    "This send is already going to another device. Start a new send to offer it to someone else.";
+
 /// Anything exchangeable over the control channel: the original presence
 /// frames plus the nearby-consent trio. One enum keeps parsing single-sourced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,9 +295,7 @@ impl Core {
             )));
         }
         if record.status != Status::Active || record.ticket.is_empty() {
-            return Err(CoreError::Other(anyhow::anyhow!(
-                "This send has ended. Start a new one to offer it."
-            )));
+            return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
         }
 
         // Dial priority: mDNS LAN socket → explicit hint → engine lookup.
@@ -327,16 +330,32 @@ impl Core {
             _ => unreachable!("just built an Offer"),
         };
 
-        let (upd_tx, upd_rx) = mpsc::channel(8);
-
         // Bind the one-to-one gate to this neighbor NOW so no third party can
-        // pull the content between consent and download.
-        self.inner
-            .bound
-            .lock()
-            .await
-            .insert(record.hash.clone(), peer);
+        // pull the content between consent and download. A send that already
+        // has a receiver (someone used its code, or took an earlier offer) is
+        // never handed to a second device: that would take it from the first
+        // mid-transfer. Checked and bound under one lock, `serving` first.
+        // `already_ours`: this neighbor held the binding before this offer,
+        // so the offer's outcome must leave it alone.
+        let already_ours = {
+            let serving = self.inner.serving.lock().await;
+            if !serving.get(&record.hash).is_some_and(|s| s.id == id) {
+                return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
+            }
+            let mut bound = self.inner.bound.lock().await;
+            match bound.get(&record.hash) {
+                Some(other) if *other != peer => {
+                    return Err(CoreError::Other(anyhow::anyhow!(SEND_TAKEN)));
+                }
+                Some(_) => true,
+                None => {
+                    bound.insert(record.hash.clone(), peer);
+                    false
+                }
+            }
+        };
 
+        let (upd_tx, upd_rx) = mpsc::channel(8);
         let endpoint = self.inner.router.endpoint().clone();
         let core = self.clone();
         let hash_key = record.hash.clone();
@@ -353,10 +372,11 @@ impl Core {
             // Declined or undeliverable → release the early one-to-one binding
             // (a manual code-share of this content must still work) and stop
             // serving the offer (the user can simply send again) — but ONLY if
-            // this offer still owns the binding. If a newer offer for the same
-            // send replaced it (or that send is now streaming to another
-            // neighbor), tearing it down here would abort a live transfer.
-            if matches!(update, OfferUpdate::Declined | OfferUpdate::Failed { .. }) {
+            // this offer made the binding and still owns it. A neighbor that
+            // was already this send's receiver keeps it whatever it says to a
+            // repeat offer.
+            if !already_ours && matches!(update, OfferUpdate::Declined | OfferUpdate::Failed { .. })
+            {
                 let mut bound = core.inner.bound.lock().await;
                 if bound.get(&hash_key) == Some(&offer_peer) {
                     bound.remove(&hash_key);

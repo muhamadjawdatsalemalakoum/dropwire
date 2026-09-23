@@ -10,7 +10,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{local_core, make_payload, wait_done, wait_ready};
+use common::{drain_for, local_core, make_payload, wait_done, wait_ready};
 use iroh_blobs::ticket::BlobTicket;
 use irohcore::{CoreError, CtrlMsg, IncomingOffer, OfferUpdate, Progress, TransferId};
 use tokio::sync::broadcast;
@@ -325,6 +325,66 @@ async fn offer_names_the_send_it_offers() {
         .await
         .expect("accept");
     assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+}
+
+/// A send whose code is already in use is never offered to a second device:
+/// that would take it from the first one mid-transfer. A repeat offer to the
+/// device that has it is fine, and declining that offer does not cost it the
+/// code.
+#[tokio::test]
+async fn offer_never_takes_a_send_from_its_receiver() {
+    let dir = tempdir::dir();
+    let d1 = tempdir::dir();
+    let d2 = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let r1 = local_core(d1.path()).await;
+    let r2 = local_core(d2.path()).await;
+    r1.test_set_nearby_running(true);
+    r2.test_set_nearby_running(true);
+    let mut r1_offers = r1.subscribe_offers();
+    let mut r2_offers = r2.subscribe_offers();
+
+    let src = dir.path().join("report.pdf");
+    std::fs::write(&src, make_payload(96 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut send_stream).await;
+
+    // r1 opens the code's preview, so the code is now r1's.
+    r1.inspect(ticket.clone()).await.expect("r1 previews");
+
+    let err = sender
+        .offer_nearby_dial(r2.endpoint_id(), id, Some(r2.test_dial_addr()))
+        .await
+        .expect_err("must not hand r1's send to r2");
+    assert!(
+        err.to_string().contains("already going to another device"),
+        "got {err}"
+    );
+    let surfaced = tokio::time::timeout(Duration::from_millis(300), r2_offers.recv()).await;
+    assert!(surfaced.is_err(), "a refused offer must not go out");
+
+    // Offering it to r1 itself is allowed; r1 says no to that offer.
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(r1.endpoint_id(), id, Some(r1.test_dial_addr()))
+        .await
+        .expect("offer to r1");
+    let offer = next_offer(&mut r1_offers).await;
+    r1.respond_offer(offer.offer_id, false).await.unwrap();
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+
+    // r1 still gets the files with the code, and the send never stopped.
+    let dest = d1.path().join("out");
+    let (_rid, mut rx) = r1.receive(ticket, dest.clone()).await.unwrap();
+    wait_done(&mut rx).await;
+    assert_eq!(
+        std::fs::read(dest.join("report.pdf")).unwrap(),
+        make_payload(96 * 1024)
+    );
+    let seen = drain_for(&mut send_stream, Duration::from_millis(300)).await;
+    assert!(
+        !seen.iter().any(|e| matches!(e, Progress::Cancelled { .. })),
+        "the send must keep going: {seen:?}"
+    );
 }
 
 /// The pairing fingerprint must depend on the WHOLE identity, not a short
