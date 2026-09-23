@@ -31,7 +31,8 @@ pub enum Status {
 pub struct TransferRecord {
     pub id: TransferId,
     pub direction: Direction,
-    /// Display name (file or folder name).
+    /// Display name: the file or top-level folder name, or "N files" when a
+    /// transfer holds several of them side by side.
     pub name: String,
     /// The ticket string (lets a receive be resumed).
     pub ticket: String,
@@ -42,8 +43,9 @@ pub struct TransferRecord {
     /// Source path for sends (lets a send be re-shared from history).
     #[serde(default)]
     pub source: Option<String>,
-    /// Number of files in the transfer (0 for records created before this
-    /// field existed). Surfaced in nearby-offer summaries.
+    /// Number of files in the transfer; for a receive, the files chosen (0 for
+    /// records created before this field was filled in). Surfaced in
+    /// nearby-offer summaries.
     #[serde(default)]
     pub file_count: usize,
     pub total_bytes: u64,
@@ -147,6 +149,15 @@ impl Catalog {
             if let Some(t) = transferred {
                 rec.transferred = t;
             }
+            rec.updated_at = now_secs();
+            self.save();
+        }
+    }
+
+    /// Rename an entry (a receive learns its files' names once they arrive).
+    pub fn set_name(&mut self, id: TransferId, name: String) {
+        if let Some(rec) = self.entries.get_mut(&id.to_string()) {
+            rec.name = name;
             rec.updated_at = now_secs();
             self.save();
         }

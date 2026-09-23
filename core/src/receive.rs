@@ -329,22 +329,39 @@ async fn run_receive(
             .sum(),
     };
 
+    let file_count = match &wanted {
+        None => sizes.len() - 1,
+        Some(flags) => flags.iter().filter(|&&f| f).count(),
+    };
+    // History names the receive after what it holds. The names are usually
+    // stored already (the preview fetched them); if not, "N files" stands in
+    // until they arrive.
+    let name_from = |collection: &Collection| {
+        let names: Vec<&str> = collection
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| is_wanted(*i))
+            .map(|(_, (name, _))| name.as_str())
+            .collect();
+        display_name(&names)
+    };
+    let name = match Collection::load(hash, store.as_ref()).await {
+        Ok(collection) => Some(name_from(&collection)),
+        Err(_) => None,
+    };
+
     // Record (active).
     {
-        let name = dest
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "download".to_string());
         let mut cat = core.inner.catalog.lock().await;
         cat.upsert(Catalog::new_record(
             id,
             Direction::Receive,
-            name,
+            name.clone().unwrap_or_else(|| files_label(file_count)),
             ticket_str,
             hash.to_string(),
             Some(dest.to_string_lossy().to_string()),
             None,
-            0, // file count is learned from the preview; not needed for resume
+            file_count,
             total,
         ));
     }
@@ -425,6 +442,10 @@ async fn run_receive(
     let collection = Collection::load(hash, store.as_ref())
         .await
         .context("load collection")?;
+    if name.is_none() {
+        let name = name_from(&collection);
+        core.inner.catalog.lock().await.set_name(id, name);
+    }
     // Where each file goes. Nothing already on disk is replaced: taken names
     // get a " (n)" suffix, decided once per top-level name so a folder lands
     // together, and content already saved by an earlier receive of this same
@@ -492,6 +513,37 @@ async fn run_receive(
     store::release_superseded(store, &records, &hash.to_string()).await;
     let _ = tx.send(Progress::Done { id, stats }).await;
     Ok(())
+}
+
+/// What history calls a receive: the file's name when there is one file, the
+/// folder's name when every file sits in one top-level folder, and "N files"
+/// otherwise. Names are cleaned the same way they are when saved.
+fn display_name(names: &[&str]) -> String {
+    let segs: Vec<Vec<String>> = names
+        .iter()
+        .map(|name| export::sanitize_segments(name))
+        .collect();
+    match segs.as_slice() {
+        [one] => one.last().cloned().unwrap_or_else(|| files_label(1)),
+        [first, rest @ ..] if first.len() > 1 => {
+            let top = &first[0];
+            if rest.iter().all(|s| s.len() > 1 && &s[0] == top) {
+                top.clone()
+            } else {
+                files_label(segs.len())
+            }
+        }
+        _ => files_label(segs.len()),
+    }
+}
+
+/// "1 file", "3 files".
+fn files_label(count: usize) -> String {
+    if count == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{count} files")
+    }
 }
 
 /// End a receive the user cancelled. What it downloaded is let go: a cancel
@@ -575,5 +627,17 @@ mod tests {
     #[test]
     fn empty_manifest_is_refused() {
         assert!(check_manifest(&[], 3, 100).is_err());
+    }
+
+    #[test]
+    fn a_receive_is_named_after_what_it_holds() {
+        assert_eq!(display_name(&["holiday.zip"]), "holiday.zip");
+        assert_eq!(display_name(&["pics/a.jpg", "pics/sub/b.jpg"]), "pics");
+        assert_eq!(display_name(&["pics/a.jpg"]), "a.jpg");
+        assert_eq!(display_name(&["a.txt", "b.txt"]), "2 files");
+        assert_eq!(display_name(&["pics/a.jpg", "docs/b.pdf"]), "2 files");
+        assert_eq!(display_name(&["pics", "pics/a.jpg"]), "2 files");
+        assert_eq!(display_name(&["Why?.pdf"]), "Why_.pdf");
+        assert_eq!(display_name(&[]), "0 files");
     }
 }
