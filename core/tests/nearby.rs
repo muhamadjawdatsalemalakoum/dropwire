@@ -266,7 +266,7 @@ async fn nearby_offer_decline_blocks_transfer() {
     })
     .await
     .expect("no verdict in time");
-    assert_eq!(update, OfferUpdate::Declined);
+    assert_eq!(update, OfferUpdate::Declined { unseen: false });
 
     // The receiver never accepted, so no download destination may exist and
     // none of the offered files may appear anywhere on disk. (Engine
@@ -321,7 +321,7 @@ async fn offer_while_nearby_off_is_declined_silently() {
     })
     .await
     .expect("no verdict in time");
-    assert_eq!(update, OfferUpdate::Declined);
+    assert_eq!(update, OfferUpdate::Declined { unseen: true });
 
     // … and the receiver was never shown anything.
     let surfaced = tokio::time::timeout(Duration::from_millis(500), offers.recv()).await;
@@ -469,7 +469,10 @@ async fn offer_never_takes_a_send_from_its_receiver() {
         .expect("offer to r1");
     let offer = next_offer(&mut r1_offers).await;
     r1.respond_offer(offer.offer_id, false).await.unwrap();
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+    assert_eq!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Declined { unseen: false }
+    );
 
     // r1 still gets the files with the code, and the send never stopped.
     let dest = d1.path().join("out");
@@ -514,7 +517,10 @@ async fn declined_offer_keeps_the_send_and_shuts_the_decliner_out() {
     bob.respond_offer(offer.offer_id.clone(), false)
         .await
         .unwrap();
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+    assert_eq!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Declined { unseen: false }
+    );
 
     // Bob cannot use the code the offer carried.
     assert_refused(bob.inspect(offer.ticket.clone()).await, "bob's preview");
@@ -730,7 +736,10 @@ async fn a_send_has_one_offer_at_a_time() {
     }
 
     bob.respond_offer(offer.offer_id, false).await.unwrap();
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+    assert_eq!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Declined { unseen: false }
+    );
 
     let (_oid, mut updates) = sender
         .offer_nearby_dial(carol.endpoint_id(), id, Some(carol.test_dial_addr()))
@@ -807,7 +816,10 @@ async fn offer_from_a_device_not_seen_nearby_is_declined_unseen() {
         .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
         .await
         .expect("offer");
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+    assert_eq!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Declined { unseen: true }
+    );
     let surfaced = tokio::time::timeout(Duration::from_millis(300), offers.recv()).await;
     assert!(surfaced.is_err(), "an offer from afar must not be shown");
 
@@ -829,6 +841,41 @@ async fn offer_from_a_device_not_seen_nearby_is_declined_unseen() {
     assert_eq!(
         std::fs::read(dest.join("far.txt")).unwrap(),
         make_payload(16 * 1024)
+    );
+}
+
+/// An offer the other device turned down without showing it (here: it does
+/// not see the sender on its network, as when multicast only works one way)
+/// does not shut that device out. Given the code another way, it can use it.
+#[tokio::test]
+async fn an_offer_declined_unseen_leaves_the_code_open_to_that_device() {
+    let dir = tempdir::dir();
+    let r_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+
+    let src = dir.path().join("shared.txt");
+    std::fs::write(&src, make_payload(12 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut send_stream).await;
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
+        .await
+        .expect("offer");
+    assert_eq!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Declined { unseen: true }
+    );
+
+    // The sender pastes the code in a chat instead; it works.
+    let dest = r_dir.path().join("out");
+    let (_rid, mut rx) = receiver.receive(ticket, dest.clone()).await.unwrap();
+    wait_done(&mut rx).await;
+    assert_eq!(
+        std::fs::read(dest.join("shared.txt")).unwrap(),
+        make_payload(12 * 1024)
     );
 }
 

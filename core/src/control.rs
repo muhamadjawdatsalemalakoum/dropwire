@@ -102,7 +102,10 @@ impl ProtocolHandler for Ctrl {
                 // An offer id that is already waiting (sent twice, or not
                 // theirs to use) is refused, leaving the first one alone.
                 if !self.core_ctx.add_verdict_waiter(&offer_id, verdict_tx) {
-                    let decline = offer::Frame::OfferDecline { offer_id };
+                    let decline = offer::Frame::OfferDecline {
+                        offer_id,
+                        unseen: true,
+                    };
                     reply(&connection, &mut send, serde_json::to_vec(&decline).ok()).await;
                     return Ok(());
                 }
@@ -129,8 +132,10 @@ impl ProtocolHandler for Ctrl {
                         None
                     }
                 };
+                // No answer in time: it was on screen, so it counts as a no.
                 let answer = verdict.unwrap_or(offer::Frame::OfferDecline {
                     offer_id: offer_id.clone(),
+                    unseen: false,
                 });
                 reply(&connection, &mut send, serde_json::to_vec(&answer).ok()).await;
             }

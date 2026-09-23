@@ -103,22 +103,15 @@ pub(crate) enum Frame {
     OfferAccept {
         offer_id: String,
     },
-    /// Receiver → sender on the offer's own connection: no.
+    /// Receiver → sender on the offer's own connection: no. `unseen` when the
+    /// receiving engine turned it down without showing it to anyone (Nearby
+    /// off, the sender not seen nearby, too many offers waiting): that device
+    /// never held the code. Older peers send no `unseen` (read as false).
     OfferDecline {
         offer_id: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        unseen: bool,
     },
-}
-
-impl Frame {
-    /// The offer id carried by consent frames (empty for presence frames).
-    pub(crate) fn offer_id_str(&self) -> String {
-        match self {
-            Frame::Offer { offer_id, .. }
-            | Frame::OfferAccept { offer_id }
-            | Frame::OfferDecline { offer_id } => offer_id.clone(),
-            _ => String::new(),
-        }
-    }
 }
 
 impl From<&CtrlMsg> for Frame {
@@ -173,8 +166,13 @@ pub enum OfferUpdate {
     Waiting,
     /// They accepted — the transfer can proceed.
     Accepted,
-    /// They declined.
-    Declined,
+    /// They declined. `unseen`: their device turned it down without showing
+    /// it (Nearby off there, this device not seen on their network, or too
+    /// many offers waiting), so no one there saw the offer or its code.
+    Declined {
+        #[serde(default)]
+        unseen: bool,
+    },
     /// Couldn't deliver / timed out / they went away.
     Failed { reason: String },
     /// This device took the offer back ([`Core::cancel_offer`], or its send
@@ -507,7 +505,10 @@ impl Core {
             // neighbor that was already this send's receiver keeps it whatever
             // it says to a repeat offer.
             if !already_ours && update != OfferUpdate::Accepted {
-                release_offer(&core, id, &hash_key, offer_peer, reached).await;
+                // Their device may hold the code only if the offer got there
+                // and was not turned down unseen.
+                let may_hold = reached && !matches!(update, OfferUpdate::Declined { unseen: true });
+                release_offer(&core, id, &hash_key, offer_peer, may_hold).await;
             }
             core.inner
                 .outgoing_offers
@@ -543,6 +544,7 @@ impl Core {
         } else {
             Frame::OfferDecline {
                 offer_id: offer_id.clone(),
+                unseen: false,
             }
         };
 
@@ -625,11 +627,11 @@ impl Core {
 }
 
 /// An offer of send `id` to `peer` was not taken. Free its code for someone
-/// else, and when the offer may have reached `peer` (the code travels inside
-/// it), refuse `peer` from now on. Both happen under the `serving` lock the
-/// gate takes, so the code is never open to `peer` in between. The send itself
+/// else, and when `peer` may hold the code (it travels inside the offer),
+/// refuse `peer` from now on. Both happen under the `serving` lock the gate
+/// takes, so the code is never open to `peer` in between. The send itself
 /// goes on.
-async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId, reached: bool) {
+async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId, may_hold: bool) {
     let mut serving = core.inner.serving.lock().await;
     // The send ended, or a newer send of the same files took over: not ours.
     let Some(entry) = serving.get_mut(hash).filter(|s| s.id == id) else {
@@ -640,7 +642,7 @@ async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId
     if entry.delivered.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
-    if reached {
+    if may_hold {
         entry.denied.insert(peer);
     }
     let mut bound = core.inner.bound.lock().await;
@@ -684,7 +686,7 @@ async fn deliver_offer(
 
     match serde_json::from_slice::<Frame>(&answer) {
         Ok(Frame::OfferAccept { .. }) => Ok(OfferUpdate::Accepted),
-        Ok(Frame::OfferDecline { .. }) => Ok(OfferUpdate::Declined),
+        Ok(Frame::OfferDecline { unseen, .. }) => Ok(OfferUpdate::Declined { unseen }),
         _ => Err("unexpected answer".into()),
     }
 }
@@ -743,8 +745,7 @@ pub(crate) fn route_offer(
         .nearby_running
         .load(std::sync::atomic::Ordering::Relaxed);
     if !running {
-        let frame = Frame::OfferDecline { offer_id };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer_id);
         return;
     }
 
@@ -759,8 +760,7 @@ pub(crate) fn route_offer(
         .contains_key(&remote.to_string());
     if !visible {
         tracing::debug!(%remote, "offer from a device not seen nearby");
-        let frame = Frame::OfferDecline { offer_id };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer_id);
         return;
     }
 
@@ -768,8 +768,7 @@ pub(crate) fn route_offer(
     let Ok(parsed) = BlobTicket::from_str(&ticket) else {
         // Unknown ticket shape → decline immediately so the sender isn't left
         // waiting on a dialog that will never appear.
-        let frame = Frame::OfferDecline { offer_id };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer_id);
         return;
     };
 
@@ -779,8 +778,7 @@ pub(crate) fn route_offer(
     // user check one device and download from another. Declined unseen.
     if parsed.addr().id != remote {
         tracing::warn!(%remote, named = %parsed.addr().id, "offer's code names another device");
-        let frame = Frame::OfferDecline { offer_id };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer_id);
         return;
     }
 
@@ -822,8 +820,10 @@ pub(crate) fn route_offer(
         (replaced, room)
     };
     for offer_id in replaced {
+        // It was on screen, so it counts as declined by the user.
         let frame = Frame::OfferDecline {
             offer_id: offer_id.clone(),
+            unseen: false,
         };
         ctx.resolve_verdict(&offer_id, frame);
         let _ = ctx.withdrawn_tx.send(OfferWithdrawn {
@@ -833,13 +833,19 @@ pub(crate) fn route_offer(
     }
     if !room {
         tracing::debug!(%remote, "too many offers waiting; declining");
-        let frame = Frame::OfferDecline {
-            offer_id: offer.offer_id,
-        };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer.offer_id);
         return;
     }
     let _ = ctx.offer_tx.send(offer);
+}
+
+/// Answer an offer "no" without it ever being shown here.
+fn decline_unseen(ctx: &ConsentCtx, offer_id: String) {
+    let frame = Frame::OfferDecline {
+        offer_id: offer_id.clone(),
+        unseen: true,
+    };
+    ctx.resolve_verdict(&offer_id, frame);
 }
 
 /// A sender-written label for the dialog: no control characters, trimmed, and
@@ -900,5 +906,38 @@ mod tests {
             serde_json::from_str::<CtrlMsg>(&json).unwrap(),
             CtrlMsg::Decline
         );
+    }
+
+    #[test]
+    fn offer_decline_stays_wire_compatible() {
+        // An older receiver's answer carries no `unseen`: read as seen.
+        let old: Frame = serde_json::from_str(r#"{"kind":"offerDecline","offer_id":"o"}"#).unwrap();
+        assert_eq!(
+            old,
+            Frame::OfferDecline {
+                offer_id: "o".into(),
+                unseen: false
+            }
+        );
+        // A user's "no" goes out exactly as older builds sent it.
+        let seen = Frame::OfferDecline {
+            offer_id: "o".into(),
+            unseen: false,
+        };
+        assert_eq!(
+            serde_json::to_string(&seen).unwrap(),
+            r#"{"kind":"offerDecline","offer_id":"o"}"#
+        );
+        // An unseen one round-trips, and older senders ignore the field.
+        let unseen = Frame::OfferDecline {
+            offer_id: "o".into(),
+            unseen: true,
+        };
+        let json = serde_json::to_string(&unseen).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"offerDecline","offer_id":"o","unseen":true}"#
+        );
+        assert_eq!(serde_json::from_str::<Frame>(&json).unwrap(), unseen);
     }
 }
