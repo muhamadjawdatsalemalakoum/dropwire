@@ -82,19 +82,28 @@ impl ProtocolHandler for Ctrl {
                 let (verdict_tx, mut verdict_rx) = mpsc::unbounded_channel();
                 self.core_ctx.add_verdict_waiter(&offer_id, verdict_tx);
                 offer::route_offer(&self.core_ctx, remote, via, &bytes);
-                // Park this connection until the local user answers (or the
-                // wait times out — an unanswered offer declines itself).
-                let verdict =
-                    match tokio::time::timeout(offer::ANSWER_WAIT, verdict_rx.recv()).await {
-                        Ok(Some(frame)) => Some(frame),
-                        _ => None, // timeout, waiter dropped, or channel gone
-                    };
-                // Unanswered (timeout / user ignored the dialog): forget the
-                // offer so neither map leaks and a stale Accept is reported as
-                // expired rather than silently starting a doomed download.
-                if verdict.is_none() {
-                    self.core_ctx.expire_offer(&offer_id);
-                }
+                // Park this connection until the local user answers, the
+                // sender goes away, or the wait times out (an unanswered offer
+                // declines itself).
+                let verdict = tokio::select! {
+                    verdict = verdict_rx.recv() => verdict,
+                    // The sender took the offer back, cancelled its send, or
+                    // left. Retire the offer now so its dialog closes and a
+                    // late Accept is reported as ended, not sent nowhere.
+                    _ = connection.closed() => {
+                        self.core_ctx
+                            .retire_offer(&offer_id, offer::WithdrawReason::Cancelled);
+                        return Ok(());
+                    }
+                    _ = tokio::time::sleep(offer::ANSWER_WAIT) => {
+                        // Unanswered: forget the offer so neither map leaks
+                        // and a stale Accept is reported as ended rather than
+                        // silently starting a doomed download.
+                        self.core_ctx
+                            .retire_offer(&offer_id, offer::WithdrawReason::Expired);
+                        None
+                    }
+                };
                 let answer = verdict.unwrap_or(offer::Frame::OfferDecline {
                     offer_id: offer_id.clone(),
                 });

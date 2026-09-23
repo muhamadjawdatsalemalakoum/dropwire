@@ -21,11 +21,13 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use iroh::endpoint::{Connection, VarInt};
 use iroh::{Endpoint, EndpointAddr, EndpointId, TransportAddr};
 use iroh_blobs::ticket::BlobTicket;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::catalog::Status;
@@ -44,6 +46,14 @@ const CONSENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SEND_ENDED: &str = "This send has ended. Start a new one to offer it.";
 const SEND_TAKEN: &str =
     "This send is already going to another device. Start a new send to offer it to someone else.";
+const OFFER_PENDING: &str =
+    "This send is already offered and waiting for an answer. Cancel that offer first.";
+
+/// Why an answer to an incoming offer went nowhere. Shown as-is.
+const OFFER_GONE: &str = "This offer is no longer open. They may have cancelled it, or it expired.";
+
+/// QUIC close code on an offer's connection when the sender takes it back.
+const WITHDRAWN_CODE: u32 = 1;
 
 /// Anything exchangeable over the control channel: the original presence
 /// frames plus the nearby-consent trio. One enum keeps parsing single-sourced.
@@ -157,6 +167,38 @@ pub enum OfferUpdate {
     Declined,
     /// Couldn't deliver / timed out / they went away.
     Failed { reason: String },
+    /// This device took the offer back ([`Core::cancel_offer`], or its send
+    /// ended) before they answered. Their dialog closes.
+    Withdrawn,
+}
+
+/// An offer that was showing (or waiting to show) on this device ended
+/// without an answer from the user here, so its dialog should close.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferWithdrawn {
+    /// The [`IncomingOffer::offer_id`] it was surfaced with.
+    pub offer_id: String,
+    pub reason: WithdrawReason,
+}
+
+/// Why an incoming offer ended without an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WithdrawReason {
+    /// The sender took it back, cancelled its send, or went away.
+    Cancelled,
+    /// Nobody answered in time.
+    Expired,
+}
+
+/// An offer this device sent that has no answer yet.
+pub(crate) struct OutgoingOffer {
+    /// The send it offers.
+    pub(crate) transfer: TransferId,
+    /// Fired to take the offer back: by [`Core::cancel_offer`], or when its
+    /// send ends (it is a child of the send's token).
+    pub(crate) token: CancellationToken,
 }
 
 /// The slice of engine state the control-ALPN handler needs to route frames.
@@ -179,6 +221,8 @@ pub(crate) struct ConsentCtx {
     /// code's hash if it named one). The engine acts on them in
     /// `send::consume_declines`, which can reach the serving state.
     pub(crate) decline_tx: mpsc::UnboundedSender<(EndpointId, Option<String>)>,
+    /// Surfaced offers that ended without the local user's answer.
+    pub(crate) withdrawn_tx: broadcast::Sender<OfferWithdrawn>,
 }
 
 impl ConsentCtx {
@@ -203,18 +247,28 @@ impl ConsentCtx {
         }
     }
 
-    /// Forget an offer that lapsed unanswered (its parked connection timed out).
-    /// Clears both maps so the pending-offer list can't grow without bound and a
-    /// late `respond_offer` finds nothing to accept (reported as expired).
-    pub(crate) fn expire_offer(&self, offer_id: &str) {
+    /// Forget an offer that ended without the local user's answer: the sender
+    /// withdrew it (or went away), or nobody answered in time. Clears both
+    /// maps so the pending-offer list can't grow without bound and a late
+    /// `respond_offer` finds nothing to accept (reported as ended). If it
+    /// was still waiting for the user, the UI is told, to close its dialog.
+    pub(crate) fn retire_offer(&self, offer_id: &str, reason: WithdrawReason) {
         self.verdict_waiters
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(offer_id);
-        self.incoming_offers
+        let pending = self
+            .incoming_offers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(offer_id);
+            .remove(offer_id)
+            .is_some();
+        if pending {
+            let _ = self.withdrawn_tx.send(OfferWithdrawn {
+                offer_id: offer_id.to_string(),
+                reason,
+            });
+        }
     }
 }
 
@@ -255,6 +309,28 @@ impl Core {
     /// Subscribe to offers arriving from nearby devices.
     pub fn subscribe_offers(&self) -> broadcast::Receiver<IncomingOffer> {
         self.inner.consent.offer_tx.subscribe()
+    }
+
+    /// Subscribe to incoming offers that ended before the user here answered
+    /// them (the sender took one back, or it expired), so their dialogs can
+    /// close.
+    pub fn subscribe_offer_withdrawals(&self) -> broadcast::Receiver<OfferWithdrawn> {
+        self.inner.consent.withdrawn_tx.subscribe()
+    }
+
+    /// Take back an offer this device sent (by the id [`Self::offer_nearby`]
+    /// returned) before it is answered. The other device's dialog closes, the
+    /// offer ends as [`OfferUpdate::Withdrawn`], and the send goes on. An
+    /// unknown or finished offer is ignored.
+    pub fn cancel_offer(&self, offer_id: &str) {
+        let outgoing = self
+            .inner
+            .outgoing_offers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(offer) = outgoing.get(offer_id) {
+            offer.token.cancel();
+        }
     }
 
     /// Offer the send `id` (one the caller started, now sharing its code) to
@@ -336,13 +412,23 @@ impl Core {
         // never handed to a second device: that would take it from the first
         // mid-transfer. Checked and bound under one lock, `serving` first.
         // `already_ours`: this neighbor held the binding before this offer,
-        // so the offer's outcome must leave it alone.
-        let already_ours = {
+        // so the offer's outcome must leave it alone. One offer per send at a
+        // time, so an offer's outcome is only ever its own. The offer's token
+        // is a child of the send's: ending the send takes the offer back.
+        let (already_ours, withdraw) = {
             let mut serving = self.inner.serving.lock().await;
             let Some(entry) = serving.get_mut(&record.hash).filter(|s| s.id == id) else {
                 return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
             };
             let mut bound = self.inner.bound.lock().await;
+            let mut outgoing = self
+                .inner
+                .outgoing_offers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if outgoing.values().any(|o| o.transfer == id) {
+                return Err(CoreError::Other(anyhow::anyhow!(OFFER_PENDING)));
+            }
             let already_ours = match bound.get(&record.hash) {
                 Some(other) if *other != peer => {
                     return Err(CoreError::Other(anyhow::anyhow!(SEND_TAKEN)));
@@ -355,7 +441,15 @@ impl Core {
             };
             // Offered again after turning it down: the sender chose them anew.
             entry.denied.remove(&peer);
-            already_ours
+            let withdraw = entry.token.child_token();
+            outgoing.insert(
+                offer_id.clone(),
+                OutgoingOffer {
+                    transfer: id,
+                    token: withdraw.clone(),
+                },
+            );
+            (already_ours, withdraw)
         };
 
         let (upd_tx, upd_rx) = mpsc::channel(8);
@@ -363,22 +457,34 @@ impl Core {
         let core = self.clone();
         let hash_key = record.hash.clone();
         let offer_peer = peer;
+        let task_offer_id = offer_id.clone();
         tokio::spawn(async move {
             let _ = upd_tx.send(OfferUpdate::Waiting).await;
 
             let mut reached = false;
-            let update = match deliver_offer(&endpoint, dial_addr, frame, &mut reached).await {
-                Ok(u) => u,
-                Err(reason) => OfferUpdate::Failed { reason },
-            };
+            let mut update =
+                match deliver_offer(&endpoint, dial_addr, frame, &withdraw, &mut reached).await {
+                    Ok(u) => u,
+                    Err(reason) => OfferUpdate::Failed { reason },
+                };
+            // Taken back while their yes was on its way: this side's word
+            // stands, so the send is not reported as accepted after a Cancel.
+            if update == OfferUpdate::Accepted && withdraw.is_cancelled() {
+                update = OfferUpdate::Withdrawn;
+            }
 
-            // Not taken (declined, or it never got an answer): the send goes
-            // on, so its code and other offers still work. A neighbor that was
-            // already this send's receiver keeps it whatever it says to a
-            // repeat offer.
+            // Not taken (declined, withdrawn, or it never got an answer): the
+            // send goes on, so its code and other offers still work. A
+            // neighbor that was already this send's receiver keeps it whatever
+            // it says to a repeat offer.
             if !already_ours && update != OfferUpdate::Accepted {
                 release_offer(&core, id, &hash_key, offer_peer, reached).await;
             }
+            core.inner
+                .outgoing_offers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&task_offer_id);
             let _ = upd_tx.send(update).await;
         });
 
@@ -389,16 +495,17 @@ impl Core {
     /// in-band on the sender's still-open offer connection (it parks waiting
     /// for exactly this), so no second connection or dial-back is needed.
     pub async fn respond_offer(&self, offer_id: String, accept: bool) -> Result<()> {
-        let offer = self
+        // Gone already: answered, taken back by the sender, or expired.
+        let open = self
             .inner
             .consent
             .incoming_offers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get(&offer_id)
-            .cloned()
-            .ok_or_else(|| CoreError::NotFound(offer_id.clone()))?;
-        let _ = offer; // validated above; the frame carries only the id
+            .contains_key(&offer_id);
+        if !open {
+            return Err(CoreError::Other(anyhow::anyhow!(OFFER_GONE)));
+        }
 
         let frame = if accept {
             Frame::OfferAccept {
@@ -425,12 +532,10 @@ impl Core {
         if !delivered {
             // The offering connection is already gone (it timed out after
             // ANSWER_WAIT, or the sender left). Report that so the UI shows
-            // "this offer expired" instead of starting a download the sender
+            // the offer has ended instead of starting a download the sender
             // has already abandoned.
             tracing::warn!(%offer_id, "offer connection already gone");
-            return Err(CoreError::Other(anyhow::anyhow!(
-                "this offer expired before you answered"
-            )));
+            return Err(CoreError::Other(anyhow::anyhow!(OFFER_GONE)));
         }
         Ok(())
     }
@@ -492,40 +597,58 @@ async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId
 
 /// Deliver the offer and read the verdict off our own connection (echoed).
 /// `reached` is set once a connection to the neighbor is up: from then on it
-/// may hold the code the offer carries.
+/// may hold the code the offer carries. When `withdraw` fires first, the
+/// connection is closed with [`WITHDRAWN_CODE`], which the other side sees at
+/// once and closes its dialog.
 async fn deliver_offer(
     endpoint: &Endpoint,
     dial_addr: EndpointAddr,
     frame: Frame,
+    withdraw: &CancellationToken,
     reached: &mut bool,
 ) -> std::result::Result<OfferUpdate, String> {
-    let conn = tokio::time::timeout(
-        CONSENT_CONNECT_TIMEOUT,
-        endpoint.connect(dial_addr, CTRL_ALPN),
-    )
-    .await
-    .map_err(|_| "neighbor unreachable".to_string())?
-    .map_err(|e| format!("connect failed: {e}"))?;
+    let conn = tokio::select! {
+        biased;
+        _ = withdraw.cancelled() => return Ok(OfferUpdate::Withdrawn),
+        conn = tokio::time::timeout(
+            CONSENT_CONNECT_TIMEOUT,
+            endpoint.connect(dial_addr, CTRL_ALPN),
+        ) => conn
+            .map_err(|_| "neighbor unreachable".to_string())?
+            .map_err(|e| format!("connect failed: {e}"))?,
+    };
     *reached = true;
 
-    let (mut send, mut recv) = conn
-        .open_bi()
-        .await
-        .map_err(|e| format!("stream open failed: {e}"))?;
-    let bytes = serde_json::to_vec(&frame).map_err(|e| e.to_string())?;
-    send.write_all(&bytes).await.map_err(|e| e.to_string())?;
-    send.finish().map_err(|e| e.to_string())?;
-
-    let answer = tokio::time::timeout(ANSWER_TIMEOUT, recv.read_to_end(64 * 1024))
-        .await
-        .map_err(|_| "they didn't answer in time".to_string())?
-        .map_err(|e| format!("read failed: {e}"))?;
+    let answer = tokio::select! {
+        biased;
+        _ = withdraw.cancelled() => {
+            conn.close(VarInt::from_u32(WITHDRAWN_CODE), b"withdrawn");
+            return Ok(OfferUpdate::Withdrawn);
+        }
+        answer = exchange(&conn, &frame) => answer?,
+    };
 
     match serde_json::from_slice::<Frame>(&answer) {
         Ok(Frame::OfferAccept { .. }) => Ok(OfferUpdate::Accepted),
         Ok(Frame::OfferDecline { .. }) => Ok(OfferUpdate::Declined),
         _ => Err("unexpected answer".into()),
     }
+}
+
+/// Send the offer frame on a new stream and wait for the echoed verdict.
+async fn exchange(conn: &Connection, frame: &Frame) -> std::result::Result<Vec<u8>, String> {
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| format!("stream open failed: {e}"))?;
+    let bytes = serde_json::to_vec(frame).map_err(|e| e.to_string())?;
+    send.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    send.finish().map_err(|e| e.to_string())?;
+
+    tokio::time::timeout(ANSWER_TIMEOUT, recv.read_to_end(64 * 1024))
+        .await
+        .map_err(|_| "they didn't answer in time".to_string())?
+        .map_err(|e| format!("read failed: {e}"))
 }
 
 /// How long the receiver's parked offer connection waits for the local user's

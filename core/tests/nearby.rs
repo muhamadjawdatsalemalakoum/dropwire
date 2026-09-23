@@ -12,7 +12,10 @@ use std::time::Duration;
 
 use common::{drain_for, local_core, make_payload, wait_done, wait_ready};
 use iroh_blobs::ticket::BlobTicket;
-use irohcore::{CoreError, CtrlMsg, IncomingOffer, OfferUpdate, Progress, TransferId};
+use irohcore::{
+    CoreError, CtrlMsg, IncomingOffer, OfferUpdate, OfferWithdrawn, Progress, TransferId,
+    WithdrawReason,
+};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
@@ -501,6 +504,156 @@ async fn failed_offer_keeps_the_send_and_frees_the_code() {
         !seen.iter().any(|e| matches!(e, Progress::Cancelled { .. })),
         "a failed offer must not cancel the send: {seen:?}"
     );
+}
+
+/// Cancelling a send takes back its offer. The sender hears Withdrawn (never
+/// Accepted), the other device is told at once so its dialog can close, and a
+/// late Accept there is reported as expired instead of starting a download.
+#[tokio::test]
+async fn cancelling_a_send_withdraws_its_offer() {
+    let dir = tempdir::dir();
+    let bob_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let bob = local_core(bob_dir.path()).await;
+    bob.test_set_nearby_running(true);
+    let mut offers = bob.subscribe_offers();
+    let mut withdrawals = bob.subscribe_offer_withdrawals();
+
+    let src = dir.path().join("draft.docx");
+    std::fs::write(&src, make_payload(40 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+
+    let (offer_id, mut updates) = sender
+        .offer_nearby_dial(bob.endpoint_id(), id, Some(bob.test_dial_addr()))
+        .await
+        .expect("offer");
+    let offer = next_offer(&mut offers).await;
+    assert_eq!(offer.offer_id, offer_id);
+
+    sender.cancel(id).await;
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Withdrawn);
+    let gone = tokio::time::timeout(Duration::from_secs(10), withdrawals.recv())
+        .await
+        .expect("bob was not told the offer was withdrawn")
+        .unwrap();
+    assert_eq!(
+        gone,
+        OfferWithdrawn {
+            offer_id: offer_id.clone(),
+            reason: WithdrawReason::Cancelled,
+        }
+    );
+
+    let err = bob
+        .respond_offer(offer_id, true)
+        .await
+        .expect_err("a withdrawn offer cannot be accepted");
+    assert!(err.to_string().contains("no longer open"), "got {err}");
+    wait_cancelled(&mut send_stream).await;
+    assert_refused(bob.inspect(offer.ticket).await, "bob after the cancel");
+}
+
+/// Taking back only the offer leaves the send going. The other device's
+/// dialog closes, it cannot use the code the offer carried, and the code still
+/// works for someone else.
+#[tokio::test]
+async fn withdrawing_an_offer_keeps_the_send() {
+    let dir = tempdir::dir();
+    let bob_dir = tempdir::dir();
+    let carol_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let bob = local_core(bob_dir.path()).await;
+    let carol = local_core(carol_dir.path()).await;
+    bob.test_set_nearby_running(true);
+    let mut offers = bob.subscribe_offers();
+    let mut withdrawals = bob.subscribe_offer_withdrawals();
+
+    let src = dir.path().join("slides.key");
+    std::fs::write(&src, make_payload(48 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut send_stream).await;
+
+    let (offer_id, mut updates) = sender
+        .offer_nearby_dial(bob.endpoint_id(), id, Some(bob.test_dial_addr()))
+        .await
+        .expect("offer");
+    let offer = next_offer(&mut offers).await;
+
+    sender.cancel_offer(&offer_id);
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Withdrawn);
+    let gone = tokio::time::timeout(Duration::from_secs(10), withdrawals.recv())
+        .await
+        .expect("bob was not told the offer was withdrawn")
+        .unwrap();
+    assert_eq!(gone.offer_id, offer_id);
+    assert_eq!(gone.reason, WithdrawReason::Cancelled);
+
+    assert_refused(bob.inspect(offer.ticket).await, "bob after the withdrawal");
+    let dest = carol_dir.path().join("out");
+    let (_rid, mut rx) = carol.receive(ticket, dest.clone()).await.unwrap();
+    wait_done(&mut rx).await;
+    assert_eq!(
+        std::fs::read(dest.join("slides.key")).unwrap(),
+        make_payload(48 * 1024)
+    );
+    let seen = drain_for(&mut send_stream, Duration::from_millis(300)).await;
+    assert!(
+        !seen.iter().any(|e| matches!(e, Progress::Cancelled { .. })),
+        "withdrawing the offer must not cancel the send: {seen:?}"
+    );
+}
+
+/// A send has one offer out at a time. Once that one is answered, the send
+/// can be offered to another device.
+#[tokio::test]
+async fn a_send_has_one_offer_at_a_time() {
+    let dir = tempdir::dir();
+    let bob_dir = tempdir::dir();
+    let carol_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let bob = local_core(bob_dir.path()).await;
+    let carol = local_core(carol_dir.path()).await;
+    bob.test_set_nearby_running(true);
+    carol.test_set_nearby_running(true);
+    let mut bob_offers = bob.subscribe_offers();
+    let mut carol_offers = carol.subscribe_offers();
+
+    let src = dir.path().join("photo.jpg");
+    std::fs::write(&src, make_payload(24 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(bob.endpoint_id(), id, Some(bob.test_dial_addr()))
+        .await
+        .expect("offer to bob");
+    let offer = next_offer(&mut bob_offers).await;
+
+    for (who, eid, addr) in [
+        ("carol", carol.endpoint_id(), carol.test_dial_addr()),
+        ("bob", bob.endpoint_id(), bob.test_dial_addr()),
+    ] {
+        let err = sender
+            .offer_nearby_dial(eid, id, Some(addr))
+            .await
+            .expect_err("a second offer must wait for the first");
+        assert!(
+            err.to_string().contains("waiting for an answer"),
+            "{who}: got {err}"
+        );
+    }
+
+    bob.respond_offer(offer.offer_id, false).await.unwrap();
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(carol.endpoint_id(), id, Some(carol.test_dial_addr()))
+        .await
+        .expect("offer to carol once bob answered");
+    let offer = next_offer(&mut carol_offers).await;
+    carol.respond_offer(offer.offer_id, true).await.unwrap();
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
 }
 
 /// The pairing fingerprint must depend on the WHOLE identity, not a short

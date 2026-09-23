@@ -42,7 +42,7 @@ pub use config::{CoreConfig, Infra};
 pub use control::CtrlMsg;
 pub use discover::NearbyDevice;
 pub use error::{CoreError, Result};
-pub use offer::{IncomingOffer, OfferUpdate};
+pub use offer::{IncomingOffer, OfferUpdate, OfferWithdrawn, WithdrawReason};
 pub use progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
     TransferStats,
@@ -84,6 +84,8 @@ pub(crate) struct Inner {
     pub(crate) nearby_port: u16,
     /// Two-sided consent state for nearby transfers (see [`offer`]).
     pub(crate) consent: ConsentCtx,
+    /// Offers this device sent that have no answer yet, by offer id.
+    pub(crate) outgoing_offers: std::sync::Mutex<HashMap<String, offer::OutgoingOffer>>,
 }
 
 impl Core {
@@ -122,6 +124,7 @@ impl Core {
         // Control plane (presence/chat + nearby consent frames).
         let (ctrl_tx, _) = broadcast::channel(64);
         let (offer_tx, _) = broadcast::channel(64);
+        let (withdrawn_tx, _) = broadcast::channel(64);
         let (decline_tx, decline_rx) = mpsc::unbounded_channel();
 
         // Nearby discovery session. The mDNS SRV record points at this
@@ -144,6 +147,7 @@ impl Core {
             nearby_running: nearby.running_flag(),
             verdict_waiters: Arc::new(std::sync::Mutex::new(HashMap::new())),
             decline_tx,
+            withdrawn_tx,
         };
 
         let router = Router::builder(endpoint)
@@ -172,6 +176,7 @@ impl Core {
             nearby: Mutex::new(nearby),
             nearby_port,
             consent,
+            outgoing_offers: std::sync::Mutex::new(HashMap::new()),
         });
         let core = Core { inner };
         tokio::spawn(send::consume_provider_events(core.clone(), ev_rx));
