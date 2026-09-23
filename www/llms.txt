@@ -8,7 +8,7 @@ Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, mac
 - Peer-to-peer: files go directly device-to-device, and devices find each other over the public Mainline DHT. n0's free public relay (from the team behind iroh) is a fallback only: it forwards encrypted bytes and cannot read or store files. The project runs no servers of its own
 - Works across the internet, not LAN-only
 - Open source: dual-licensed MIT OR Apache-2.0; audit, build, or fork it
-- Current version: 0.3.0 (Tauri desktop app)
+- Current version: 0.3.1, the first stable release (Tauri desktop app)
 
 ## How it works
 1. Pick a file, several files, or a folder (drag them in or browse)
