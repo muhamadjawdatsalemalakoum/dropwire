@@ -22,10 +22,11 @@
     return mql && mql.matches ? "dark" : "light";
   }
 
-  // Keep the button's a11y state + label in sync with what's on screen.
+  // Keep the button's label in sync with what's on screen. The label names the
+  // action ("Switch to light theme"), so the button carries no pressed state:
+  // announcing both would contradict itself.
   function syncToggle() {
     var isDark = effectiveTheme() === "dark";
-    toggle.setAttribute("aria-pressed", String(isDark));
     toggle.setAttribute(
       "aria-label",
       isDark ? "Switch to light theme" : "Switch to dark theme"
