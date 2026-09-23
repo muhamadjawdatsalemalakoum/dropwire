@@ -814,6 +814,27 @@ img.frameless-img { display: block; width: 100%; height: auto; }
   font-weight: 600;
   color: var(--ink-faint);
 }
+/* App captures draw their own frame, so drop the installer-shot frame again
+   (this selector outranks .install-pair img). */
+.install-pair img.frameless-img {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* The app pair carries sentence captions: give each figure a fixed column so
+   the two sit side by side, centre the images, and set the captions as prose. */
+.install-pair.is-app { align-items: flex-start; }
+.install-pair.is-app figure { flex: 0 1 380px; }
+.install-pair.is-app img { margin-inline: auto; }
+.install-pair.is-app figcaption {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
 .install-note { margin: 1.3rem 0 0; font-size: 0.9rem; color: var(--ink-soft); }
 .install-note code { font-family: var(--font-mono); font-size: 0.85em; }
 .platforms {
