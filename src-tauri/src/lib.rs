@@ -182,6 +182,33 @@ fn show_main(app: AppHandle) {
     }
 }
 
+/// Keep the main window's title bar reachable. The window has no native frame,
+/// so the drawn title bar is the only way to move it. `preventOverflow` shrinks
+/// the first window to the work area, but a work area smaller than the minimum
+/// size can still leave it hanging off an edge; pull it back so the top-left
+/// corner (and as much of the bar as fits) starts on screen.
+fn keep_title_bar_on_screen(w: &tauri::WebviewWindow) {
+    let (Ok(Some(m)), Ok(pos), Ok(size)) =
+        (w.current_monitor(), w.outer_position(), w.outer_size())
+    else {
+        return;
+    };
+    let wa = m.work_area();
+    let (left, top) = (wa.position.x, wa.position.y);
+    let right = left.saturating_add(i32::try_from(wa.size.width).unwrap_or(i32::MAX));
+    let bottom = top.saturating_add(i32::try_from(wa.size.height).unwrap_or(i32::MAX));
+    let (w_px, h_px) = (
+        i32::try_from(size.width).unwrap_or(i32::MAX),
+        i32::try_from(size.height).unwrap_or(i32::MAX),
+    );
+    // Prefer fitting entirely; when it cannot, the top-left edge wins.
+    let x = pos.x.min(right.saturating_sub(w_px)).max(left);
+    let y = pos.y.min(bottom.saturating_sub(h_px)).max(top);
+    if (x, y) != (pos.x, pos.y) {
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+}
+
 /// Hide the tray panel (it closes on blur and after an action).
 #[tauri::command]
 fn hide_tray_window(app: AppHandle) {
@@ -664,6 +691,7 @@ pub fn run() {
             // First run opens on the setup screens; afterwards the window is
             // only shown if the user did not ask us to start hidden in the tray.
             if let Some(w) = app.get_webview_window("main") {
+                keep_title_bar_on_screen(&w);
                 let _ = w.show();
             }
             Ok(())

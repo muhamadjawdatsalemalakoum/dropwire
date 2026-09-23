@@ -21,6 +21,7 @@
         "transparent": false,
         "shadow": true,
         "center": true,
+        "preventOverflow": true,
         "visible": false
       },
       {
