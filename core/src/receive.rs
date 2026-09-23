@@ -9,6 +9,7 @@ use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::request::get_hash_seq_and_sizes;
 use iroh_blobs::protocol::{ChunkRanges, GetRequest};
 use iroh_blobs::ticket::BlobTicket;
+use iroh_blobs::HashAndFormat;
 use n0_future::StreamExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -21,7 +22,7 @@ use crate::progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
     TransferStats,
 };
-use crate::store::BLOBS_ALPN;
+use crate::store::{self, BLOBS_ALPN};
 use crate::Core;
 
 /// How long to wait to connect to the sender before declaring it unreachable
@@ -191,6 +192,15 @@ impl Core {
         let sizes = fetch_sizes(&conn, &hash).await?;
         let route = detect_route(&conn);
 
+        // Keep what this fetches until the names are read. Nothing holds it after
+        // that, so an abandoned preview leaves nothing behind once the store's
+        // collector runs.
+        let _hold = store
+            .tags()
+            .temp_tag(HashAndFormat::hash_seq(hash))
+            .await
+            .context("hold preview data")?;
+
         // Fetch ONLY the collection structure into the store — the HashSeq root and
         // the names/metadata blob (offset 0 + child 0), never any file content — then
         // read the names locally. (A standalone get of the metadata blob by hash is
@@ -334,6 +344,10 @@ async fn run_receive(
         ));
     }
 
+    // Hold everything this receive fetches, and whatever an earlier attempt left,
+    // until it is saved (or the receive is cancelled or cleared from history).
+    store::hold_receive(store, id, hash).await?;
+
     // Resume: for a full download, request only what's missing; for a selective
     // download, request the chosen files (plus the collection structure: root + meta).
     let local = store
@@ -439,16 +453,20 @@ async fn run_receive(
         seconds: started.elapsed().as_secs_f64(),
         renamed,
     };
-    core.inner
-        .catalog
-        .lock()
-        .await
-        .set_status(id, Status::Done, Some(total));
+    let records = {
+        let mut cat = core.inner.catalog.lock().await;
+        cat.set_status(id, Status::Done, Some(total));
+        cat.list()
+    };
+    // Every file is saved, so the store's copy is no longer needed: neither this
+    // receive's nor one an earlier, unfinished attempt kept for a resume.
+    store::release_superseded(store, &records, &hash.to_string()).await;
     let _ = tx.send(Progress::Done { id, stats }).await;
     Ok(())
 }
 
-/// End a receive the user cancelled.
+/// End a receive the user cancelled. What it downloaded is let go: a cancel
+/// should free the space, and a new receive of the same code starts over.
 async fn finish_cancelled(
     core: &Core,
     id: TransferId,
@@ -459,6 +477,7 @@ async fn finish_cancelled(
         .lock()
         .await
         .set_status(id, Status::Cancelled, None);
+    store::release_receive(&core.inner.store, id).await;
     let _ = tx.send(Progress::Cancelled { id }).await;
     Ok(())
 }

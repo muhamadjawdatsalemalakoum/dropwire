@@ -110,10 +110,19 @@ impl Catalog {
     }
 
     /// Forget every finished record. In-flight transfers are kept: clearing the
-    /// list must never orphan something the UI is still driving.
-    pub fn clear_finished(&mut self) {
+    /// list must never orphan something the UI is still driving. Returns the ids
+    /// of the receives that were forgotten, so the data they kept for a resume
+    /// can be let go too.
+    pub fn clear_finished(&mut self) -> Vec<TransferId> {
+        let removed = self
+            .entries
+            .values()
+            .filter(|r| r.status != Status::Active && r.direction == Direction::Receive)
+            .map(|r| r.id)
+            .collect();
         self.entries.retain(|_, r| r.status == Status::Active);
         self.save();
+        removed
     }
 
     /// On startup, mark any still-"active" entries as interrupted (the process

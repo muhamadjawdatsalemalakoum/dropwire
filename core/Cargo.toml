@@ -74,3 +74,9 @@ required-features = ["test-utils"]
 name = "nearby"
 path = "tests/nearby.rs"
 required-features = ["test-utils"]
+
+# Watches the store shrink, which needs the test-only fast collection interval.
+[[test]]
+name = "cleanup"
+path = "tests/cleanup.rs"
+required-features = ["test-utils"]
