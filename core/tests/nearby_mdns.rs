@@ -88,11 +88,81 @@ async fn mdns_two_instances_discover_each_other() {
     a.stop_nearby().await;
     b.stop_nearby().await;
 
-    // After stop, peers age out of the snapshot immediately (list cleared).
+    // After stop, the snapshot is empty straight away.
     assert!(b.nearby_devices().await.is_empty());
 
     let _ = a.shutdown().await;
     let _ = b.shutdown().await;
     let _ = std::fs::remove_dir_all(&dir_a);
     let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+/// Two engines on this machine, each in its own temp dir, both advertising.
+async fn pair(tag: &str) -> (irohcore::Core, irohcore::Core, Vec<std::path::PathBuf>) {
+    let dirs: Vec<_> = ["a", "b"]
+        .iter()
+        .map(|x| std::env::temp_dir().join(format!("dw-mdns-{tag}-{x}-{}", std::process::id())))
+        .collect();
+    let mut cores = Vec::new();
+    for dir in &dirs {
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        let core = irohcore::Core::start(CoreConfig {
+            data_dir: dir.clone(),
+            infra: Infra::LocalOnly,
+        })
+        .await
+        .unwrap();
+        core.start_nearby().await.unwrap();
+        cores.push(core);
+    }
+    let b = cores.pop().unwrap();
+    let a = cores.pop().unwrap();
+    (a, b, dirs)
+}
+
+/// Whether `core` lists `eid` within `secs`.
+async fn sees(core: &irohcore::Core, eid: &str, secs: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while tokio::time::Instant::now() < deadline {
+        if core
+            .nearby_devices()
+            .await
+            .iter()
+            .any(|d| d.endpoint_id == eid)
+        {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+/// Turning sharing off and on, or renaming the device (which re-registers),
+/// still shows the devices already around, straight away. mdns-sd reports a
+/// peer only when it first appears, so a list emptied on stop stayed empty
+/// for minutes, and offers from those devices were turned away meanwhile.
+#[tokio::test]
+#[ignore = "requires a live multicast-capable network; run with --ignored"]
+async fn mdns_peers_survive_a_toggle_and_a_rename() {
+    let (a, b, dirs) = pair("toggle").await;
+    let eid_a = a.endpoint_id();
+    assert!(sees(&b, &eid_a, 20).await, "B never discovered A");
+
+    b.stop_nearby().await;
+    assert!(b.nearby_devices().await.is_empty(), "hidden while off");
+    b.start_nearby().await.unwrap();
+    assert!(sees(&b, &eid_a, 3).await, "A must show again at once");
+
+    b.set_device_name("renamed-b".into()).await.unwrap();
+    assert!(
+        sees(&b, &eid_a, 3).await,
+        "A must still show after a rename"
+    );
+
+    let _ = a.shutdown().await;
+    let _ = b.shutdown().await;
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

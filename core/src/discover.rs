@@ -263,7 +263,8 @@ pub(crate) struct NearbyState {
     self_eid: String,
     /// Display name advertised to others.
     pub(crate) device_name: String,
-    /// Live peers: hex endpoint id → entry.
+    /// Live peers: hex endpoint id → entry. One table for the life of this
+    /// state, following the network from the first start on (see `start`).
     pub(crate) peers: PeerTable,
     /// This state's subscription slot in [`SUBSCRIBERS`] (dropped ⇒ removed).
     _slot: Option<SubscriptionSlot>,
@@ -350,22 +351,27 @@ impl NearbyState {
         self.running.store(true, Ordering::Relaxed);
         self.registered = Some(format!("{instance}.{NEARBY_SERVICE}"));
 
-        // Subscribe this state's peer table to the shared browse fan-out.
-        // Self-announcements are filtered at read time (list/peer_socket),
-        // so the same table can be shared without a per-event filter task.
+        // Subscribe this state's peer table to the shared browse fan-out,
+        // once: from then on it follows the network for the life of this
+        // state, sharing on or off. mdns-sd reports a peer only when it first
+        // appears or changes, so a table emptied on stop would stay empty for
+        // as long as the peers' records live after sharing is turned back on
+        // (or after a rename, which re-registers), and their offers would be
+        // turned away. Self-announcements are filtered at read time
+        // (list/peer_socket), so the same table can be shared without a
+        // per-event filter task.
         ensure_browse();
-        let subscribers = SUBSCRIBERS.get_or_init(|| StdMutex::new(Vec::new()));
-        let wrapped: PeerTable = Arc::new(StdMutex::new(HashMap::new()));
-        subscribers
-            .lock()
-            .unwrap_or_else(poisoned)
-            .push(wrapped.clone());
-        let self_eid = self.self_eid.clone();
-        self.peers = wrapped;
-        self._slot = Some(SubscriptionSlot {
-            table: self.peers.clone(),
-            self_eid,
-        });
+        if self._slot.is_none() {
+            let subscribers = SUBSCRIBERS.get_or_init(|| StdMutex::new(Vec::new()));
+            subscribers
+                .lock()
+                .unwrap_or_else(poisoned)
+                .push(self.peers.clone());
+            self._slot = Some(SubscriptionSlot {
+                table: self.peers.clone(),
+                self_eid: self.self_eid.clone(),
+            });
+        }
 
         Ok(())
     }
@@ -385,8 +391,9 @@ impl NearbyState {
         Ok(())
     }
 
-    /// Stop advertising + forget the peer list (peers see us leave via TTL /
-    /// their own browse Remove events).
+    /// Stop advertising (peers see us leave via TTL / their own browse Remove
+    /// events). The peer list is hidden while off, but kept up to date (see
+    /// `start`); dropping this state unsubscribes it.
     pub(crate) fn stop(&mut self) {
         use std::sync::atomic::Ordering;
         self.running.store(false, Ordering::Relaxed);
@@ -397,8 +404,6 @@ impl NearbyState {
                 }
             }
         }
-        self._slot = None; // unsubscribe
-        self.peers.lock().unwrap_or_else(poisoned).clear();
     }
 
     /// Snapshot of live peers, by display name. Self-announcements are filtered
@@ -408,7 +413,11 @@ impl NearbyState {
     /// peer would never refresh its `seen_at` and a time-based cutoff used to
     /// drop it ~30s after discovery while it was still present. A departed peer
     /// is removed on the `ServiceRemoved` event (goodbye packet or cache expiry).
+    /// Empty while sharing is off.
     pub(crate) fn list(&self) -> Vec<NearbyDevice> {
+        if !self.is_running() {
+            return Vec::new();
+        }
         let mut devs: Vec<NearbyDevice> = self
             .peers
             .lock()
