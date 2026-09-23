@@ -111,9 +111,15 @@ pub(crate) enum Frame {
         file_count: usize,
         total_bytes: u64,
     },
-    /// Receiver → sender on the offer's own connection: yes.
+    /// Receiver → sender on the offer's own connection: yes. `device_name`
+    /// is the name the receiver gave itself, sent over this authenticated
+    /// connection so the sender can remember the device by it rather than
+    /// by a name anyone on the network could announce. Older peers send
+    /// none; older senders ignore it.
     OfferAccept {
         offer_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device_name: Option<String>,
     },
     /// Receiver → sender on the offer's own connection: no. `unseen` when the
     /// receiving engine turned it down without showing it to anyone (Nearby
@@ -176,8 +182,15 @@ pub enum EndpointReplyTransport {
 pub enum OfferUpdate {
     /// Delivered; the other side hasn't answered yet.
     Waiting,
-    /// They accepted — the transfer can proceed.
-    Accepted,
+    /// They accepted, and the transfer can proceed. `name` is the name their
+    /// device gives itself, sent over the connection that proved its id
+    /// (cleaned up and capped like other labels). Remember the device by it,
+    /// not by the name its local network announcement carries, which any
+    /// host there can fake. `None` from older versions.
+    Accepted {
+        #[serde(default)]
+        name: Option<String>,
+    },
     /// They declined. `unseen`: their device turned it down without showing
     /// it (Nearby off there, this device not seen on their network, or too
     /// many offers waiting), so no one there saw the offer or its code.
@@ -509,7 +522,7 @@ impl Core {
                 };
             // Taken back while their yes was on its way: this side's word
             // stands, so the send is not reported as accepted after a Cancel.
-            if update == OfferUpdate::Accepted && withdraw.is_cancelled() {
+            if matches!(update, OfferUpdate::Accepted { .. }) && withdraw.is_cancelled() {
                 update = OfferUpdate::Withdrawn;
             }
 
@@ -517,7 +530,7 @@ impl Core {
             // send goes on, so its code and other offers still work. A
             // neighbor that was already this send's receiver keeps it whatever
             // it says to a repeat offer.
-            if !already_ours && update != OfferUpdate::Accepted {
+            if !already_ours && !matches!(update, OfferUpdate::Accepted { .. }) {
                 // Their device may hold the code only if the offer got there
                 // and was not turned down unseen.
                 let may_hold = reached && !matches!(update, OfferUpdate::Declined { unseen: true });
@@ -553,6 +566,7 @@ impl Core {
         let frame = if accept {
             Frame::OfferAccept {
                 offer_id: offer_id.clone(),
+                device_name: Some(self.device_name().await),
             }
         } else {
             Frame::OfferDecline {
@@ -698,7 +712,11 @@ async fn deliver_offer(
     };
 
     match serde_json::from_slice::<Frame>(&answer) {
-        Ok(Frame::OfferAccept { .. }) => Ok(OfferUpdate::Accepted),
+        Ok(Frame::OfferAccept { device_name, .. }) => Ok(OfferUpdate::Accepted {
+            name: device_name
+                .map(|n| label(&n, MAX_DEVICE_NAME))
+                .filter(|n| !n.is_empty()),
+        }),
         Ok(Frame::OfferDecline { unseen, .. }) => Ok(OfferUpdate::Declined { unseen }),
         _ => Err("unexpected answer".into()),
     }
@@ -918,6 +936,35 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<CtrlMsg>(&json).unwrap(),
             CtrlMsg::Decline
+        );
+    }
+
+    #[test]
+    fn offer_accept_stays_wire_compatible() {
+        // An older receiver's yes carries no name.
+        let old: Frame = serde_json::from_str(r#"{"kind":"offerAccept","offer_id":"o"}"#).unwrap();
+        assert_eq!(
+            old,
+            Frame::OfferAccept {
+                offer_id: "o".into(),
+                device_name: None
+            }
+        );
+        let named = Frame::OfferAccept {
+            offer_id: "o".into(),
+            device_name: Some("Keon's laptop".into()),
+        };
+        let json = serde_json::to_string(&named).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"offerAccept","offer_id":"o","device_name":"Keon's laptop"}"#
+        );
+        assert_eq!(serde_json::from_str::<Frame>(&json).unwrap(), named);
+        // The UI's update: the name, or null from an older receiver.
+        let update = OfferUpdate::Accepted { name: None };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"kind":"accepted","name":null}"#
         );
     }
 

@@ -368,7 +368,12 @@ async fn mdns_offer_reaches_a_device_that_sees_the_sender() {
     })
     .await
     .expect("no verdict");
-    assert_eq!(verdict, Some(irohcore::OfferUpdate::Accepted));
+    assert_eq!(
+        verdict,
+        Some(irohcore::OfferUpdate::Accepted {
+            name: Some(b.device_name().await)
+        })
+    );
 
     let _ = a.shutdown().await;
     let _ = b.shutdown().await;

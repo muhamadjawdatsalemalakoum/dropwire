@@ -163,6 +163,7 @@ async fn nearby_offer_accept_transfers() {
     // standing up a real mDNS daemon.
     receiver.test_set_nearby_running(true);
     receiver.test_see_nearby_peer(&sender.endpoint_id());
+    receiver.set_device_name("Den laptop".into()).await.unwrap();
 
     // Receiver subscribes BEFORE the offer is sent (no missed broadcasts).
     let mut offers = receiver.subscribe_offers();
@@ -210,7 +211,14 @@ async fn nearby_offer_accept_transfers() {
     })
     .await
     .expect("no verdict in time");
-    assert_eq!(update, OfferUpdate::Accepted);
+    // With the name the receiver gave itself, sent over the connection that
+    // proved who it is.
+    assert_eq!(
+        update,
+        OfferUpdate::Accepted {
+            name: Some("Den laptop".into())
+        }
+    );
 
     // Receiver downloads via the offered ticket (normal blobs path).
     let dest = dir2.path().join("out");
@@ -421,7 +429,10 @@ async fn offer_names_the_send_it_offers() {
         .respond_offer(offer.offer_id, true)
         .await
         .expect("accept");
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+    assert!(matches!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Accepted { .. }
+    ));
 }
 
 /// A send whose code is already in use is never offered to a second device:
@@ -747,7 +758,10 @@ async fn a_send_has_one_offer_at_a_time() {
         .expect("offer to carol once bob answered");
     let offer = next_offer(&mut carol_offers).await;
     carol.respond_offer(offer.offer_id, true).await.unwrap();
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+    assert!(matches!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Accepted { .. }
+    ));
 }
 
 /// An offer whose code names some other device than the one offering it is
@@ -834,7 +848,10 @@ async fn offer_from_a_device_not_seen_nearby_is_declined_unseen() {
         .respond_offer(offer.offer_id, true)
         .await
         .expect("accept");
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+    assert!(matches!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Accepted { .. }
+    ));
     let dest = r_dir.path().join("out");
     let (_rid, mut rx) = receiver.receive(offer.ticket, dest.clone()).await.unwrap();
     wait_done(&mut rx).await;
@@ -1047,7 +1064,10 @@ async fn an_unanswered_offer_stays_open_while_both_are_up() {
         .respond_offer(offer.offer_id, true)
         .await
         .expect("still open");
-    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+    assert!(matches!(
+        next_verdict(&mut updates).await,
+        OfferUpdate::Accepted { .. }
+    ));
 }
 
 /// A peer that connects and never sends a frame is dropped after a short
