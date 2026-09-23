@@ -215,6 +215,7 @@ async fn run_send(
                 }
                 Some(ProviderEvent::Progress { offset, total: t }) => {
                     let total = if t > 0 { t } else { total };
+                    let offset = offset.min(total);
                     let _ = tx
                         .send(Progress::Transferring { id, offset, total, route: Route::Unknown })
                         .await;
@@ -426,8 +427,16 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                 // this receiver early makes the provider abort the request.
                 let mut stream = m.rx;
                 tokio::spawn(async move {
-                    let mut total = 0u64;
                     let mut completed = false;
+                    // One running offset for the whole request, against the
+                    // full size of the files it asks for (`body`), so the bar
+                    // fills once instead of once per file. The provider
+                    // reports offsets within the blob it is sending; `before`
+                    // adds up the files already finished, and `current` is
+                    // the size of the file being sent (None for the root and
+                    // the names blob, which are not file bytes).
+                    let mut before = 0u64;
+                    let mut current: Option<u64> = None;
                     // Throttle UI progress to ~12/s (provider progress is per-chunk).
                     let mut last =
                         std::time::Instant::now() - std::time::Duration::from_millis(200);
@@ -445,13 +454,22 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                             continue;
                         };
                         match update {
-                            RequestUpdate::Started(s) => total = s.size,
+                            RequestUpdate::Started(s) => {
+                                // Blobs go out in offset order: 0 is the root,
+                                // 1 the names, 2 and up the files.
+                                before += current.take().unwrap_or(0);
+                                if s.index >= 2 {
+                                    current = Some(s.size);
+                                }
+                            }
                             RequestUpdate::Progress(p) => {
-                                if last.elapsed() >= std::time::Duration::from_millis(80) {
+                                if current.is_some()
+                                    && last.elapsed() >= std::time::Duration::from_millis(80)
+                                {
                                     last = std::time::Instant::now();
                                     let _ = tx.send(ProviderEvent::Progress {
-                                        offset: p.end_offset,
-                                        total,
+                                        offset: before + p.end_offset,
+                                        total: body,
                                     });
                                 }
                             }

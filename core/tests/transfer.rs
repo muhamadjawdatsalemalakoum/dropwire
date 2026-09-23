@@ -244,6 +244,59 @@ async fn sender_sees_progress() {
     );
 }
 
+/// For a folder, the sender's progress is one bar for the whole transfer: every
+/// Transferring event is measured against the folder's total size, and the
+/// offset only ever grows. (It used to restart from zero for every file, and
+/// for the collection's own root and names blob too.)
+#[tokio::test(flavor = "multi_thread")]
+async fn sender_progress_spans_the_whole_folder() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let dir = work.path().join("album");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sizes = [4 * 1024 * 1024, 6 * 1024 * 1024, 8 * 1024 * 1024];
+    for (name, size) in ["a.bin", "b.bin", "c.bin"].iter().zip(sizes) {
+        std::fs::write(dir.join(name), make_payload(size)).unwrap();
+    }
+    let folder_total: u64 = sizes.iter().map(|&s| s as u64).sum();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    let (_rid, mut rs) = receiver
+        .receive(ticket, work.path().join("out"))
+        .await
+        .unwrap();
+    wait_done(&mut rs).await;
+    let seen = send_events_through_done(&mut ss).await;
+
+    let moves: Vec<(u64, u64)> = seen
+        .iter()
+        .filter_map(|e| match e {
+            Progress::Transferring { offset, total, .. } => Some((*offset, *total)),
+            _ => None,
+        })
+        .collect();
+    assert!(!moves.is_empty(), "the sender reports progress: {seen:?}");
+    assert!(
+        moves.iter().all(|&(_, total)| total == folder_total),
+        "every update is against the whole folder ({folder_total} bytes): {moves:?}"
+    );
+    assert!(
+        moves.windows(2).all(|w| w[0].0 <= w[1].0),
+        "the offset never goes back: {moves:?}"
+    );
+    assert!(
+        moves.iter().all(|&(offset, total)| offset <= total),
+        "the offset never passes the total: {moves:?}"
+    );
+    assert_eq!(done_bytes(&seen).len(), 1, "one delivery: {seen:?}");
+}
+
 /// A preview is not a delivery. The receiver looking at the file list must
 /// not make the sender say "Sent" or record the send as done; the sender is
 /// told the receiver is looking. The download that follows is the delivery,
