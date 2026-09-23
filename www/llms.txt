@@ -3,17 +3,17 @@
 Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, macOS, and Linux. It sends files directly device to device, end-to-end encrypted (QUIC/TLS 1.3), with no accounts and no servers holding your files. It works across the internet, not just on a local network.
 
 ## Quick facts
-- Free forever — no trial, paywall, file-size limit, or ads
-- Privacy-first — end-to-end encrypted; no accounts, no trackers, no analytics
-- Peer-to-peer — files go directly device-to-device; devices find each other over the public Mainline DHT; an open iroh relay is a fallback only (it forwards encrypted bytes, cannot read or store files)
-- Works across the internet — not LAN-only
-- Open source — dual-licensed MIT OR Apache-2.0; audit, build, or fork it
+- Free forever: no trial, paywall, file-size limit, or ads
+- Privacy-first: end-to-end encrypted; no accounts, no trackers, no analytics
+- Peer-to-peer: files go directly device-to-device, and devices find each other over the public Mainline DHT. n0's free public relay (from the team behind iroh) is a fallback only: it forwards encrypted bytes and cannot read or store files. The project runs no servers of its own
+- Works across the internet, not LAN-only
+- Open source: dual-licensed MIT OR Apache-2.0; audit, build, or fork it
 - Current version: 0.3.0 (Tauri desktop app)
 
 ## How it works
 1. Pick a file, several files, or a folder (drag them in or browse)
 2. Share the one-time transfer code (the recipient pastes it into Receive), or tap a nearby device on the same network
-3. Recipient previews names/sizes/count (verified by the code), accepts, and receives — end-to-end encrypted
+3. Recipient previews names/sizes/count (verified by the code), accepts, and receives it, end-to-end encrypted
 
 ## Key features
 - Nearby devices: apps on the same network discover each other over mDNS and appear as one-tap targets, so no code is needed locally. Both sides confirm before anything moves, and each shows a short pairing code to compare aloud. With nearby sharing off, the device stops advertising and refuses incoming requests
