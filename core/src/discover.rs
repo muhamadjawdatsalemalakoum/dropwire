@@ -17,8 +17,14 @@
 //! (`service_queriers.insert` overwrites), so a second concurrent browser —
 //! another `Core` in tests, or a second app instance on the same machine —
 //! would silently cut the first one's event stream off. This module therefore
-//! runs ONE daemon, ONE browse, and ONE pump thread that fans every event out
-//! to all registered peer tables.
+//! runs ONE daemon, at most ONE browse, and one pump thread per browse that
+//! fans every event out to all subscribed peer tables.
+//!
+//! The browse runs only while some session in the process has sharing on.
+//! When the last one turns it off, the browse stops (no more queries on the
+//! network, so "hidden" holds for browsing too) and the tables are emptied.
+//! Turning sharing on again starts a fresh browse, which asks the network
+//! anew, so the devices still around show again at once.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -126,11 +132,8 @@ pub(crate) struct PeerEntry {
     pub(crate) instance: String,
 }
 
-/// Peer tables subscribed to mDNS events (each `NearbyState.peers`).
+/// Peer tables fed by the browse (each `NearbyState.peers`).
 pub(crate) type PeerTable = Arc<StdMutex<HashMap<String, PeerEntry>>>;
-
-/// All live peer tables receiving fanned-out events.
-static SUBSCRIBERS: OnceLock<StdMutex<Vec<PeerTable>>> = OnceLock::new();
 
 /// The single shared mDNS daemon (the crate recommends one per process).
 static DAEMON: OnceLock<ServiceDaemon> = OnceLock::new();
@@ -145,48 +148,116 @@ fn daemon() -> Result<&'static ServiceDaemon> {
     Ok(DAEMON.get().expect("just set"))
 }
 
-/// Ensure the shared browse + pump thread is running (idempotent).
-fn ensure_browse() {
-    static STARTED: OnceLock<()> = OnceLock::new();
-    if STARTED.get().is_some() {
-        return;
+/// Discovery shared by every nearby session in the process (one in the app,
+/// a few in tests): the peer tables the browse feeds, and the browse itself.
+struct Discovery {
+    /// Every session's peer table, from its first start until it is dropped.
+    tables: Vec<PeerTable>,
+    /// Sessions with sharing on. The browse runs only while there are some.
+    sharing: usize,
+    /// The running browse, by number. Its pump applies events only while it
+    /// is still the current one, so nothing it had queued lands after a stop.
+    browse: Option<u64>,
+    /// Number for the next browse.
+    next_browse: u64,
+}
+
+static DISCOVERY: StdMutex<Discovery> = StdMutex::new(Discovery {
+    tables: Vec::new(),
+    sharing: 0,
+    browse: None,
+    next_browse: 0,
+});
+
+/// The process-wide discovery state. Lock order: this, then a peer table.
+fn discovery() -> std::sync::MutexGuard<'static, Discovery> {
+    DISCOVERY.lock().unwrap_or_else(poisoned)
+}
+
+impl Discovery {
+    /// A session turned sharing on: follow the network into its table, and
+    /// make sure the browse runs.
+    fn join(&mut self, table: &PeerTable) {
+        if !self.tables.iter().any(|t| Arc::ptr_eq(t, table)) {
+            self.tables.push(table.clone());
+        }
+        self.sharing += 1;
+        if self.browse.is_none() {
+            self.start_browse();
+        }
     }
-    let Ok(d) = daemon() else { return };
-    let Ok(receiver) = d.browse(NEARBY_SERVICE) else {
-        // Browse unavailable (e.g. no multicast stack): degrade quietly —
-        // advertising still works for others to see us.
-        return;
-    };
-    if STARTED.set(()).is_err() {
-        return; // someone else won the race
-    }
-    std::thread::Builder::new()
-        .name("dropwire-mdns".into())
-        .spawn(move || loop {
-            // Block until the next event (flume recv blocks).
-            let event = match receiver.recv() {
-                Ok(ev) => ev,
-                Err(_) => return, // channel closed: daemon gone
-            };
-            let Some(subscribers) = SUBSCRIBERS.get() else {
-                continue;
-            };
-            let tables = subscribers
-                .lock()
-                .unwrap_or_else(poisoned)
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>();
-            for table in tables {
-                // Never let a malformed packet abort the process (panic = abort):
-                // fold each event under catch_unwind so a parse panic in this or
-                // a dependency only skips that one event, not the whole app.
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    apply_event(&table, &event);
-                }));
+
+    /// A session turned sharing off. With none left sharing, the browse
+    /// stops, so a device that shows as hidden sends no Dropwire queries
+    /// either, and what it saw is forgotten: nothing keeps it current now.
+    /// The next browse asks the network afresh (the daemon drops its cache
+    /// for the service on stop), and every device still around answers.
+    fn leave(&mut self) {
+        self.sharing = self.sharing.saturating_sub(1);
+        if self.sharing > 0 {
+            return;
+        }
+        if self.browse.take().is_some() {
+            if let Ok(d) = daemon() {
+                if let Err(e) = d.stop_browse(NEARBY_SERVICE) {
+                    tracing::warn!("mDNS stop browse failed: {e}");
+                }
             }
-        })
-        .ok();
+        }
+        for table in &self.tables {
+            table.lock().unwrap_or_else(poisoned).clear();
+        }
+    }
+
+    /// Start the one browse and its pump thread. A browse that cannot start
+    /// (no multicast, say) degrades quietly: advertising still lets others
+    /// see us, and the next start tries again.
+    fn start_browse(&mut self) {
+        let Ok(d) = daemon() else { return };
+        let receiver = match d.browse(NEARBY_SERVICE) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("mDNS browse unavailable: {e}");
+                return;
+            }
+        };
+        let id = self.next_browse;
+        self.next_browse = self.next_browse.wrapping_add(1);
+        // The pump reads `browse` under the discovery lock, which the caller
+        // holds until `browse` is set below.
+        let spawned = std::thread::Builder::new()
+            .name("dropwire-mdns".into())
+            .spawn(move || pump(receiver, id));
+        match spawned {
+            Ok(_) => self.browse = Some(id),
+            Err(e) => {
+                tracing::warn!("mDNS pump thread: {e}");
+                let _ = d.stop_browse(NEARBY_SERVICE);
+            }
+        }
+    }
+}
+
+/// Feed browse `id`'s events to every subscribed table until it stops.
+fn pump(receiver: mdns_sd::Receiver<ServiceEvent>, id: u64) {
+    // Blocks until the next event; ends when the daemon lets the browse go.
+    while let Ok(event) = receiver.recv() {
+        if let ServiceEvent::SearchStopped(_) = event {
+            return;
+        }
+        let disc = discovery();
+        if disc.browse != Some(id) {
+            return; // stopped, or replaced by a newer browse
+        }
+        for table in &disc.tables {
+            // Never let a malformed packet take discovery down: a panic while
+            // folding one untrusted event (here or in a dependency) only
+            // skips that event.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                apply_event(table, &event);
+            }));
+        }
+    }
 }
 
 /// Fold one mDNS event into one peer table.
@@ -255,7 +326,8 @@ fn poisoned<T>(e: std::sync::PoisonError<T>) -> T {
 /// Live state of the nearby session: what we advertise + who we can see.
 #[derive(Debug)]
 pub(crate) struct NearbyState {
-    /// Full service instance name we registered (for unregistering).
+    /// Full service instance name we registered (for unregistering). Set
+    /// exactly while this state counts as sharing in [`Discovery`].
     registered: Option<String>,
     /// Shared "discovery mode is ON" flag (gates offer-visibility checks).
     pub(crate) running: Arc<std::sync::atomic::AtomicBool>,
@@ -263,39 +335,11 @@ pub(crate) struct NearbyState {
     self_eid: String,
     /// Display name advertised to others.
     pub(crate) device_name: String,
-    /// Live peers: hex endpoint id → entry. One table for the life of this
-    /// state, following the network from the first start on (see `start`),
-    /// so a handle taken once, like the consent gate's, always sees the
-    /// current peers.
+    /// Live peers: hex endpoint id to entry. One table for the life of this
+    /// state, so a handle taken once, like the consent gate's, stays current.
+    /// The browse fills it while sharing is on (here or in another session
+    /// of this process), and it is emptied when the browse stops.
     pub(crate) peers: PeerTable,
-    /// This state's subscription slot in [`SUBSCRIBERS`] (dropped ⇒ removed).
-    _slot: Option<SubscriptionSlot>,
-}
-
-/// Keeps this state's peer table subscribed while alive.
-struct SubscriptionSlot {
-    table: PeerTable,
-    #[allow(dead_code)] // kept for debuggability of subscriber sets
-    self_eid: String,
-}
-
-impl std::fmt::Debug for SubscriptionSlot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SubscriptionSlot")
-            .field("self_eid", &self.self_eid)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Drop for SubscriptionSlot {
-    fn drop(&mut self) {
-        if let Some(subscribers) = SUBSCRIBERS.get() {
-            subscribers
-                .lock()
-                .unwrap_or_else(poisoned)
-                .retain(|t| !Arc::ptr_eq(t, &self.table));
-        }
-    }
 }
 
 impl NearbyState {
@@ -310,8 +354,9 @@ impl NearbyState {
     }
 
     /// A handle to the live peer table (consent visibility gating). It stays
-    /// current across start and stop: the table is never replaced. It holds
-    /// peers seen while sharing was off too, so check the running flag first.
+    /// current while sharing is on and is never replaced. Another session in
+    /// the same process can keep it filled while this one is off, so check
+    /// the running flag first.
     pub(crate) fn peer_table(&self) -> PeerTable {
         self.peers.clone()
     }
@@ -320,16 +365,18 @@ impl NearbyState {
         Self {
             registered: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            self_eid: self_eid.clone(),
+            self_eid,
             device_name,
             peers: Arc::new(StdMutex::new(HashMap::new())),
-            _slot: None,
         }
     }
 
-    /// Advertise this endpoint on the LAN and subscribe to peer events.
+    /// Advertise this endpoint on the LAN and follow the devices around.
     pub(crate) fn start(&mut self, port: u16) -> Result<()> {
         use std::sync::atomic::Ordering;
+        if self.is_running() {
+            return Ok(());
+        }
         let d = daemon()?;
         let info = advertisement(&self.self_eid, &self.device_name, port)?;
         // The daemon files the service under this exact name (with any
@@ -339,60 +386,58 @@ impl NearbyState {
         d.register(info)
             .map_err(|e| CoreError::Other(anyhow::anyhow!("mDNS register: {e}")))?;
 
-        self.running.store(true, Ordering::Relaxed);
         self.registered = Some(fullname);
-
-        // Subscribe this state's peer table to the shared browse fan-out,
-        // once: from then on it follows the network for the life of this
-        // state, sharing on or off. mdns-sd reports a peer only when it first
-        // appears or changes, so a table emptied on stop would stay empty for
-        // as long as the peers' records live after sharing is turned back on
-        // (or after a rename, which re-registers), and their offers would be
-        // turned away. Self-announcements are filtered at read time
-        // (list/peer_socket), so the same table can be shared without a
-        // per-event filter task.
-        ensure_browse();
-        if self._slot.is_none() {
-            let subscribers = SUBSCRIBERS.get_or_init(|| StdMutex::new(Vec::new()));
-            subscribers
-                .lock()
-                .unwrap_or_else(poisoned)
-                .push(self.peers.clone());
-            self._slot = Some(SubscriptionSlot {
-                table: self.peers.clone(),
-                self_eid: self.self_eid.clone(),
-            });
-        }
-
+        // Self-announcements are filtered at read time (list/peer_socket),
+        // so each session's table takes every event as it comes.
+        discovery().join(&self.peers);
+        self.running.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     /// Rename this device. If a session is live the advertisement is
     /// re-registered under the new name so peers see the change without the
-    /// user having to toggle sharing off and on.
+    /// user having to toggle sharing off and on. Only the advertisement
+    /// changes: the browse, and the devices it shows, carry on.
     pub(crate) fn rename(&mut self, name: String, port: u16) -> Result<()> {
+        use std::sync::atomic::Ordering;
         if self.device_name == name {
             return Ok(());
         }
-        self.device_name = name;
         if self.is_running() {
-            self.stop();
-            self.start(port)?;
+            let d = daemon()?;
+            let info = advertisement(&self.self_eid, &name, port)?;
+            let fullname = info.get_fullname().to_string();
+            // Registering the same instance again updates it in place. A new
+            // instance means the old one says goodbye first.
+            if let Some(old) = self.registered.take() {
+                if !old.eq_ignore_ascii_case(&fullname) {
+                    unregister(d, &old);
+                }
+            }
+            if let Err(e) = d.register(info) {
+                self.running.store(false, Ordering::Relaxed);
+                discovery().leave();
+                return Err(CoreError::Other(anyhow::anyhow!("mDNS register: {e}")));
+            }
+            self.registered = Some(fullname);
         }
+        self.device_name = name;
         Ok(())
     }
 
-    /// Stop advertising (peers see us leave via TTL / their own browse Remove
-    /// events). The peer list is hidden while off, but kept up to date (see
-    /// `start`); dropping this state unsubscribes it.
+    /// Stop advertising (peers see us leave via our goodbye, or their TTL).
+    /// The peer list is hidden while off, and with no session in the process
+    /// sharing, the browse stops too.
     pub(crate) fn stop(&mut self) {
         use std::sync::atomic::Ordering;
         self.running.store(false, Ordering::Relaxed);
-        if let Some(inst) = self.registered.take() {
-            if let Ok(d) = daemon() {
-                unregister(d, &inst);
-            }
+        let Some(inst) = self.registered.take() else {
+            return;
+        };
+        if let Ok(d) = daemon() {
+            unregister(d, &inst);
         }
+        discovery().leave();
     }
 
     /// Snapshot of live peers, by display name. Self-announcements are filtered
@@ -419,9 +464,10 @@ impl NearbyState {
         devs
     }
 
-    /// Look up one peer's LAN socket address by hex endpoint id.
+    /// Look up one peer's LAN socket address by hex endpoint id. None while
+    /// sharing is off: a hidden device dials no one it found on the LAN.
     pub(crate) fn peer_socket(&self, eid_hex: &str) -> Option<SocketAddr> {
-        if eid_hex == self.self_eid {
+        if !self.is_running() || eid_hex == self.self_eid {
             return None;
         }
         self.peers
@@ -435,7 +481,14 @@ impl NearbyState {
 impl Drop for NearbyState {
     fn drop(&mut self) {
         self.stop();
+        discovery().tables.retain(|t| !Arc::ptr_eq(t, &self.peers));
     }
+}
+
+/// Whether the process is browsing for nearby devices right now.
+#[cfg(feature = "test-utils")]
+pub(crate) fn browsing() -> bool {
+    discovery().browse.is_some()
 }
 
 /// The advertisement for device `eid` under the display name `name`. Built

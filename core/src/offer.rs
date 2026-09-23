@@ -626,6 +626,13 @@ impl Core {
             .insert(eid_hex.to_string(), entry);
     }
 
+    /// TEST-ONLY: whether this process is browsing the local network for
+    /// nearby devices (it should only while some session has sharing on).
+    #[cfg(feature = "test-utils")]
+    pub fn test_nearby_browsing(&self) -> bool {
+        crate::discover::browsing()
+    }
+
     /// TEST-ONLY: flip the "nearby sharing on" flag that gates incoming offers,
     /// without standing up the real mDNS daemon. Production sets this via
     /// [`Core::start_nearby`] / [`Core::stop_nearby`].

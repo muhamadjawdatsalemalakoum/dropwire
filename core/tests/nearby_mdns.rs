@@ -18,12 +18,20 @@ use std::time::Duration;
 
 use irohcore::{CoreConfig, Infra};
 
+/// These tests share the process's one mDNS browse, which runs only while
+/// some engine has sharing on, so they take turns.
+async fn serial() -> tokio::sync::MutexGuard<'static, ()> {
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    SERIAL.lock().await
+}
+
 /// Two cores on one machine: A starts its nearby session, B browses, B must
 /// discover A by endpoint id within the timeout. Then roles flip to prove
 /// bidirectional visibility (A's browse loop picks up B's announcement).
 #[tokio::test]
 #[ignore = "requires a live multicast-capable network; run with --ignored"]
 async fn mdns_two_instances_discover_each_other() {
+    let _serial = serial().await;
     let dir_a = std::env::temp_dir().join(format!("dw-mdns-a-{}", std::process::id()));
     let dir_b = std::env::temp_dir().join(format!("dw-mdns-b-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir_a);
@@ -179,6 +187,7 @@ async fn sees_named(core: &irohcore::Core, eid: &str, name: &str, secs: u64) -> 
 #[tokio::test]
 #[ignore = "requires a live multicast-capable network; run with --ignored"]
 async fn mdns_a_dotted_name_leaves_when_sharing_stops() {
+    let _serial = serial().await;
     let (a, b, dirs) = pair("dotted").await;
     a.stop_nearby().await;
     a.set_device_name("Test-Mac.local".into()).await.unwrap();
@@ -209,6 +218,7 @@ async fn mdns_a_dotted_name_leaves_when_sharing_stops() {
 #[tokio::test]
 #[ignore = "requires a live multicast-capable network; run with --ignored"]
 async fn mdns_peers_survive_a_toggle_and_a_rename() {
+    let _serial = serial().await;
     let (a, b, dirs) = pair("toggle").await;
     let eid_a = a.endpoint_id();
     assert!(sees(&b, &eid_a, 20).await, "B never discovered A");
@@ -223,9 +233,61 @@ async fn mdns_peers_survive_a_toggle_and_a_rename() {
         sees(&b, &eid_a, 3).await,
         "A must still show after a rename"
     );
+    let eid_b = b.endpoint_id();
+    assert!(
+        sees_named(&a, &eid_b, "renamed-b", 10).await,
+        "A must see B's new name"
+    );
+    // Two names with the same advertised label: the advertisement is
+    // updated in place rather than withdrawn and made again.
+    b.set_device_name("千代".into()).await.unwrap();
+    assert!(sees_named(&a, &eid_b, "千代", 10).await, "first label");
+    b.set_device_name("花子".into()).await.unwrap();
+    assert!(sees_named(&a, &eid_b, "花子", 10).await, "same label");
 
     let _ = a.shutdown().await;
     let _ = b.shutdown().await;
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// With sharing off everywhere in the app, the browse stops too, so a hidden
+/// device sends no Dropwire queries. Turning sharing on again browses afresh,
+/// and the devices around show again.
+#[tokio::test]
+#[ignore = "requires a live multicast-capable network; run with --ignored"]
+async fn mdns_browse_runs_only_while_sharing() {
+    let _serial = serial().await;
+    let (a, b, dirs) = pair("browse").await;
+    let (eid_a, eid_b) = (a.endpoint_id(), b.endpoint_id());
+    assert!(a.test_nearby_browsing());
+    assert!(sees(&a, &eid_b, 20).await, "A never discovered B");
+
+    a.stop_nearby().await;
+    assert!(
+        a.test_nearby_browsing(),
+        "B still shares, so it still browses"
+    );
+    b.stop_nearby().await;
+    assert!(
+        !a.test_nearby_browsing(),
+        "nobody shares, so nothing browses"
+    );
+
+    a.start_nearby().await.unwrap();
+    assert!(a.test_nearby_browsing());
+    b.start_nearby().await.unwrap();
+    assert!(sees(&a, &eid_b, 10).await, "A must see B again");
+    assert!(sees(&b, &eid_a, 10).await, "B must see A again");
+
+    let probe = a.clone();
+    let _ = a.shutdown().await;
+    let _ = b.shutdown().await;
+    assert!(
+        !probe.test_nearby_browsing(),
+        "shut down, so nothing browses"
+    );
     for dir in dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -238,6 +300,7 @@ async fn mdns_peers_survive_a_toggle_and_a_rename() {
 #[tokio::test]
 #[ignore = "requires a live multicast-capable network; run with --ignored"]
 async fn mdns_offer_reaches_a_device_that_sees_the_sender() {
+    let _serial = serial().await;
     use tokio_stream::StreamExt;
 
     let (a, b, dirs) = pair("offer").await;
