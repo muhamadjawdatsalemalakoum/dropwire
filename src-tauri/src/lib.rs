@@ -679,7 +679,21 @@ fn shutdown_engine(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    // One running copy per data dir. Registered first, so a second launch (the
+    // Start menu, a desktop shortcut, clicking a notification) hands off to the
+    // running app, which brings its window forward, and exits before it ever
+    // touches the identity, the endpoint or the blob store. A copy started with
+    // its own --data-dir is left alone, so two can still run side by side for
+    // testing the nearby flow.
+    #[cfg(desktop)]
+    if std::env::var_os("DROPWIRE_DATA_DIR").is_none_or(|d| d.is_empty()) {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main(app.clone());
+        }));
+    }
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
