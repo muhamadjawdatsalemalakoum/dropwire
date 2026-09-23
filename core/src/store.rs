@@ -80,6 +80,7 @@ pub async fn open(blobs_dir: &Path) -> Result<FsStore> {
         interval: gc_interval(),
         add_protected: None,
     });
+    ensure_db_usable(&blobs_dir.join("blobs.db"))?;
     let store = FsStore::load_with_opts(blobs_dir.join("blobs.db"), options)
         .await
         .context("open blob store")?;
@@ -174,6 +175,39 @@ pub(crate) async fn reconcile_receive_tags(store: &Store, records: &[TransferRec
         if let Err(e) = hold_receive(store, rec.id, hash).await {
             tracing::warn!("could not keep data of receive {}: {e:#}", rec.id);
         }
+    }
+}
+
+/// Fail fast when the store's database cannot be opened, above all when another
+/// process (another copy of Dropwire) already holds it.
+///
+/// `FsStore::load` does not report that as an error: when opening the database
+/// fails, iroh-blobs drops its private runtime from inside one of that
+/// runtime's own worker threads, which never completes, so the load hangs for
+/// good. Checking the file and its lock first turns the common causes into an
+/// ordinary error the caller can show.
+// File locking is std since Rust 1.89; iroh 1.0 already requires 1.91.
+#[allow(clippy::incompatible_msrv)]
+fn ensure_db_usable(db: &Path) -> Result<()> {
+    let file = match std::fs::OpenOptions::new().read(true).write(true).open(db) {
+        Ok(file) => file,
+        // First run: the store creates it.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(anyhow::Error::new(e)
+                .context("open blob store database")
+                .into())
+        }
+    };
+    match file.try_lock() {
+        // Dropping the file releases the lock again straight away.
+        Ok(()) => Ok(()),
+        Err(std::fs::TryLockError::WouldBlock) => Err(anyhow::anyhow!(
+            "blob store is already open in another process (is Dropwire already running?)"
+        )
+        .into()),
+        // Locking unsupported here: leave the decision to the store itself.
+        Err(std::fs::TryLockError::Error(_)) => Ok(()),
     }
 }
 

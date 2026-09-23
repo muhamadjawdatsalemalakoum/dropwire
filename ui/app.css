@@ -72,6 +72,8 @@ a{color:var(--wire); text-underline-offset:2px; text-decoration:none}
 a:hover{text-decoration:underline}
 :focus-visible{outline:none; box-shadow:var(--glow-focus)}
 .hidden,[hidden]{display:none !important}
+/* Shared SVG defs: takes no room, but must render for url(#wireGlow) to resolve. */
+.svg-defs{position:absolute}
 .grow{flex:1 1 auto; min-width:0}
 .mono{font-family:var(--font-mono)}
 .label{font-size:12px; font-weight:600; letter-spacing:.7px; text-transform:uppercase; color:var(--text-muted); margin:0}

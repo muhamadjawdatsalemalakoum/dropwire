@@ -29,5 +29,7 @@ your bytes.
 
 ## Your control
 
-Everything is local and inspectable (Dropwire is open source). Delete the app's data folder and
-nothing remains. There is no account to close because there is no account.
+Everything is local and inspectable (Dropwire is open source). Text you send with "Send text" is
+kept as a small file in the app's data folder so you can resend it from Activity, and Clear history
+deletes it. Delete the app's data folder and nothing remains. There is no account to close because
+there is no account.
