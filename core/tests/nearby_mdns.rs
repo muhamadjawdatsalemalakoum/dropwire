@@ -138,6 +138,70 @@ async fn sees(core: &irohcore::Core, eid: &str, secs: u64) -> bool {
     false
 }
 
+/// Whether `core` stops listing `eid` within `secs`.
+async fn loses(core: &irohcore::Core, eid: &str, secs: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while tokio::time::Instant::now() < deadline {
+        if !core
+            .nearby_devices()
+            .await
+            .iter()
+            .any(|d| d.endpoint_id == eid)
+        {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+/// Whether `core` lists `eid` under `name` within `secs`.
+async fn sees_named(core: &irohcore::Core, eid: &str, name: &str, secs: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while tokio::time::Instant::now() < deadline {
+        if core
+            .nearby_devices()
+            .await
+            .iter()
+            .any(|d| d.endpoint_id == eid && d.name == name)
+        {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    false
+}
+
+/// A device whose name has a dot in it (a Mac's default hostname, say)
+/// really leaves when it turns sharing off: its goodbye goes out, so the
+/// others drop it within seconds instead of listing it for as long as the
+/// app runs.
+#[tokio::test]
+#[ignore = "requires a live multicast-capable network; run with --ignored"]
+async fn mdns_a_dotted_name_leaves_when_sharing_stops() {
+    let (a, b, dirs) = pair("dotted").await;
+    a.stop_nearby().await;
+    a.set_device_name("Test-Mac.local".into()).await.unwrap();
+    a.start_nearby().await.unwrap();
+    let eid_a = a.endpoint_id();
+    assert!(
+        sees_named(&b, &eid_a, "Test-Mac.local", 20).await,
+        "B never saw A under its dotted name"
+    );
+
+    a.stop_nearby().await;
+    assert!(
+        loses(&b, &eid_a, 10).await,
+        "A is still listed after it left"
+    );
+
+    let _ = a.shutdown().await;
+    let _ = b.shutdown().await;
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// Turning sharing off and on, or renaming the device (which re-registers),
 /// still shows the devices already around, straight away. mdns-sd reports a
 /// peer only when it first appears, so a list emptied on stop stayed empty

@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use iroh::EndpointId;
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo, UnregisterStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
@@ -331,34 +331,16 @@ impl NearbyState {
     pub(crate) fn start(&mut self, port: u16) -> Result<()> {
         use std::sync::atomic::Ordering;
         let d = daemon()?;
-        let eid = self.self_eid.clone();
-        let short = &eid[..eid.len().min(8)];
-        let instance = format!("{}-{short}", sanitize_instance(&self.device_name));
-        let host = format!("{short}.dropwire.local.");
-
-        let mut props = HashMap::new();
-        props.insert(TXT_EID.to_string(), eid.clone());
-        props.insert(TXT_NAME.to_string(), self.device_name.clone());
-        props.insert(TXT_OS.to_string(), std::env::consts::OS.to_string());
-
-        // No explicit IP: `addr_auto` announces on every interface and fills
-        // the SRV target addresses itself.
-        let info = ServiceInfo::new(
-            NEARBY_SERVICE,
-            instance.as_str(),
-            host.as_str(),
-            (),
-            port,
-            Some(props),
-        )
-        .map_err(|e| CoreError::Other(anyhow::anyhow!("mDNS service info: {e}")))?
-        .enable_addr_auto();
+        let info = advertisement(&self.self_eid, &self.device_name, port)?;
+        // The daemon files the service under this exact name (with any
+        // escaping it applied), and unregistering must use the same one.
+        let fullname = info.get_fullname().to_string();
 
         d.register(info)
             .map_err(|e| CoreError::Other(anyhow::anyhow!("mDNS register: {e}")))?;
 
         self.running.store(true, Ordering::Relaxed);
-        self.registered = Some(format!("{instance}.{NEARBY_SERVICE}"));
+        self.registered = Some(fullname);
 
         // Subscribe this state's peer table to the shared browse fan-out,
         // once: from then on it follows the network for the life of this
@@ -408,9 +390,7 @@ impl NearbyState {
         self.running.store(false, Ordering::Relaxed);
         if let Some(inst) = self.registered.take() {
             if let Ok(d) = daemon() {
-                if let Ok(rx) = d.unregister(&inst) {
-                    let _ = rx.recv_timeout(Duration::from_secs(2));
-                }
+                unregister(d, &inst);
             }
         }
     }
@@ -458,19 +438,59 @@ impl Drop for NearbyState {
     }
 }
 
-/// Keep instance names friendly and DNS-label-safe (letters/digits/dash/dot).
+/// The advertisement for device `eid` under the display name `name`. Built
+/// without touching the network, so a name that cannot be advertised is
+/// caught before the live advertisement changes.
+fn advertisement(eid: &str, name: &str, port: u16) -> Result<ServiceInfo> {
+    let short: String = eid.chars().take(8).collect();
+    let instance = format!("{}-{short}", sanitize_instance(name));
+    let host = format!("{short}.dropwire.local.");
+
+    let mut props = HashMap::new();
+    props.insert(TXT_EID.to_string(), eid.to_string());
+    props.insert(TXT_NAME.to_string(), name.to_string());
+    props.insert(TXT_OS.to_string(), std::env::consts::OS.to_string());
+
+    // No explicit IP: `addr_auto` announces on every interface and fills
+    // the SRV target addresses itself.
+    let info = ServiceInfo::new(
+        NEARBY_SERVICE,
+        instance.as_str(),
+        host.as_str(),
+        (),
+        port,
+        Some(props),
+    )
+    .map_err(|e| CoreError::Other(anyhow::anyhow!("mDNS service info: {e}")))?
+    .enable_addr_auto();
+    Ok(info)
+}
+
+/// Withdraw the advertisement filed under `fullname`, sending the goodbye
+/// that tells peers we left. A miss is logged: it means the advertisement
+/// is still out there, answering for a device that says it is hidden.
+fn unregister(d: &ServiceDaemon, fullname: &str) {
+    match d.unregister(fullname) {
+        Ok(rx) => match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(UnregisterStatus::OK) => {}
+            Ok(UnregisterStatus::NotFound) => {
+                tracing::warn!(instance = %fullname, "mDNS unregister: no such service, the advertisement may linger");
+            }
+            Err(e) => tracing::warn!(instance = %fullname, "mDNS unregister: no answer: {e}"),
+        },
+        Err(e) => tracing::warn!(instance = %fullname, "mDNS unregister failed: {e}"),
+    }
+}
+
+/// Keep instance names friendly and DNS-label-safe: letters, digits and
+/// dashes only. A dot would have to be escaped inside the label, which some
+/// resolvers mishandle; the exact display name travels in the TXT record.
 fn sanitize_instance(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let trimmed = cleaned.trim_matches('.').trim_matches('-');
+    let trimmed = cleaned.trim_matches('-');
     if trimmed.is_empty() {
         "device".to_string()
     } else {
@@ -478,15 +498,92 @@ fn sanitize_instance(name: &str) -> String {
     }
 }
 
-/// Derive a default device name from the OS hostname.
+/// Derive a default device name from the OS hostname, without the local
+/// domain a Mac adds (`Keons-MacBook-Pro.local` becomes `Keons-MacBook-Pro`).
 pub(crate) fn default_device_name() -> String {
-    hostname::get()
+    let host = hostname::get()
         .map(|h| h.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "My device".to_string())
+        .unwrap_or_default();
+    let name = without_local_domain(host.trim()).trim();
+    if name.is_empty() {
+        "My device".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// `host` without a trailing local domain (`.local`, `.lan`, `.home`,
+/// `.localdomain`, any case).
+fn without_local_domain(host: &str) -> &str {
+    let host = host.trim_end_matches('.');
+    let lower = host.to_ascii_lowercase();
+    for suffix in [".localdomain", ".local", ".lan", ".home"] {
+        if lower.ends_with(suffix) {
+            // The suffix is ASCII and matched byte for byte (ASCII case
+            // folding keeps every byte where it is), so this is a char
+            // boundary.
+            return &host[..host.len() - suffix.len()];
+        }
+    }
+    host
 }
 
 /// Parse a hex [`EndpointId`] (as carried in `NearbyDevice.endpoint_id`).
 pub(crate) fn parse_eid(hex: &str) -> Result<EndpointId> {
     use std::str::FromStr;
     EndpointId::from_str(hex).map_err(|_| CoreError::InvalidTicket(hex.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EID: &str = "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12";
+
+    #[test]
+    fn instance_labels_need_no_escaping() {
+        assert_eq!(
+            sanitize_instance("Keons-MacBook-Pro.local"),
+            "Keons-MacBook-Pro-local"
+        );
+        assert_eq!(sanitize_instance(r"a.b\c"), "a-b-c");
+        assert_eq!(sanitize_instance("..."), "device");
+        for name in ["Keons-MacBook-Pro.local", "Mom's phone", r"a.b\c", "千代"] {
+            let label = sanitize_instance(name);
+            assert!(!label.contains('.') && !label.contains('\\'), "{label}");
+        }
+    }
+
+    /// The name kept for unregistering is the one the daemon files the
+    /// service under, even for a display name that has dots in it.
+    #[test]
+    fn a_dotted_name_is_unregistered_by_the_name_it_was_filed_under() {
+        let info = advertisement(EID, "Keons-MacBook-Pro.local", 4242).unwrap();
+        assert_eq!(
+            info.get_fullname(),
+            "Keons-MacBook-Pro-local-ab12cd34._dropwire._udp.local."
+        );
+        // The display name itself travels untouched in the TXT record.
+        assert_eq!(
+            info.get_property_val_str(TXT_NAME),
+            Some("Keons-MacBook-Pro.local")
+        );
+    }
+
+    #[test]
+    fn default_names_drop_the_local_domain() {
+        assert_eq!(
+            without_local_domain("Keons-MacBook-Pro.local"),
+            "Keons-MacBook-Pro"
+        );
+        assert_eq!(
+            without_local_domain("Keons-MacBook-Pro.LOCAL."),
+            "Keons-MacBook-Pro"
+        );
+        assert_eq!(without_local_domain("box.localdomain"), "box");
+        assert_eq!(without_local_domain("pi.lan"), "pi");
+        assert_eq!(without_local_domain("desktop-7"), "desktop-7");
+        assert_eq!(without_local_domain(".local"), "");
+        assert!(!default_device_name().is_empty());
+    }
 }
