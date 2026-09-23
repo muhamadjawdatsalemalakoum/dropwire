@@ -3,10 +3,10 @@
 ## Layout
 
 ```
-core/        irohcore — the transfer engine (only crate that imports iroh / iroh-blobs)
+core/        irohcore: the transfer engine (only crate that imports iroh / iroh-blobs)
 src-tauri/   the desktop app shell (Tauri v2): commands, window, config, icons
 ui/          the app frontend (vanilla HTML/CSS/JS; loaded by Tauri as frontendDist)
-infra/       OPTIONAL self-hosted relay + DNS (not needed — the app is serverless by default)
+infra/       OPTIONAL self-hosted relay + DNS (not needed: the app is serverless by default)
 www/         marketing landing page (static)
 docs/        PRIVACY.md, this file, and other docs
 ```
@@ -19,12 +19,12 @@ speak only `irohcore`'s stable API (`Core`, `Progress`, `CoreConfig`).
 - **Rust** 1.91 or newer, from https://rustup.rs (`rust-toolchain.toml` selects the stable channel).
 - **A C toolchain** for the native crypto/QUIC deps:
   - **Windows:** Visual Studio Build Tools with the *Desktop development with C++* workload, plus
-    WebView2 (ships with Windows 11). Build from a shell that has the MSVC env loaded — either the
+    WebView2 (ships with Windows 11). Build from a shell that has the MSVC env loaded: either the
     "x64 Native Tools" prompt, or import `vcvars64.bat` before running cargo (see below).
   - **macOS:** Xcode command line tools.
   - **Linux:** the WebKitGTK 4.1 stack and a C compiler. On Debian/Ubuntu, the same packages CI
     installs: `sudo apt install build-essential libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev`.
-- **Node** is *not* required — the UI is plain HTML/CSS/JS with no build step.
+- **Node** is *not* required; the UI is plain HTML/CSS/JS with no build step.
 
 ### Windows: loading the MSVC environment for cargo
 

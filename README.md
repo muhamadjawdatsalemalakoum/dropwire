@@ -7,12 +7,12 @@
 
 <br /><br />
 
-<img src="branding/promo.png" alt="Dropwire — send any file to anyone, directly. No accounts, no limits, end-to-end encrypted, free forever. Peer-to-peer, built on iroh." width="880" />
+<img src="branding/promo.png" alt="Dropwire: send any file to anyone, directly. No accounts, no limits, end-to-end encrypted, free forever. Peer-to-peer, built on iroh." width="880" />
 
 <br /><br />
 
 A peer-to-peer file-transfer app built on [iroh](https://iroh.computer): no accounts,
-no file-size limits, no server in the middle holding your data — end-to-end encrypted,
+no file-size limits, no server in the middle holding your data. End-to-end encrypted,
 resumable, and open source.
 
 <br />
@@ -46,9 +46,9 @@ your files through their servers with size caps and ads. Dropwire is the missing
 
 - **Free forever.** No limits, no subscriptions, no ads.
 - **Truly private.** End-to-end encrypted. No account, no sign-in, no tracking. We never
-  see your files — and neither does anyone else.
-- **See it before you accept.** The receiver previews exactly what's coming — file names, sizes,
-  and count — and approves before a single byte downloads. Both sides see, live, when the other
+  see your files, and neither does anyone else.
+- **See it before you accept.** The receiver previews exactly what's coming (file names, sizes,
+  and count) and approves before a single byte downloads. Both sides see, live, when the other
   device connects.
 - **Nearby devices, no code needed.** Dropwire apps on the same network find each other
   automatically and appear as one-tap targets. Tap a device, they confirm, and it sends.
@@ -58,10 +58,10 @@ your files through their servers with size caps and ads. Dropwire is the missing
 - **Direct, peer-to-peer.** Your file goes straight from your device to theirs. When a
   direct connection isn't possible, it falls back to an encrypted relay that still can't
   read a single byte.
-- **Works across the internet** — not just your local network.
-- **Resumable.** A dropped connection picks up where it left off — only the missing
+- **Works across the internet**, not just your local network.
+- **Resumable.** A dropped connection picks up where it left off. Only the missing
   pieces are re-sent, verified end to end as they arrive.
-- **Take only what you want.** Receiving a folder? Untick the files you don't need —
+- **Take only what you want.** Receiving a folder? Untick the files you don't need;
   only what you choose is transferred.
 - **One code, one recipient.** A code isn't a public link: it's served to the first
   device that connects, and others are refused.
@@ -79,10 +79,10 @@ your files through their servers with size caps and ads. Dropwire is the missing
 ## How it works
 
 1. **Pick** a file or folder.
-2. **Share** the one-time transfer code or QR Dropwire gives you — copy it into any chat,
+2. **Share** the one-time transfer code or QR Dropwire gives you: copy it into any chat,
    or have them scan the QR.
-3. The other person enters the code, **previews exactly what's being sent — names, sizes,
-   and count — and accepts** (or declines, and you're told instantly). Then it runs
+3. The other person enters the code, **previews exactly what's being sent (names, sizes,
+   and count) and accepts** (or declines, and you're told instantly). Then it runs
    **directly, device to device**, with a live direct-vs-relayed badge.
 
 On the same network, you can skip the code entirely: the other device shows up under
@@ -163,9 +163,9 @@ can still reach you.
 ## Repository layout
 
 ```
-core/          # `irohcore` — the transfer engine (the only crate that imports iroh/iroh-blobs)
+core/          # `irohcore`: the transfer engine (the only crate that imports iroh/iroh-blobs)
 src-tauri/     # desktop app shell (Tauri v2)
-ui/            # the desktop app's frontend (plain HTML/CSS/JS — no build step)
+ui/            # the desktop app's frontend (plain HTML/CSS/JS, no build step)
 www/           # static landing page
 docs/          # PRIVACY.md, DEVELOPING.md, and other docs
 branding/      # brand assets (logo, wordmark, icons)
@@ -176,7 +176,7 @@ ARCHITECTURE.md
 ## Building (developers)
 
 Requires the [Rust toolchain](https://rustup.rs) and a C toolchain (see
-[`docs/DEVELOPING.md`](docs/DEVELOPING.md) for per-OS prerequisites). No Node/JS build step — the
+[`docs/DEVELOPING.md`](docs/DEVELOPING.md) for per-OS prerequisites). No Node/JS build step: the
 UI is plain HTML/CSS/JS.
 
 ```sh
@@ -202,7 +202,7 @@ Full developer guide: [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Design: [`ARCH
 
 Dropwire collects nothing. There are no accounts, no analytics, and no phone-home. Your
 node identity and transfer history live only on your machine. The only network services
-involved are discovery and the relay fallback — and the relay only ever forwards encrypted
+involved are discovery and the relay fallback, and the relay only ever forwards encrypted
 packets it cannot decrypt. See [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## License

@@ -1,6 +1,6 @@
 # Contributing to Dropwire
 
-Thanks for your interest! Dropwire is free, open source, and privacy-first — contributions that
+Thanks for your interest! Dropwire is free, open source, and privacy-first, and contributions that
 keep it that way are very welcome.
 
 ## Principles (please respect these)
