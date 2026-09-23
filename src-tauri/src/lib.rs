@@ -222,7 +222,7 @@ async fn nearby_list(state: State<'_, AppState>) -> Result<Vec<NearbyDevice>, St
 
 /// Offer the send `transfer_id` (the card's id) to a nearby device. Streams
 /// `OfferUpdate`s back over the channel; the final update is Accepted /
-/// Declined / Failed{reason}.
+/// Declined / Failed{reason} / Withdrawn. Returns the offer's id.
 #[tauri::command]
 async fn nearby_offer(
     endpoint_id: String,
@@ -233,7 +233,7 @@ async fn nearby_offer(
     let id = transfer_id
         .parse::<TransferId>()
         .map_err(|e| e.to_string())?;
-    let (_id, mut stream) = state
+    let (offer_id, mut stream) = state
         .core
         .offer_nearby(endpoint_id, id)
         .await
@@ -243,8 +243,16 @@ async fn nearby_offer(
             let _ = on_update.send(u);
         }
     });
-    // The engine's offer id is internal; the UI keys off its own card id.
-    Ok(String::new())
+    // The offer's id, for nearby_cancel_offer.
+    Ok(offer_id)
+}
+
+/// Take back an offer this device sent (the id nearby_offer returned) before
+/// it is answered. Its channel then ends with `withdrawn`; the send goes on.
+#[tauri::command]
+async fn nearby_cancel_offer(offer_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.core.cancel_offer(&offer_id);
+    Ok(())
 }
 
 /// Answer an incoming offer (both-sides consent: this is the receiver half).
@@ -261,27 +269,40 @@ async fn nearby_respond(
         .map_err(|e| e.to_string())
 }
 
-/// Forward every incoming offer to the webview as `nearby-offer` events.
+/// Forward every incoming offer to the webview as `nearby-offer` events, and
+/// every offer that ended before it was answered here (the sender took it
+/// back, or it expired) as `nearby-offer-withdrawn`, so its dialog can close.
 /// One long-lived pump per app run (guarded so repeated nearby_start is cheap).
 fn spawn_offer_pump(app: &AppHandle, state: &State<'_, AppState>) {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if STARTED.set(()).is_err() {
         return;
     }
-    let mut rx = state.core.subscribe_offers();
-    let handle = app.clone();
+    emit_all(app.clone(), state.core.subscribe_offers(), "nearby-offer");
+    emit_all(
+        app.clone(),
+        state.core.subscribe_offer_withdrawals(),
+        "nearby-offer-withdrawn",
+    );
+}
+
+/// Emit everything `rx` carries to the webview as `event`, for the app run.
+fn emit_all<T>(handle: AppHandle, mut rx: tokio::sync::broadcast::Receiver<T>, event: &'static str)
+where
+    T: serde::Serialize + Clone + Send + 'static,
+{
     tauri::async_runtime::spawn(async move {
         use tokio::sync::broadcast::error::RecvError;
         loop {
             match rx.recv().await {
-                Ok(offer) => {
-                    let _ = handle.emit("nearby-offer", offer);
+                Ok(item) => {
+                    let _ = handle.emit(event, item);
                 }
-                // Lagged is RECOVERABLE: under a burst of offers we fell behind
-                // and lost `n` of them, but the receiver keeps working. This
-                // pump is a process-wide singleton, so treating Lagged as
-                // terminal (the old `while let Ok` did) would silently kill
-                // incoming-offer delivery for the whole app run. Keep looping.
+                // Lagged is RECOVERABLE: under a burst we fell behind and lost
+                // `n` items, but the receiver keeps working. This pump is a
+                // process-wide singleton, so treating Lagged as terminal (the
+                // old `while let Ok` did) would silently kill delivery for the
+                // whole app run. Keep looping.
                 Err(RecvError::Lagged(_)) => continue,
                 // The sender was dropped (engine gone) — nothing left to pump.
                 Err(RecvError::Closed) => break,
@@ -718,6 +739,7 @@ pub fn run() {
             nearby_stop,
             nearby_list,
             nearby_offer,
+            nearby_cancel_offer,
             nearby_respond,
             list_transfers,
             clear_transfers,
