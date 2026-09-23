@@ -30,8 +30,8 @@ pub enum Infra {
     /// leans on n0 for discovery too. Handy for development.
     N0Default,
 
-    /// No relay, no discovery — direct connections only, using the addresses
-    /// embedded in the ticket. Used for LAN-only mode and hermetic tests.
+    /// No relay, no discovery, bound to loopback only: both peers must run on
+    /// this machine. Used by the hermetic engine tests.
     LocalOnly,
 
     /// **Optional / advanced.** Self-hosted relay + DNS discovery, for users or
@@ -80,7 +80,7 @@ impl CoreConfig {
         }
     }
 
-    /// Local-only configuration (no relay/discovery) — used by tests and LAN mode.
+    /// Loopback-only configuration (no relay/discovery), for hermetic tests.
     pub fn local_only(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),

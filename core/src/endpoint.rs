@@ -46,12 +46,19 @@ pub async fn build(secret_key: SecretKey, infra: &Infra) -> Result<Endpoint> {
             .await
             .context("bind endpoint (n0 default)")?,
 
+        // Loopback only. Binding every interface made the hermetic tests flaky:
+        // with no relay to fall back on, iroh commits to one direct address, and
+        // on a machine where the firewall drops one adapter (common with
+        // Hyper-V/WSL/VPN adapters) the dial hung whenever it picked that one.
         Infra::LocalOnly => {
             use iroh::endpoint::RelayMode;
             Endpoint::builder(presets::Minimal)
                 .secret_key(secret_key)
                 .alpns(alpns)
                 .relay_mode(RelayMode::Disabled)
+                .clear_ip_transports()
+                .bind_addr("127.0.0.1:0")
+                .context("loopback bind address")?
                 .bind()
                 .await
                 .context("bind endpoint (local only)")?
