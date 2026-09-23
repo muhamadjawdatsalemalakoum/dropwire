@@ -652,6 +652,30 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Stop the engine on the way out. Every exit path (tray Quit, closing the
+/// window with the tray off, Cmd+Q) ends in `RunEvent::Exit`, which is the one
+/// place this runs. The nearby goodbye goes first so peers drop this device
+/// from their lists at once instead of showing it until their records expire;
+/// then connections close cleanly and the blob store commits its last batch.
+/// Each step is bounded so quitting never hangs on a slow peer.
+fn shutdown_engine(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    // The event loop is blocked below, so get out of sight first: a window or
+    // tray icon that stops responding for a few seconds reads as a hang.
+    for w in app.webview_windows().values() {
+        let _ = w.hide();
+    }
+    let _ = app.remove_tray_by_id("dropwire");
+    let core = state.core.clone();
+    tauri::async_runtime::block_on(async move {
+        use std::time::Duration;
+        let _ = tokio::time::timeout(Duration::from_secs(2), core.stop_nearby()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), core.shutdown()).await;
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
@@ -758,14 +782,14 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Dropwire")
-        .run(|_app, _event| {
+        .run(|app, event| match event {
+            tauri::RunEvent::Exit => shutdown_engine(app),
             // macOS: with close-to-tray on, closing the window leaves Dropwire
             // running with no window. Clicking the dock icon raises Reopen, and
             // with nothing answering it the app is alive but unreachable: it
             // reads as frozen and the only way out is Cmd+Q. Bring it back.
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = _event {
-                show_main(_app.clone());
-            }
+            tauri::RunEvent::Reopen { .. } => show_main(app.clone()),
+            _ => {}
         });
 }
