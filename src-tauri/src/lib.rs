@@ -55,20 +55,20 @@ fn get_settings(state: State<'_, AppState>) -> settings::Settings {
 }
 
 /// Rename this device. Applies to the live mDNS advertisement immediately.
+/// The engine checks and tidies the name (an empty one, or one over 40
+/// characters, is refused with a message to show as it is), and the tidied
+/// name is the one saved.
 #[tauri::command]
 async fn set_device_name(
     name: String,
     state: State<'_, AppState>,
 ) -> Result<settings::Settings, String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("a device name cannot be empty".into());
-    }
     state
         .core
-        .set_device_name(name.clone())
+        .set_device_name(name)
         .await
         .map_err(|e| e.to_string())?;
+    let name = state.core.device_name().await;
     Ok(state.settings.update(|s| s.device_name = Some(name)))
 }
 
@@ -680,7 +680,26 @@ pub fn run() {
             // A name chosen during setup outlives the hostname it was derived from.
             if let Some(name) = prefs.device_name.clone() {
                 let c = core.clone();
-                tauri::async_runtime::block_on(async move { c.set_device_name(name).await }).ok();
+                let used = tauri::async_runtime::block_on(async move {
+                    c.set_device_name(name).await?;
+                    Ok::<_, irohcore::CoreError>(c.device_name().await)
+                });
+                match used {
+                    // Saved as the engine tidied it, so both show the same.
+                    Ok(used) if prefs.device_name.as_deref() != Some(used.as_str()) => {
+                        store.update(|s| s.device_name = Some(used));
+                    }
+                    Ok(_) => {}
+                    // A name an older version saved that this one refuses
+                    // (too long, say): fall back to the hostname name rather
+                    // than keep showing one that nobody nearby sees.
+                    Err(e) => {
+                        eprintln!(
+                            "[dropwire] saved device name not usable ({e}); using the default"
+                        );
+                        store.update(|s| s.device_name = None);
+                    }
+                }
             }
             app.manage(AppState {
                 core,
