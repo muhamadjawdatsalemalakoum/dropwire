@@ -11,8 +11,52 @@ mod common;
 use std::time::Duration;
 
 use common::{local_core, make_payload, wait_done, wait_ready};
-use irohcore::{CtrlMsg, IncomingOffer, OfferUpdate};
+use iroh_blobs::ticket::BlobTicket;
+use irohcore::{CoreError, CtrlMsg, IncomingOffer, OfferUpdate, Progress, TransferId};
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+
+/// The next offer to surface on the receiver.
+async fn next_offer(offers: &mut broadcast::Receiver<IncomingOffer>) -> IncomingOffer {
+    tokio::time::timeout(Duration::from_secs(15), offers.recv())
+        .await
+        .expect("no offer arrived")
+        .expect("offer channel closed")
+}
+
+/// The sender's verdict on an offer, skipping the initial "waiting" update.
+async fn next_verdict(updates: &mut ReceiverStream<OfferUpdate>) -> OfferUpdate {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            match updates.next().await {
+                Some(OfferUpdate::Waiting) => continue,
+                other => return other.expect("offer stream ended"),
+            }
+        }
+    })
+    .await
+    .expect("no verdict in time")
+}
+
+/// Drive a send stream until it reports Cancelled.
+async fn wait_cancelled(stream: &mut irohcore::ProgressStream) {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(ev) = stream.next().await {
+            if let Progress::Cancelled { .. } = ev {
+                return;
+            }
+        }
+        panic!("send stream ended before Cancelled");
+    })
+    .await
+    .expect("timed out waiting for Cancelled");
+}
+
+/// The content hash a code names.
+fn hash_of(ticket: &str) -> String {
+    ticket.parse::<BlobTicket>().unwrap().hash().to_string()
+}
 
 /// Sender offers; receiver accepts; the file lands. The full two-sided flow.
 #[tokio::test]
@@ -31,7 +75,7 @@ async fn nearby_offer_accept_transfers() {
     // Sender picks a file and waits for the ticket.
     let src = dir.path().join("album.zip");
     std::fs::write(&src, make_payload(256 * 1024)).unwrap();
-    let (_send_id, mut send_stream) = sender.send(src.clone()).await.unwrap();
+    let (send_id, mut send_stream) = sender.send(src.clone()).await.unwrap();
     wait_ready(&mut send_stream).await;
 
     // Sender offers directly to the receiver's endpoint id, with the
@@ -39,7 +83,7 @@ async fn nearby_offer_accept_transfers() {
     // mDNS; hermetic tests wire the loopback address in directly).
     let receiver_eid = receiver.endpoint_id();
     let (_offer_id, mut updates) = sender
-        .offer_nearby_dial(receiver_eid, Some(receiver.test_dial_addr()))
+        .offer_nearby_dial(receiver_eid, send_id, Some(receiver.test_dial_addr()))
         .await
         .expect("offer");
 
@@ -96,11 +140,11 @@ async fn nearby_offer_decline_blocks_transfer() {
 
     let src = dir.path().join("secret.txt");
     std::fs::write(&src, make_payload(64 * 1024)).unwrap();
-    let (_id, mut send_stream) = sender.send(src).await.unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
     let _ticket = wait_ready(&mut send_stream).await;
 
     let (_oid, mut updates) = sender
-        .offer_nearby_dial(receiver.endpoint_id(), Some(receiver.test_dial_addr()))
+        .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
         .await
         .expect("offer");
 
@@ -162,11 +206,11 @@ async fn offer_while_nearby_off_is_declined_silently() {
 
     let src = dir.path().join("thing.bin");
     std::fs::write(&src, make_payload(32 * 1024)).unwrap();
-    let (_id, mut send_stream) = sender.send(src).await.unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
     wait_ready(&mut send_stream).await;
 
     let (_oid, mut updates) = sender
-        .offer_nearby_dial(receiver.endpoint_id(), Some(receiver.test_dial_addr()))
+        .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
         .await
         .expect("offer");
 
@@ -212,19 +256,75 @@ async fn control_channel_presence_still_works() {
     assert_eq!(msg, CtrlMsg::Hello);
 }
 
-/// Offering with no active send fails cleanly instead of hanging.
+/// Offering a send that does not exist, or one that has ended, fails cleanly
+/// instead of hanging or offering something else.
 #[tokio::test]
-async fn offer_without_active_send_errors() {
+async fn offer_without_live_send_errors() {
     let dir = tempdir::dir();
     let dir2 = tempdir::dir();
     let sender = local_core(dir.path()).await;
     let receiver = local_core(dir2.path()).await;
 
     let err = sender
-        .offer_nearby(receiver.endpoint_id())
+        .offer_nearby(receiver.endpoint_id(), TransferId::new())
         .await
-        .expect_err("must fail without an active send");
-    assert!(err.to_string().contains("no active send"));
+        .expect_err("must fail for an unknown send");
+    assert!(matches!(err, CoreError::NotFound(_)), "got {err}");
+
+    // A send that was cancelled is not offered either.
+    let src = dir.path().join("gone.txt");
+    std::fs::write(&src, make_payload(4 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+    sender.cancel(id).await;
+    wait_cancelled(&mut send_stream).await;
+    let err = sender
+        .offer_nearby(receiver.endpoint_id(), id)
+        .await
+        .expect_err("must fail for an ended send");
+    assert!(err.to_string().contains("has ended"), "got {err}");
+}
+
+/// With two sends live, the one the caller names is the one offered, even
+/// when the other is newer (the engine used to pick the newest itself).
+#[tokio::test]
+async fn offer_names_the_send_it_offers() {
+    let dir = tempdir::dir();
+    let dir2 = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let receiver = local_core(dir2.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+
+    let older = dir.path().join("older.txt");
+    std::fs::write(&older, make_payload(8 * 1024)).unwrap();
+    let (older_id, mut older_stream) = sender.send(older).await.unwrap();
+    let older_ticket = wait_ready(&mut older_stream).await;
+
+    let newer = dir.path().join("newer.txt");
+    std::fs::write(&newer, make_payload(12 * 1024)).unwrap();
+    let (_newer_id, mut newer_stream) = sender.send(newer).await.unwrap();
+    let newer_ticket = wait_ready(&mut newer_stream).await;
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(
+            receiver.endpoint_id(),
+            older_id,
+            Some(receiver.test_dial_addr()),
+        )
+        .await
+        .expect("offer");
+    let offer = next_offer(&mut offers).await;
+    assert_eq!(offer.title, "older.txt");
+    assert_eq!(offer.total_bytes, 8 * 1024);
+    assert_eq!(hash_of(&offer.ticket), hash_of(&older_ticket));
+    assert_ne!(hash_of(&offer.ticket), hash_of(&newer_ticket));
+
+    receiver
+        .respond_offer(offer.offer_id, true)
+        .await
+        .expect("accept");
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
 }
 
 /// The pairing fingerprint must depend on the WHOLE identity, not a short

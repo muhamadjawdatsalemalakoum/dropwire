@@ -32,7 +32,7 @@ use crate::catalog::Status;
 use crate::control::CTRL_ALPN;
 use crate::discover::{parse_eid, NearbyDevice};
 use crate::error::{CoreError, Result};
-use crate::progress::Direction;
+use crate::progress::{Direction, TransferId};
 use crate::{Core, CtrlMsg};
 
 /// How long the sender waits for the receiver's answer before giving up.
@@ -252,15 +252,16 @@ impl Core {
         self.inner.consent.offer_tx.subscribe()
     }
 
-    /// Offer the currently-active outgoing transfer (there can be only one —
-    /// Dropwire is one-to-one) to the nearby device `eid_hex`.
+    /// Offer the send `id` (one the caller started, now sharing its code) to
+    /// the nearby device `eid_hex`.
     ///
     /// Returns a stream of [`OfferUpdate`]s ending in Accepted/Declined/Failed.
     pub async fn offer_nearby(
         &self,
         eid_hex: String,
+        id: TransferId,
     ) -> Result<(String, ReceiverStream<OfferUpdate>)> {
-        self.offer_nearby_dial(eid_hex, None).await
+        self.offer_nearby_dial(eid_hex, id, None).await
     }
 
     /// Like [`Self::offer_nearby`] with an explicit dial-address hint — used
@@ -269,23 +270,29 @@ impl Core {
     pub async fn offer_nearby_dial(
         &self,
         eid_hex: String,
+        id: TransferId,
         addr_hint: Option<EndpointAddr>,
     ) -> Result<(String, ReceiverStream<OfferUpdate>)> {
         let peer = parse_eid(&eid_hex)?;
 
-        // The newest active Send record is the transfer being offered. Its
-        // ticket must already be minted (`Ready` flips status to Active).
+        // The send the caller named, never a guess: several can be live at
+        // once. Its code must already be out (`Ready` makes it Active).
         let record = self
             .inner
             .catalog
             .lock()
             .await
-            .list()
-            .into_iter()
-            .find(|r| r.direction == Direction::Send && r.status == Status::Active)
-            .ok_or_else(|| CoreError::Other(anyhow::anyhow!("no active send to offer")))?;
-        if record.ticket.is_empty() {
-            return Err(CoreError::Other(anyhow::anyhow!("send not ready yet")));
+            .get(id)
+            .ok_or_else(|| CoreError::NotFound(id.to_string()))?;
+        if record.direction != Direction::Send {
+            return Err(CoreError::Other(anyhow::anyhow!(
+                "Only something you are sending can be offered."
+            )));
+        }
+        if record.status != Status::Active || record.ticket.is_empty() {
+            return Err(CoreError::Other(anyhow::anyhow!(
+                "This send has ended. Start a new one to offer it."
+            )));
         }
 
         // Dial priority: mDNS LAN socket → explicit hint → engine lookup.

@@ -220,17 +220,22 @@ async fn nearby_list(state: State<'_, AppState>) -> Result<Vec<NearbyDevice>, St
     Ok(state.core.nearby_devices().await)
 }
 
-/// Offer the active send to a nearby device. Streams `OfferUpdate`s back over
-/// the channel; the final update is Accepted / Declined / Failed{reason}.
+/// Offer the send `transfer_id` (the card's id) to a nearby device. Streams
+/// `OfferUpdate`s back over the channel; the final update is Accepted /
+/// Declined / Failed{reason}.
 #[tauri::command]
 async fn nearby_offer(
     endpoint_id: String,
+    transfer_id: String,
     on_update: Channel<irohcore::OfferUpdate>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    let id = transfer_id
+        .parse::<TransferId>()
+        .map_err(|e| e.to_string())?;
     let (_id, mut stream) = state
         .core
-        .offer_nearby(endpoint_id)
+        .offer_nearby(endpoint_id, id)
         .await
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn(async move {

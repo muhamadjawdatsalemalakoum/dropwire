@@ -103,7 +103,7 @@ impl Catalog {
         self.save();
     }
 
-    #[allow(dead_code)] // used by the shell layer (resume-by-id); kept on the API surface
+    /// One record, by its transfer id.
     pub fn get(&self, id: TransferId) -> Option<TransferRecord> {
         self.entries.get(&id.to_string()).cloned()
     }
