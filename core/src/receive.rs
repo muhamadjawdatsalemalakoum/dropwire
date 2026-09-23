@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context};
-use iroh_blobs::api::blobs::{ExportMode, ExportOptions};
+use iroh_blobs::api::blobs::{BlobStatus, ExportMode, ExportOptions};
 use iroh_blobs::api::remote::GetProgressItem;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::request::get_hash_seq_and_sizes;
@@ -235,9 +235,10 @@ async fn run_receive(
     };
 
     // Total size for the progress bar (provider advertises sizes up front).
-    let (_hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &hash, 1024 * 1024 * 32, None)
+    let (hash_seq, sizes) = get_hash_seq_and_sizes(&conn, &hash, 1024 * 1024 * 32, None)
         .await
         .context("fetch sizes")?;
+    let held = held_already(store, &hash_seq, selected.as_deref()).await;
     // Total bytes to fetch: the whole transfer, or just the selected files.
     let total: u64 = match &selected {
         None => sizes.iter().sum(),
@@ -332,11 +333,14 @@ async fn run_receive(
         store
             .export_with_opts(ExportOptions {
                 hash: *child_hash,
-                target,
+                target: target.clone(),
                 mode: ExportMode::Copy,
             })
             .await
             .with_context(|| format!("export {name}"))?;
+        if held.contains(child_hash) {
+            check_held_copy(&target, child_hash, name).await?;
+        }
     }
 
     let stats = TransferStats {
@@ -349,6 +353,58 @@ async fn run_receive(
         .await
         .set_status(id, Status::Done, Some(total));
     let _ = tx.send(Progress::Done { id, stats }).await;
+    Ok(())
+}
+
+/// The files of this transfer (the chosen ones, for a selective download) that
+/// the store already holds in full, so the download will not fetch them.
+///
+/// A file this device once sent is held by reference: the store reads it from
+/// where it sits on disk and does not check it again on export. If it was
+/// edited since, exporting it would save the edited bytes as if they were the
+/// received ones. These files are checked after export ([`check_held_copy`]).
+async fn held_already(
+    store: &iroh_blobs::store::fs::FsStore,
+    hash_seq: &iroh_blobs::hashseq::HashSeq,
+    selected: Option<&[usize]>,
+) -> std::collections::HashSet<iroh_blobs::Hash> {
+    let mut held = std::collections::HashSet::new();
+    // Child 0 is the names blob; files start at child 1.
+    for (i, child) in hash_seq.iter().skip(1).enumerate() {
+        if selected.is_some_and(|idx| !idx.contains(&i)) {
+            continue;
+        }
+        if let Ok(BlobStatus::Complete { .. }) = store.blobs().status(child).await {
+            held.insert(child);
+        }
+    }
+    held
+}
+
+/// Check an exported file that came from the store's own copy rather than the
+/// network. If it does not hash to what the sender shared, delete it and fail:
+/// wrong bytes must never be reported as a verified transfer.
+async fn check_held_copy(
+    target: &std::path::Path,
+    hash: &iroh_blobs::Hash,
+    name: &str,
+) -> anyhow::Result<()> {
+    let path = target.to_path_buf();
+    let got = tokio::task::spawn_blocking(move || -> std::io::Result<iroh_blobs::Hash> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update_reader(std::fs::File::open(&path)?)?;
+        Ok(iroh_blobs::Hash::from(hasher.finalize()))
+    })
+    .await
+    .context("check a local copy")?
+    .with_context(|| format!("check {name}"))?;
+    if got != *hash {
+        let _ = std::fs::remove_file(target);
+        anyhow::bail!(
+            "{name} could not be verified, so it was not saved. This device already had \
+             a copy (it was shared from here), and that copy has been edited since."
+        );
+    }
     Ok(())
 }
 
