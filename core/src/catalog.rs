@@ -48,6 +48,12 @@ pub struct TransferRecord {
     /// nearby-offer summaries.
     #[serde(default)]
     pub file_count: usize,
+    /// Receive only: the files chosen in the preview (0-based indices into the
+    /// transfer's file list), or `None` for all of them. A resume asks for
+    /// these again and nothing else. Records from before this field existed
+    /// read as `None`.
+    #[serde(default)]
+    pub selected: Option<Vec<usize>>,
     pub total_bytes: u64,
     pub transferred: u64,
     pub status: Status,
@@ -142,6 +148,15 @@ impl Catalog {
         self.save();
     }
 
+    /// Record that a transfer is starting. A resumed transfer reuses its entry
+    /// and keeps the time it was first started.
+    pub fn begin(&mut self, mut rec: TransferRecord) {
+        if let Some(old) = self.entries.get(&rec.id.to_string()) {
+            rec.created_at = old.created_at;
+        }
+        self.upsert(rec);
+    }
+
     /// Update the status (and optionally transferred bytes) of an entry.
     pub fn set_status(&mut self, id: TransferId, status: Status, transferred: Option<u64>) {
         if let Some(rec) = self.entries.get_mut(&id.to_string()) {
@@ -171,7 +186,6 @@ impl Catalog {
         }
     }
 
-    #[allow(dead_code)] // used by the shell layer (resume-by-id); kept on the API surface
     pub fn get(&self, id: TransferId) -> Option<TransferRecord> {
         self.entries.get(&id.to_string()).cloned()
     }
@@ -240,6 +254,7 @@ impl Catalog {
             dest,
             source,
             file_count,
+            selected: None,
             total_bytes,
             transferred: 0,
             status: Status::Active,
@@ -396,6 +411,7 @@ mod tests {
         let rec = cat.get(id).expect("the old record loads");
         assert_eq!(rec.status, Status::Interrupted);
         assert_eq!(rec.file_count, 0);
+        assert_eq!(rec.selected, None);
     }
 
     #[test]

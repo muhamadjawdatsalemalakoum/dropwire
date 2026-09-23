@@ -241,3 +241,72 @@ async fn receive_selected_ignores_repeated_and_out_of_range_indices() {
     );
     assert!(!out.join("set").join("b.bin").exists());
 }
+
+/// Resuming from history keeps the files chosen in the preview: the files left
+/// out are neither downloaded nor saved, and the same history entry carries on
+/// instead of a second one appearing.
+#[tokio::test(flavor = "multi_thread")]
+async fn resuming_from_history_keeps_the_chosen_files() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    // big.bin (index 0) is chosen, other.bin (index 1) is not.
+    let dir = work.path().join("set");
+    std::fs::create_dir_all(&dir).unwrap();
+    let big = make_payload(64 * 1024 * 1024);
+    std::fs::write(dir.join("big.bin"), &big).unwrap();
+    std::fs::write(dir.join("other.bin"), make_payload(1024 * 1024)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    // The receiving app closes part way through.
+    let receiver = local_core(recv_data.path()).await;
+    let out = work.path().join("out");
+    let (rid, mut rs) = receiver
+        .receive_selected(ticket, out.clone(), vec![0])
+        .await
+        .unwrap();
+    while let Some(ev) = rs.next().await {
+        match ev {
+            Progress::Transferring { offset, total, .. } if offset >= total / 4 => break,
+            Progress::Done { .. } => panic!("finished before it could be interrupted"),
+            Progress::Error { message, .. } => panic!("first attempt error: {message}"),
+            _ => {}
+        }
+    }
+    receiver.shutdown().await.unwrap();
+    drain_until_terminal(&mut rs).await;
+
+    let receiver = local_core(recv_data.path()).await;
+    let before = receiver.transfers().await;
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].id, rid);
+    assert_eq!(before[0].status, irohcore::Status::Interrupted);
+    assert_eq!(
+        before[0].selected,
+        Some(vec![0]),
+        "the choice is remembered"
+    );
+
+    let (id, mut rs) = receiver.resume(rid).await.unwrap();
+    assert_eq!(id, rid, "a resume carries on under the same id");
+    wait_done(&mut rs).await;
+
+    assert!(std::fs::read(out.join("set").join("big.bin")).unwrap() == big);
+    assert!(
+        !out.join("set").join("other.bin").exists(),
+        "a file left out in the preview must not be saved by a resume"
+    );
+    let after = receiver.transfers().await;
+    assert_eq!(after.len(), 1, "one history entry, not two");
+    assert_eq!(after[0].id, rid);
+    assert_eq!(after[0].status, irohcore::Status::Done);
+    assert_eq!(after[0].created_at, before[0].created_at);
+
+    // A finished receive, or one that is not in the history, cannot be resumed.
+    assert!(receiver.resume(rid).await.is_err());
+    assert!(receiver.resume(irohcore::TransferId::new()).await.is_err());
+}

@@ -460,6 +460,23 @@ async fn start_receive_selected(
     Ok(id.to_string())
 }
 
+/// Resume an interrupted or failed receive from history, under the same id,
+/// with the code, folder and files it was started with.
+#[tauri::command]
+async fn resume_transfer(
+    id: String,
+    on_event: Channel<Progress>,
+    state: State<'_, AppState>,
+) -> Result<String, CommandError> {
+    let tid: TransferId = id.parse().map_err(|_| CommandError {
+        kind: "other",
+        message: "This transfer is no longer in the history.".into(),
+    })?;
+    let (id, stream) = state.core.resume(tid).await?;
+    pump(stream, on_event);
+    Ok(id.to_string())
+}
+
 /// Send a one-shot control message to the sender (e.g. an instant decline).
 #[tauri::command]
 async fn send_control(
@@ -740,6 +757,7 @@ pub fn run() {
             inspect_ticket,
             start_receive,
             start_receive_selected,
+            resume_transfer,
             send_control,
             cancel_transfer,
             reveal_path,

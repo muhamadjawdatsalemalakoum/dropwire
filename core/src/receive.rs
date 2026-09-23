@@ -128,7 +128,25 @@ impl Core {
         ticket: String,
         dest: PathBuf,
     ) -> Result<(TransferId, ProgressStream)> {
-        self.spawn_receive(ticket, dest, None).await
+        self.spawn_receive(None, ticket, dest, None).await
+    }
+
+    /// Resume a receive from history that was interrupted or failed: the same
+    /// code, folder and chosen files, under the same id, so history keeps one
+    /// entry for it. Only what is not stored yet is downloaded.
+    pub async fn resume(&self, id: TransferId) -> Result<(TransferId, ProgressStream)> {
+        let rec = self.inner.catalog.lock().await.get(id).ok_or_else(|| {
+            CoreError::Other(anyhow!("This transfer is no longer in the history."))
+        })?;
+        let resumable = rec.direction == Direction::Receive
+            && matches!(rec.status, Status::Interrupted | Status::Error);
+        let Some(dest) = rec.dest.filter(|_| resumable) else {
+            return Err(CoreError::Other(anyhow!(
+                "Only a receive that was interrupted or failed can be resumed."
+            )));
+        };
+        self.spawn_receive(Some(id), rec.ticket, PathBuf::from(dest), rec.selected)
+            .await
     }
 
     /// Like [`Core::receive`], but downloads only the files at the given indices
@@ -140,11 +158,13 @@ impl Core {
         dest: PathBuf,
         selected: Vec<usize>,
     ) -> Result<(TransferId, ProgressStream)> {
-        self.spawn_receive(ticket, dest, Some(selected)).await
+        self.spawn_receive(None, ticket, dest, Some(selected)).await
     }
 
+    /// Start a receive: a new one, or (`resume`) one from history under its id.
     async fn spawn_receive(
         &self,
+        resume: Option<TransferId>,
         ticket: String,
         dest: PathBuf,
         selected: Option<Vec<usize>>,
@@ -154,15 +174,23 @@ impl Core {
             .parse()
             .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
 
-        let id = TransferId::new();
-        // A folder that cannot be saved to is refused now, not after the
-        // whole transfer has downloaded.
+        let id = resume.unwrap_or_default(); // a fresh id for a new receive
+                                             // A folder that cannot be saved to is refused now, not after the
+                                             // whole transfer has downloaded.
         let dest = tokio::task::spawn_blocking(move || check_destination(&dest, id))
             .await
             .map_err(|e| CoreError::Other(anyhow!("check the folder: {e}")))??;
         let (tx, rx) = mpsc::channel(64);
         let token = CancellationToken::new();
-        self.inner.active.lock().await.insert(id, token.clone());
+        {
+            let mut active = self.inner.active.lock().await;
+            if active.contains_key(&id) {
+                return Err(CoreError::Other(anyhow!(
+                    "This transfer is already running."
+                )));
+            }
+            active.insert(id, token.clone());
+        }
 
         let core = self.clone();
         let tx_err = tx.clone();
@@ -371,10 +399,10 @@ async fn run_receive(
         Err(_) => None,
     };
 
-    // Record (active).
+    // Record (active). The choice of files is kept so a resume from history
+    // asks for exactly these again.
     {
-        let mut cat = core.inner.catalog.lock().await;
-        cat.upsert(Catalog::new_record(
+        let mut rec = Catalog::new_record(
             id,
             Direction::Receive,
             name.clone().unwrap_or_else(|| files_label(file_count)),
@@ -384,7 +412,16 @@ async fn run_receive(
             None,
             file_count,
             total,
-        ));
+        );
+        rec.selected = wanted.as_ref().map(|flags| {
+            flags
+                .iter()
+                .enumerate()
+                .filter(|(_, &on)| on)
+                .map(|(i, _)| i)
+                .collect()
+        });
+        core.inner.catalog.lock().await.begin(rec);
     }
 
     // Hold everything this receive fetches, and whatever an earlier attempt left,
