@@ -207,17 +207,15 @@
           Free forever &mdash; no trial, no paywall. Prebuilt apps for Windows, macOS &amp; Linux are coming; build from source today.
         </p>
 
-        <!-- Product Hunt badge (official embed). Swaps with the light/dark theme via .ph-badge-light / .ph-badge-dark. -->
-        <a class="ph-badge" href="https://www.producthunt.com/products/dropwire?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-dropwire"
-           target="_blank" rel="noopener noreferrer" aria-label="Dropwire on Product Hunt">
-          <img class="ph-badge-img ph-badge-light"
-               src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1176597&amp;theme=light"
-               alt="Dropwire - Free P2P file transfer. No account, end-to-end encrypted. | Product Hunt"
-               width="250" height="54" loading="lazy" />
-          <img class="ph-badge-img ph-badge-dark"
-               src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1176597&amp;theme=dark"
-               alt="Dropwire - Free P2P file transfer. No account, end-to-end encrypted. | Product Hunt"
-               width="250" height="54" loading="lazy" />
+        <!-- Product Hunt listing as a plain local link: the hosted badge image would
+             contact producthunt.com on every page load, so nothing loads from there
+             until the visitor clicks. -->
+        <a class="ph-badge" href="https://www.producthunt.com/products/dropwire"
+           target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+            <path d="M8 3.5l5 8H3z" fill="currentColor" />
+          </svg>
+          Featured on Product Hunt
         </a>
       </div>
 

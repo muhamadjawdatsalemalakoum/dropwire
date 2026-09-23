@@ -680,23 +680,24 @@ img, svg { max-width: 100%; }
 .made-with a { color: var(--link); font-weight: 600; }
 .privacy-note { max-width: 480px; }
 
-/* Product Hunt badge (hero, below the CTA) */
+/* Product Hunt link (hero, below the CTA). A local pill, not the hosted badge
+   image, so the page makes no third-party request on load. */
 .ph-badge {
   display: inline-flex;
-  line-height: 0;
-  border-radius: 8px;
+  align-items: center;
+  gap: 0.45rem;
   margin-top: 1.5rem;
+  padding: 0.4rem 0.95rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
-.ph-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.ph-badge-img { display: block; width: 250px; height: 54px; }
-/* Show the badge that matches the active theme (mirrors the sun/moon toggle) */
-.ph-badge-dark { display: none; }
-:root[data-theme="dark"] .ph-badge-light { display: none; }
-:root[data-theme="dark"] .ph-badge-dark { display: block; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ph-badge-light { display: none; }
-  :root:not([data-theme="light"]) .ph-badge-dark { display: block; }
-}
+.ph-badge svg { flex: none; color: var(--link); }
+.ph-badge:hover { color: var(--ink); border-color: var(--accent); text-decoration: none; }
 
 /* --------------------------- Responsive ------------------------------- */
 @media (max-width: 860px) {
