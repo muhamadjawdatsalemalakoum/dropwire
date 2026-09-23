@@ -21,9 +21,13 @@ See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) for toolchain and build/run instr
 
 ```sh
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test -p irohcore
+cargo clippy -p irohcore --all-targets --features test-utils -- -D warnings
+cargo clippy -p dropwire --all-targets -- -D warnings
+cargo test   -p irohcore --features test-utils
 ```
+
+These are the checks CI runs. Keep `--features test-utils`: without it the nearby consent and
+relay suites are compiled out and the test run still reports success.
 
 - Keep changes focused; match the surrounding style.
 - If you touch the transfer/resume path, add or update a test in `core/tests/`.
