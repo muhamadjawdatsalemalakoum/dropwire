@@ -44,6 +44,7 @@ pub use control::CtrlMsg;
 pub use discover::NearbyDevice;
 pub use error::{CoreError, Result};
 pub use offer::{IncomingOffer, OfferUpdate};
+pub use progress::RenamedFile;
 pub use progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
     TransferStats,

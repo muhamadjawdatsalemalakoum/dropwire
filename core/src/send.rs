@@ -164,7 +164,7 @@ async fn run_send(
                 Some(ProviderEvent::Done { bytes, seconds }) => {
                     completed = true;
                     core.inner.catalog.lock().await.set_status(id, Status::Done, Some(bytes));
-                    let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds } }).await;
+                    let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds, ..Default::default() } }).await;
                     // keep serving — another receiver may still fetch — until cancelled.
                 }
                 Some(ProviderEvent::Aborted) => { /* a receiver aborted; keep serving */ }

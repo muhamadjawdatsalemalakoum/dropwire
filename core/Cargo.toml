@@ -45,6 +45,9 @@ url.workspace = true
 mdns-sd = "0.21"
 # OS hostname → default device display name.
 hostname = "0.4"
+# Hash a file already on disk to tell whether a receive would save the very
+# same content again. Already in the tree through iroh-blobs.
+blake3 = "1"
 
 [dev-dependencies]
 tempfile = "3"

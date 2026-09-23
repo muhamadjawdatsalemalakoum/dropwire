@@ -58,10 +58,30 @@ pub enum Route {
 }
 
 /// Final statistics for a completed transfer.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransferStats {
     pub bytes: u64,
     pub seconds: f64,
+    /// Receive only: files and top-level folders saved under a different name
+    /// than the one they were sent with, because the name was already taken in
+    /// the destination (nothing on disk is ever replaced), collided with another
+    /// name in the same transfer, or is not allowed on Windows. A renamed
+    /// top-level folder is listed once, not per file inside it. Empty for sends
+    /// and when nothing was renamed; lists at most 1000 entries.
+    #[serde(default)]
+    pub renamed: Vec<RenamedFile>,
+}
+
+/// One entry of [`TransferStats::renamed`]. Both paths are relative to the
+/// destination folder and use forward slashes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenamedFile {
+    /// The name as the sender sent it.
+    pub name: String,
+    /// The name it was saved under.
+    pub saved_as: String,
 }
 
 /// One file in a [`TransferPreview`]: its name and byte size. Both are committed

@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context};
-use iroh_blobs::api::blobs::{ExportMode, ExportOptions};
 use iroh_blobs::api::remote::GetProgressItem;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::request::get_hash_seq_and_sizes;
@@ -361,11 +360,7 @@ async fn run_receive(
         let mut last_emit = Instant::now() - Duration::from_millis(200);
         loop {
             tokio::select! {
-                _ = token.cancelled() => {
-                    core.inner.catalog.lock().await.set_status(id, Status::Cancelled, None);
-                    let _ = tx.send(Progress::Cancelled { id }).await;
-                    return Ok(());
-                }
+                _ = token.cancelled() => return finish_cancelled(&core, id, &tx).await,
                 item = stream.next() => match item {
                     Some(GetProgressItem::Progress(offset)) => {
                         if last_emit.elapsed() >= Duration::from_millis(80) {
@@ -387,38 +382,52 @@ async fn run_receive(
     let collection = Collection::load(hash, store.as_ref())
         .await
         .context("load collection")?;
+    // Where each file goes. Nothing already on disk is replaced: taken names
+    // get a " (n)" suffix, decided once per top-level name so a folder lands
+    // together, and content already saved by an earlier receive of this same
+    // transfer is left as it is. This touches the disk (and may hash existing
+    // files), so it runs off the async threads.
+    let dest = std::path::absolute(&dest).unwrap_or(dest);
     std::fs::create_dir_all(&dest)?;
+    let wanted_files: Vec<export::Wanted> = collection
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| is_wanted(*i))
+        .map(|(i, (name, child_hash))| export::Wanted {
+            index: i,
+            name: name.clone(),
+            hash: *child_hash,
+            size: sizes.get(i + 1).copied().unwrap_or(0),
+        })
+        .collect();
+    let attempted = wanted_files.len();
+    let plan = {
+        let dest = dest.clone();
+        tokio::task::spawn_blocking(move || export::plan(&dest, wanted_files))
+            .await
+            .context("plan file names")?
+    };
+
     // One file that cannot be written (a permission problem, a full disk, a path
     // too long for this system) must not cost the receiver every file after it:
     // save what can be saved, then report exactly what could not.
-    let mut attempted = 0usize;
-    let mut failed: Vec<(String, String)> = Vec::new();
-    for (i, (name, child_hash)) in collection.iter().enumerate() {
-        if !is_wanted(i) {
-            continue;
+    let mut failed = plan.failed;
+    let mut renamed = plan.renamed;
+    let transfer = id.to_string();
+    for file in plan.files.iter().filter(|f| !f.present) {
+        if token.is_cancelled() {
+            return finish_cancelled(&core, id, &tx).await;
         }
-        attempted += 1;
-        let Some(target) = export::join_under(&dest, &export::sanitize_segments(name)) else {
-            failed.push((name.clone(), "unsafe file name".to_string()));
-            continue;
-        };
-        if let Some(parent) = target.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                failed.push((name.clone(), e.to_string()));
-                continue;
+        match export::save(store, &dest, file, &transfer, &token).await {
+            Ok(export::Saved::Written { renamed: late }) => {
+                if let Some(late) = late {
+                    if renamed.len() < export::MAX_RENAMED_REPORTED {
+                        renamed.push(late);
+                    }
+                }
             }
-        }
-        // VERIFY (ARCHITECTURE.md §13): ExportProgress completion — `.await` vs
-        // draining `.stream()` of ExportProgressItem on 0.103.
-        if let Err(e) = store
-            .export_with_opts(ExportOptions {
-                hash: *child_hash,
-                target,
-                mode: ExportMode::Copy,
-            })
-            .await
-        {
-            failed.push((name.clone(), e.to_string()));
+            Ok(export::Saved::Cancelled) => return finish_cancelled(&core, id, &tx).await,
+            Err(why) => failed.push((file.name.clone(), why)),
         }
     }
     if !failed.is_empty() {
@@ -428,6 +437,7 @@ async fn run_receive(
     let stats = TransferStats {
         bytes: total,
         seconds: started.elapsed().as_secs_f64(),
+        renamed,
     };
     core.inner
         .catalog
@@ -435,6 +445,21 @@ async fn run_receive(
         .await
         .set_status(id, Status::Done, Some(total));
     let _ = tx.send(Progress::Done { id, stats }).await;
+    Ok(())
+}
+
+/// End a receive the user cancelled.
+async fn finish_cancelled(
+    core: &Core,
+    id: TransferId,
+    tx: &mpsc::Sender<Progress>,
+) -> anyhow::Result<()> {
+    core.inner
+        .catalog
+        .lock()
+        .await
+        .set_status(id, Status::Cancelled, None);
+    let _ = tx.send(Progress::Cancelled { id }).await;
     Ok(())
 }
 
