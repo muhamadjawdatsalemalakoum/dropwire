@@ -20,7 +20,7 @@ resumable, and open source.
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3DA35D)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-2C333D)
 ![Built with iroh](https://img.shields.io/badge/built%20with-iroh-D2FF3A?labelColor=0E1116)
-![Status](https://img.shields.io/badge/status-alpha-E0A93A)
+![Latest release](https://img.shields.io/github/v/release/muhamadjawdatsalemalakoum/dropwire?label=release&color=3DA35D)
 
 [**Download**](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases) ·
 [Architecture](ARCHITECTURE.md) ·
@@ -31,10 +31,10 @@ resumable, and open source.
 
 ---
 
-> **Status:** beta. The transfer engine and desktop app work end to end on Windows,
+> **Status:** stable. The transfer engine and desktop app work end to end on Windows,
 > macOS, and Linux: send a file or folder, send straight to a nearby device with no code,
 > preview before accepting, download only the files you want, resume an interrupted
-> transfer, and run several at once. The interface was rebuilt in 0.3.0 as a fixed native
+> transfer, and run several at once. The interface was rebuilt in 0.3 as a fixed native
 > frame rather than a page in a window. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
 > design and [`CHANGELOG.md`](CHANGELOG.md) for what landed when.
 
