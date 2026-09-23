@@ -5,4 +5,4 @@ contact_links:
     about: How to report a security issue privately. Please don't open a public issue for it.
   - name: Questions & ideas
     url: https://github.com/muhamadjawdatsalemalakoum/dropwire/discussions
-    about: For general questions and discussion. (Enable Discussions in repo Settings to use this.)
+    about: For general questions and discussion.

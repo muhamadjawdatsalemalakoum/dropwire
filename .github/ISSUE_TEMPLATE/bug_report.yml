@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Dropwire! 🙏
+        Thanks for helping improve Dropwire.
         **Security issue?** Please don't file it here. Report it privately as described in the
         [security policy](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/policy).
   - type: textarea
@@ -37,9 +37,17 @@ body:
     id: version
     attributes:
       label: Dropwire version
-      description: See Settings → About (e.g. 0.2.3)
+      description: Shown in Settings → About, next to Dropwire (for example 0.3.1).
     validations:
       required: true
+  - type: input
+    id: release
+    attributes:
+      label: Release you downloaded
+      description: >-
+        The tag from the Releases page, if you know it (for example v0.3.1).
+        Every 0.3.0 beta shows 0.3.0 in Settings, so this is how those builds are told apart.
+      placeholder: v0.3.1
   - type: dropdown
     id: connection
     attributes:
