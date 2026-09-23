@@ -122,6 +122,58 @@ async fn resume_after_interrupt() {
     );
 }
 
+/// The finished receive reports what was previewed (the files' bytes, not the
+/// list of names that travels with them) and how long the whole receive took,
+/// not just the final save to disk.
+#[tokio::test(flavor = "multi_thread")]
+async fn receive_summary_covers_the_whole_transfer() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let dir = work.path().join("set");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("note.txt"), b"twelve bytes").unwrap();
+    std::fs::write(dir.join("big.bin"), make_payload(48 * 1024 * 1024)).unwrap();
+    let payload_total = 12 + 48 * 1024 * 1024;
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    let preview = receiver.inspect(ticket.clone()).await.unwrap();
+    assert_eq!(preview.total_bytes, payload_total);
+
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver.receive(ticket, out).await.unwrap();
+    let (mut first, mut last) = (None, None);
+    let stats = loop {
+        match rs.next().await.expect("stream ended before Done") {
+            Progress::Transferring { .. } => {
+                let now = std::time::Instant::now();
+                first.get_or_insert(now);
+                last = Some(now);
+            }
+            Progress::Done { stats, .. } => break stats,
+            Progress::Error { message, .. } => panic!("receive error: {message}"),
+            _ => {}
+        }
+    };
+    assert_eq!(stats.bytes, payload_total, "payload bytes, as previewed");
+    if let (Some(first), Some(last)) = (first, last) {
+        let downloading = last.duration_since(first).as_secs_f64();
+        assert!(
+            stats.seconds >= downloading,
+            "the duration ({}s) must cover the download ({downloading}s)",
+            stats.seconds
+        );
+    }
+    let rec = receiver.transfers().await.remove(0);
+    assert_eq!(rec.total_bytes, payload_total);
+    assert_eq!(rec.transferred, payload_total);
+}
+
 /// Real-network smoke test of the SERVERLESS path (`Infra::Decentralized`: DHT
 /// discovery + n0's free relay). Hits the public network, so it's `#[ignore]` by
 /// default. Run with: `cargo test -p irohcore -- --ignored roundtrip_serverless`

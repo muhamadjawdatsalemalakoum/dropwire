@@ -253,6 +253,9 @@ async fn run_receive(
     tx: mpsc::Sender<Progress>,
     token: CancellationToken,
 ) -> anyhow::Result<()> {
+    // The summary's duration covers the whole receive: connecting, downloading
+    // and saving.
+    let started = Instant::now();
     let store = &core.inner.store;
     let endpoint = core.inner.router.endpoint();
     let hf = ticket.hash_and_format();
@@ -316,8 +319,10 @@ async fn run_receive(
             .is_none_or(|w| w.get(i).copied().unwrap_or(false))
     };
     // Total bytes to fetch: the whole transfer, or just the selected files.
+    // `sizes[0]` is the list of names, not a file, so it is left out, the same
+    // as in the preview.
     let total: u64 = match &wanted {
-        None => sizes.iter().sum(),
+        None => sizes.iter().skip(1).sum(),
         Some(_) => (0..sizes.len() - 1)
             .filter(|&i| is_wanted(i))
             .map(|i| sizes[i + 1])
@@ -392,7 +397,6 @@ async fn run_receive(
     }
 
     // Export the collection tree to `dest`.
-    let started = Instant::now();
     let collection = Collection::load(hash, store.as_ref())
         .await
         .context("load collection")?;
