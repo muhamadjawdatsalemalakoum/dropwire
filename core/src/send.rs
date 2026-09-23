@@ -1,6 +1,8 @@
 //! Sending: import a path, bundle it, serve it, hand back a ticket.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Context;
 use iroh_blobs::api::blobs::{AddPathOptions, ImportMode};
@@ -17,6 +19,11 @@ use crate::catalog::{Catalog, Status};
 use crate::error::Result;
 use crate::progress::{Direction, Progress, ProgressStream, Route, TransferId, TransferStats};
 use crate::Core;
+
+/// Why a send of content that is already live was refused. Shown on the new
+/// card as-is.
+const ALREADY_SHARING: &str =
+    "This is already being shared. Use its code, or stop sharing it first.";
 
 impl Core {
     /// Import `path` (a file or folder), start serving it, and stream progress.
@@ -117,15 +124,34 @@ async fn run_send(
     let ticket_str = ticket.to_string();
 
     // 5. Register for provider events on this hash, record, and announce.
+    //    The same files always make the same hash, so this content may already
+    //    be live under another send. Check and claim under one lock.
     let hash_key = hash.to_string();
     let (ev_tx, mut ev_rx) = mpsc::unbounded_channel::<ProviderEvent>();
-    core.inner.serving.lock().await.insert(
-        hash_key.clone(),
-        Serving {
-            events: ev_tx,
-            token: token.clone(),
-        },
-    );
+    let delivered = Arc::new(AtomicBool::new(false));
+    {
+        let mut serving = core.inner.serving.lock().await;
+        if let Some(live) = serving.get(&hash_key) {
+            // Not delivered yet: its code is the one to use. (The binding is
+            // per hash, so two live sends of it could not go to two people.)
+            if !live.delivered.load(Ordering::Acquire) {
+                anyhow::bail!(ALREADY_SHARING);
+            }
+            // Delivered: this send takes over, and the old one stops.
+            live.token.cancel();
+        }
+        serving.insert(
+            hash_key.clone(),
+            Serving {
+                id,
+                events: ev_tx,
+                token: token.clone(),
+                delivered: delivered.clone(),
+            },
+        );
+        // A new share starts unbound: the first device to use it takes it.
+        core.inner.bound.lock().await.remove(&hash_key);
+    }
     {
         let mut cat = core.inner.catalog.lock().await;
         cat.upsert(Catalog::new_record(
@@ -165,6 +191,7 @@ async fn run_send(
                 }
                 Some(ProviderEvent::Done { bytes, seconds }) => {
                     completed = true;
+                    delivered.store(true, Ordering::Release);
                     core.inner.catalog.lock().await.set_status(id, Status::Done, Some(bytes));
                     let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds } }).await;
                     // keep serving — another receiver may still fetch — until cancelled.
@@ -175,8 +202,15 @@ async fn run_send(
         }
     }
 
-    core.inner.serving.lock().await.remove(&hash_key);
-    core.inner.bound.lock().await.remove(&hash_key);
+    // Stop serving, but only if this send still owns the hash: a newer send
+    // of the same content may have taken it over, binding and all.
+    {
+        let mut serving = core.inner.serving.lock().await;
+        if serving.get(&hash_key).is_some_and(|s| s.id == id) {
+            serving.remove(&hash_key);
+            core.inner.bound.lock().await.remove(&hash_key);
+        }
+    }
     drop(collection_tag);
     drop(tags);
     if !completed {
@@ -236,10 +270,15 @@ fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
 /// events for that hash go.
 #[derive(Clone)]
 pub(crate) struct Serving {
+    /// The send that owns this hash. Only it may remove the entry.
+    pub(crate) id: TransferId,
     /// Provider events for this hash are routed here.
     pub(crate) events: mpsc::UnboundedSender<ProviderEvent>,
-    /// The owning send's token. Requests in flight stop when it fires.
+    /// The owning send's token. Requests in flight stop when it fires, and a
+    /// newer send of the same content fires it to take over.
     pub(crate) token: CancellationToken,
+    /// Set once the send has delivered its content.
+    pub(crate) delivered: Arc<AtomicBool>,
 }
 
 /// Sender-side events distilled from iroh-blobs provider events, routed per hash.
@@ -281,7 +320,9 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                 };
                 let _ = m.tx.send(Ok(())).await;
 
-                let Serving { events: tx, token } = route;
+                let Serving {
+                    events: tx, token, ..
+                } = route;
                 let _ = tx.send(ProviderEvent::PeerJoined);
                 let mut stream = m.rx; // irpc receiver of per-request RequestUpdate
                 tokio::spawn(async move {
