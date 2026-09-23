@@ -1,16 +1,16 @@
 /* =========================================================================
-   Dropwire — landing site styles
+   Dropwire: landing site styles
    Vanilla CSS, no build step. Responsive, light + dark, accessible.
 
    PALETTE: Brand accent is "Live Wire"
    lime (#C6F032 light / #D2FF3A dark) on "Wire Black" #0E1116, with faintly
-   warm-green neutrals. Lime is a *fill* color — text on it is always Wire
+   warm-green neutrals. Lime is a *fill* color: text on it is always Wire
    Black ink (--accent-contrast), never white (lime + white fails contrast).
    ========================================================================= */
 
 /* ---------------------------- Design tokens ---------------------------- */
 :root {
-  /* Brand accent — "Live Wire" lime. Lime is a FILL color:
+  /* Brand accent: "Live Wire" lime. Lime is a FILL color:
      text/icons on top are always Wire Black ink (--accent-contrast). */
   --accent: #c6f032;
   --accent-strong: #a8d616;
@@ -46,7 +46,7 @@
   --space: clamp(1rem, 2.5vw, 1.5rem);
 }
 
-/* Dark theme — applied via prefers-color-scheme OR explicit data-theme */
+/* Dark theme, applied via prefers-color-scheme OR explicit data-theme */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --accent: #d2ff3a;
@@ -61,7 +61,7 @@
     --surface-border: #2c333d;
     --ink: #f2f5ef;
     --ink-soft: #9ba6b2;
-    --ink-faint: #6b7480;
+    --ink-faint: #8b95a1;
 
     --ring: rgba(210, 255, 58, 0.45);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -84,7 +84,7 @@
   --surface-border: #2c333d;
   --ink: #f2f5ef;
   --ink-soft: #9ba6b2;
-  --ink-faint: #6b7480;
+  --ink-faint: #8b95a1;
 
   --ring: rgba(210, 255, 58, 0.45);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -219,7 +219,7 @@ img, svg { max-width: 100%; }
   color: var(--ink);
   border-color: var(--surface-border);
 }
-.btn-secondary:hover { border-color: var(--accent); color: var(--accent-strong); }
+.btn-secondary:hover { border-color: var(--accent); color: var(--link); }
 
 /* ----------------------------- Header --------------------------------- */
 .site-header {
@@ -282,7 +282,7 @@ img, svg { max-width: 100%; }
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
-.theme-toggle:hover { border-color: var(--accent); color: var(--accent-strong); }
+.theme-toggle:hover { border-color: var(--accent); color: var(--link); }
 .theme-toggle .icon-moon { display: none; }
 .theme-toggle .icon-sun { display: block; }
 
@@ -302,7 +302,7 @@ img, svg { max-width: 100%; }
   overflow: hidden;
 }
 .hero::before {
-  /* subtle single ambient glow — restrained, not gradient-overload */
+  /* subtle single ambient glow, restrained, not gradient-overload */
   content: "";
   position: absolute;
   inset: -20% 0 auto 0;
@@ -420,7 +420,7 @@ img, svg { max-width: 100%; }
 }
 .code-pill strong {
   font-family: var(--font-mono);
-  color: var(--accent-strong);
+  color: var(--link);
   letter-spacing: 0.01em;
 }
 
@@ -527,7 +527,7 @@ img, svg { max-width: 100%; }
   height: 42px;
   border-radius: 12px;
   background: var(--accent-soft);
-  color: var(--accent-strong);
+  color: var(--link);
   font-weight: 700;
   font-size: 1.2rem;
   margin-bottom: 1.1rem;
@@ -592,6 +592,12 @@ img, svg { max-width: 100%; }
 }
 .faq-item summary::-webkit-details-marker { display: none; }
 .faq-item summary:hover { color: var(--link); }
+/* The card clips its overflow, so draw the keyboard focus ring inside the
+   question instead of around it, where it would be cut off. */
+.faq-item summary:focus-visible {
+  outline-offset: -3px;
+  border-radius: calc(var(--radius-sm) - 1px);
+}
 .chevron {
   flex: none;
   width: 11px;
@@ -674,23 +680,24 @@ img, svg { max-width: 100%; }
 .made-with a { color: var(--link); font-weight: 600; }
 .privacy-note { max-width: 480px; }
 
-/* Product Hunt badge (hero, below the CTA) */
+/* Product Hunt link (hero, below the CTA). A local pill, not the hosted badge
+   image, so the page makes no third-party request on load. */
 .ph-badge {
   display: inline-flex;
-  line-height: 0;
-  border-radius: 8px;
+  align-items: center;
+  gap: 0.45rem;
   margin-top: 1.5rem;
+  padding: 0.4rem 0.95rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
-.ph-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.ph-badge-img { display: block; width: 250px; height: 54px; }
-/* Show the badge that matches the active theme (mirrors the sun/moon toggle) */
-.ph-badge-dark { display: none; }
-:root[data-theme="dark"] .ph-badge-light { display: none; }
-:root[data-theme="dark"] .ph-badge-dark { display: block; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ph-badge-light { display: none; }
-  :root:not([data-theme="light"]) .ph-badge-dark { display: block; }
-}
+.ph-badge svg { flex: none; color: var(--link); }
+.ph-badge:hover { color: var(--ink); border-color: var(--accent); text-decoration: none; }
 
 /* --------------------------- Responsive ------------------------------- */
 @media (max-width: 860px) {
@@ -814,7 +821,29 @@ img.frameless-img { display: block; width: 100%; height: auto; }
   font-weight: 600;
   color: var(--ink-faint);
 }
-.install-note { margin: 1.3rem 0 0; font-size: 0.9rem; color: var(--ink-soft); }
+/* App captures draw their own frame, so drop the installer-shot frame again
+   (this selector outranks .install-pair img). */
+.install-pair img.frameless-img {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* The app pair carries sentence captions: give each figure a fixed column so
+   the two sit side by side, centre the images, and set the captions as prose. */
+.install-pair.is-app { align-items: flex-start; }
+.install-pair.is-app figure { flex: 0 1 380px; }
+.install-pair.is-app img { margin-inline: auto; }
+.install-pair.is-app figcaption {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.install-note { margin: 1.3rem auto 0; max-width: 64ch; font-size: 0.9rem; color: var(--ink-soft); }
+.install-note + .install-note { margin-top: 0.5rem; }
 .install-note code { font-family: var(--font-mono); font-size: 0.85em; }
 .platforms {
   margin: 1.1rem 0 0;

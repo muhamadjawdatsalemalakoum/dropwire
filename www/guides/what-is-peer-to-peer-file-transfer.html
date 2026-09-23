@@ -37,10 +37,10 @@
     "@context": "https://schema.org",
     "@type": "BlogPosting",
     "headline": "What is peer-to-peer file transfer, and is it safe?",
-    "description": "Peer-to-peer (P2P) file transfer sends files directly between two devices without a central server, using encryption to keep your data private. Here's how it works — and whether it's safe.",
+    "description": "Peer-to-peer (P2P) file transfer sends files directly between two devices without a central server, using encryption to keep your data private. Here's how it works, and whether it's safe.",
     "image": "https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png",
     "datePublished": "2026-06-17",
-    "dateModified": "2026-06-17",
+    "dateModified": "2026-09-23",
     "author": { "@type": "Person", "name": "Muhamad J. Akoum", "url": "https://www.linkedin.com/in/akoum/" },
     "publisher": { "@type": "Organization", "name": "Dropwire", "logo": { "@type": "ImageObject", "url": "https://muhamadjawdatsalemalakoum.github.io/dropwire/og.png" } },
     "mainEntityOfPage": { "@type": "WebPage", "@id": "https://muhamadjawdatsalemalakoum.github.io/dropwire/guides/what-is-peer-to-peer-file-transfer.html" },
@@ -55,7 +55,7 @@
       {"@type":"Question","name":"What is peer-to-peer file transfer?","acceptedAnswer":{"@type":"Answer","text":"Peer-to-peer (P2P) file transfer sends files directly between two devices without uploading to a central server. The devices establish an encrypted connection, exchange files, and the data never sits on a third party's infrastructure."}},
       {"@type":"Question","name":"Is P2P file transfer safe?","acceptedAnswer":{"@type":"Answer","text":"Yes, when properly implemented with end-to-end encryption. P2P transfer is generally safer than cloud upload because files never rest unencrypted on a third-party server. However, you should only share connection codes via private channels and verify the recipient out-of-band for sensitive files."}},
       {"@type":"Question","name":"How do P2P apps connect devices behind routers?","acceptedAnswer":{"@type":"Answer","text":"P2P apps use NAT hole punching: both devices connect to a public rendezvous server, exchange their public addresses, then simultaneously send packets to punch holes in their home routers' firewalls. Once the hole is open, devices communicate directly. If that fails, a relay server forwards encrypted traffic instead."}},
-      {"@type":"Question","name":"What's the difference between P2P and cloud file transfer?","acceptedAnswer":{"@type":"Answer","text":"Cloud services like WeTransfer store files on their servers temporarily; you upload, they store, the recipient downloads, then (ideally) they delete. P2P skips the server entirely — files go directly device-to-device, so nothing sits in third-party storage."}}
+      {"@type":"Question","name":"What's the difference between P2P and cloud file transfer?","acceptedAnswer":{"@type":"Answer","text":"Cloud services like WeTransfer store files on their servers temporarily; you upload, they store, the recipient downloads, then (ideally) they delete. P2P skips the server entirely: files go directly device-to-device, so nothing sits in third-party storage."}}
     ]
   }
   </script>
@@ -82,7 +82,7 @@
         <a href="./">Guides</a>
         <a class="nav-github" href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noopener">GitHub</a>
       </nav>
-      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme">
         <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor" /><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="2.5" x2="12" y2="5" /><line x1="12" y1="19" x2="12" y2="21.5" /><line x1="2.5" y1="12" x2="5" y2="12" /><line x1="19" y1="12" x2="21.5" y2="12" /><line x1="5.1" y1="5.1" x2="6.9" y2="6.9" /><line x1="17.1" y1="17.1" x2="18.9" y2="18.9" /><line x1="5.1" y1="18.9" x2="6.9" y2="17.1" /><line x1="17.1" y1="6.9" x2="18.9" y2="5.1" /></g></svg>
         <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="currentColor" /></svg>
       </button>
@@ -114,7 +114,7 @@
 
 <p>The tricky part of P2P transfer is this: if both devices are behind home routers (which they usually are), how does one device even reach the other? This is the NAT traversal problem.</p>
 
-<p><strong>NAT (Network Address Translation)</strong> is what your router does to let multiple devices share one internet connection. It works great for outgoing connections — your browser can reach any website. But incoming connections are blocked by default, so a device behind NAT can't directly receive a connection from a stranger on the internet.</p>
+<p><strong>NAT (Network Address Translation)</strong> is what your router does to let multiple devices share one internet connection. It works great for outgoing connections: your browser can reach any website. But incoming connections are blocked by default, so a device behind NAT can't directly receive a connection from a stranger on the internet.</p>
 
 <p>P2P applications solve this with <strong>hole punching:</strong></p>
 
@@ -123,29 +123,29 @@
 <li>Each device tells the server its public IP address and port.</li>
 <li>The server shares these details with both peers.</li>
 <li>Both devices simultaneously send a packet to each other's public address. This "punches a hole" in each NAT, allowing incoming traffic.</li>
-<li>Once the hole is open, the devices communicate directly — the rendezvous server steps out of the way.</li>
+<li>Once the hole is open, the devices communicate directly, and the rendezvous server steps out of the way.</li>
 </ol>
 
 <p>For most home routers, hole punching succeeds and you get a direct connection. For stricter network setups, P2P apps fall back to a <strong>relay:</strong> a server sits between the peers and forwards traffic. Relaying is slower and uses more bandwidth, but it ensures the transfer completes even in tough conditions.</p>
 
-<p>Either way — direct connection or relay — the important point is that <strong>the relay never sees your files in plaintext.</strong> It only sees encrypted data flowing through.</p>
+<p>Either way, direct connection or relay, the important point is that <strong>the relay never sees your files in plaintext.</strong> It only sees encrypted data flowing through.</p>
 
 <h2>Encryption in P2P transfer</h2>
 
-<p>When P2P apps say they use <strong>end-to-end encryption,</strong> they mean files are encrypted on the sender's device before leaving, and only the recipient can decrypt them. The key is shared only between sender and recipient — not held by the service provider.</p>
+<p>When P2P apps say they use <strong>end-to-end encryption,</strong> they mean files are encrypted on the sender's device before leaving, and only the recipient can decrypt them. The key is shared only between sender and recipient, not held by the service provider.</p>
 
 <p>Most modern P2P transfer tools use encryption standards like QUIC/TLS 1.3 (the same protocol that protects your HTTPS traffic). The key exchange happens securely using cryptographic handshakes that resist eavesdropping.</p>
 
 <p>This means:</p>
 <ul>
-<li>If a rendezvous server is compromised, an attacker gains nothing — they see only encrypted bytes.</li>
+<li>If a rendezvous server is compromised, an attacker gains nothing, because they see only encrypted bytes.</li>
 <li>If someone intercepts your internet traffic, they see only encrypted data.</li>
 <li>If a relay server is used and breached, your files are safe because they're encrypted.</li>
 </ul>
 
 <h2>Is P2P file transfer actually safe?</h2>
 
-<p><strong>Yes — P2P file transfer with proper encryption is generally safer than uploading to a cloud service,</strong> because your files never sit unencrypted on a third-party server. But there are real caveats to understand.</p>
+<p><strong>Yes. P2P file transfer with proper encryption is generally safer than uploading to a cloud service,</strong> because your files never sit unencrypted on a third-party server. But there are real caveats to understand.</p>
 
 <h3>What makes it safe</h3>
 
@@ -161,7 +161,7 @@
 <ul>
 <li><strong>Share the connection code only with the intended recipient.</strong> P2P transfer uses a code or key to initiate the connection. If you share it on an unencrypted channel where someone else can read it, they could potentially intercept the transfer. Send the code through a trusted channel.</li>
 <li><strong>Verify you're sending to the right person.</strong> For very sensitive files, confirm out-of-band (a phone call, a video chat) that you're really connected to the intended recipient.</li>
-<li><strong>Your recipient's device security matters.</strong> Once the file lands on their computer, P2P has done its job — but if their machine is compromised, the file is at risk there.</li>
+<li><strong>Your recipient's device security matters.</strong> Once the file lands on their computer, P2P has done its job, but if their machine is compromised, the file is at risk there.</li>
 <li><strong>Encryption strength varies by tool.</strong> Not all P2P apps implement encryption equally. Prefer tools that use modern standards like QUIC/TLS 1.3 and, ideally, open-source projects where the security is transparent.</li>
 <li><strong>Relays see metadata, not content.</strong> If a relay is used, its operator can see that encrypted traffic is flowing but cannot decrypt it. Prefer a tool whose relay is run by a reputable party or the maintainers themselves.</li>
 </ul>
@@ -171,10 +171,10 @@
 <p>Several tools offer genuine peer-to-peer file transfer:</p>
 
 <ul>
-<li><strong><a href="../">Dropwire</a></strong> — free, open-source P2P file transfer for Windows, macOS, and Linux. Sends files directly between devices with QUIC/TLS 1.3 encryption, no accounts, resumable transfers, preview-before-accept, and works across the internet.</li>
-<li><strong><a href="https://localsend.org/">LocalSend</a></strong> — open-source, primarily LAN-based P2P transfer for all major platforms. No file-size limits.</li>
-<li><strong><a href="https://send-anywhere.com/">Send Anywhere</a></strong> — uses 6-digit codes to pair devices and supports cross-network transfers up to about 10 GB free (more on paid plans). Available on all major platforms. Not open source.</li>
-<li><strong><a href="https://pairdrop.net/">PairDrop</a></strong> — open-source, browser-based successor to Snapdrop, inspired by AirDrop; no installation. Limited to devices on the same local network, so not ideal for remote transfer.</li>
+<li><strong><a href="../">Dropwire</a></strong>: free, open-source P2P file transfer for Windows, macOS, and Linux. Sends files directly between devices with QUIC/TLS 1.3 encryption, no accounts, resumable transfers, preview-before-accept, and works across the internet.</li>
+<li><strong><a href="https://localsend.org/">LocalSend</a></strong>: open-source, primarily LAN-based P2P transfer for all major platforms. No file-size limits.</li>
+<li><strong><a href="https://send-anywhere.com/">Send Anywhere</a></strong>: uses 6-digit codes to pair devices and supports cross-network transfers up to about 10 GB free (more on paid plans). Available on all major platforms. Not open source.</li>
+<li><strong><a href="https://pairdrop.net/">PairDrop</a></strong>: open-source, browser-based successor to Snapdrop, inspired by AirDrop; no installation. Limited to devices on the same local network, so not ideal for remote transfer.</li>
 </ul>
 
 <p>For comparison, cloud-based services like WeTransfer cap free transfers (a few GB, with monthly limits) and expire links after a few days. They provide convenience and multi-recipient sharing but require trusting their servers with your data in transit and at rest.</p>
@@ -193,19 +193,19 @@
 
 <h2>The bottom line</h2>
 
-<p>Peer-to-peer file transfer is a fundamentally safer way to move files between devices because it removes the central server — the single point of failure, breach, or snooping. When implemented with modern encryption, P2P tools make it nearly impossible for anyone between you and the recipient to read your files.</p>
+<p>Peer-to-peer file transfer is a fundamentally safer way to move files between devices because it removes the central server, which is a single point of failure, breach, or snooping. When implemented with modern encryption, P2P tools make it nearly impossible for anyone between you and the recipient to read your files.</p>
 
-<p>The catch is discipline: use a secure P2P tool, share connection codes only through private channels, verify the recipient for sensitive transfers, and remember that encryption protects data in flight — once the file lands, it's up to the recipient's device security.</p>
+<p>The catch is discipline: use a secure P2P tool, share connection codes only through private channels, verify the recipient for sensitive transfers, and remember that encryption protects data in flight. Once the file lands, it's up to the recipient's device security.</p>
 
-<p>If you're looking to send files privately and directly, <a href="../">try Dropwire</a>. It's free, open-source, and built for secure peer-to-peer transfer — no accounts, no servers holding your data, just you and the recipient.</p>
+<p>If you're looking to send files privately and directly, <a href="../">try Dropwire</a>. It's free, open-source, and built for secure peer-to-peer transfer, with no accounts and no servers holding your data. Just you and the recipient.</p>
 
       <section class="article-faq">
         <h2>FAQ</h2>
         <div class="faq-list">
           <details class="faq-item"><summary><span>What is peer-to-peer file transfer?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Peer-to-peer (P2P) file transfer sends files directly between two devices without uploading to a central server. The devices establish an encrypted connection, exchange files, and the data never sits on a third party's infrastructure.</p></div></details>
-          <details class="faq-item"><summary><span>Is P2P file transfer safe?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Yes, when properly implemented with end-to-end encryption. P2P transfer is generally safer than cloud upload because files never rest unencrypted on a third-party server. However, you should only share connection codes via private channels and verify the recipient for sensitive files.</p></div></details>
+          <details class="faq-item"><summary><span>Is P2P file transfer safe?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Yes, when properly implemented with end-to-end encryption. P2P transfer is generally safer than cloud upload because files never rest unencrypted on a third-party server. However, you should only share connection codes via private channels and verify the recipient out-of-band for sensitive files.</p></div></details>
           <details class="faq-item"><summary><span>How do P2P apps connect devices behind routers?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>P2P apps use NAT hole punching: both devices connect to a public rendezvous server, exchange their public addresses, then simultaneously send packets to punch holes in their home routers' firewalls. Once the hole is open, devices communicate directly. If that fails, a relay server forwards encrypted traffic instead.</p></div></details>
-          <details class="faq-item"><summary><span>What's the difference between P2P and cloud file transfer?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Cloud services like WeTransfer store files on their servers temporarily; you upload, they store, the recipient downloads, then (ideally) they delete. P2P skips the server entirely — files go directly device-to-device, so nothing sits in third-party storage.</p></div></details>
+          <details class="faq-item"><summary><span>What's the difference between P2P and cloud file transfer?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Cloud services like WeTransfer store files on their servers temporarily; you upload, they store, the recipient downloads, then (ideally) they delete. P2P skips the server entirely: files go directly device-to-device, so nothing sits in third-party storage.</p></div></details>
         </div>
       </section>
 
@@ -220,7 +220,7 @@
   <footer class="site-footer">
     <div class="container footer-bottom">
       <p class="made-with">Made with <a href="https://www.iroh.computer/" rel="noopener">iroh</a> &middot; Built by <a href="https://www.linkedin.com/in/akoum/" rel="noopener">Muhamad J. Akoum</a>.</p>
-      <p class="privacy-note"><a href="../">Dropwire</a> &mdash; private, direct file transfer. Free &amp; open source.</p>
+      <p class="privacy-note"><a href="../">Dropwire</a>: private, direct file transfer. Free &amp; open source.</p>
     </div>
   </footer>
 

@@ -1,5 +1,5 @@
 /* =========================================================================
-   Dropwire — small, dependency-free interactions.
+   Dropwire: small, dependency-free interactions.
    Only job: a light/dark theme toggle that respects the OS preference by
    default and remembers an explicit user choice. No trackers, no analytics.
    ========================================================================= */
@@ -22,10 +22,11 @@
     return mql && mql.matches ? "dark" : "light";
   }
 
-  // Keep the button's a11y state + label in sync with what's on screen.
+  // Keep the button's label in sync with what's on screen. The label names the
+  // action ("Switch to light theme"), so the button carries no pressed state:
+  // announcing both would contradict itself.
   function syncToggle() {
     var isDark = effectiveTheme() === "dark";
-    toggle.setAttribute("aria-pressed", String(isDark));
     toggle.setAttribute(
       "aria-label",
       isDark ? "Switch to light theme" : "Switch to dark theme"
@@ -41,7 +42,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, next);
     } catch (e) {
-      /* storage may be unavailable (private mode) — toggle still works for the session */
+      /* storage may be unavailable (private mode); the toggle still works for the session */
     }
     syncToggle();
   });
@@ -65,7 +66,7 @@
 })();
 
 /* =========================================================================
-   Lightbox — tap a screenshot to view it full-size. Native <dialog> gives us
+   Lightbox: tap a screenshot to view it full-size. Native <dialog> gives us
    the focus trap, Esc-to-close, and backdrop for free. Progressive: if the
    browser lacks <dialog>.showModal, the screenshots simply stay inline.
    ========================================================================= */
@@ -110,7 +111,7 @@
   lb.addEventListener("click", function (e) {
     if (e.target === lb || e.target === lbImg) lb.close();
   });
-  // Fires on Esc (native) and on close() — restore scroll + free the image.
+  // Fires on Esc (native) and on close(): restore scroll + free the image.
   lb.addEventListener("close", function () {
     document.documentElement.style.overflow = "";
     lbImg.removeAttribute("src");
@@ -118,7 +119,7 @@
 })();
 
 /* =========================================================================
-   Demo video — click-to-load. Nothing from YouTube loads until the visitor
+   Demo video, click-to-load. Nothing from YouTube loads until the visitor
    presses play, so the page stays tracker-free on load. Swaps in the
    privacy-friendly youtube-nocookie player only on click.
    ========================================================================= */
