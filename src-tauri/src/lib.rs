@@ -55,20 +55,20 @@ fn get_settings(state: State<'_, AppState>) -> settings::Settings {
 }
 
 /// Rename this device. Applies to the live mDNS advertisement immediately.
+/// The engine checks and tidies the name (an empty one, or one over 40
+/// characters, is refused with a message to show as it is), and the tidied
+/// name is the one saved.
 #[tauri::command]
 async fn set_device_name(
     name: String,
     state: State<'_, AppState>,
 ) -> Result<settings::Settings, String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("a device name cannot be empty".into());
-    }
     state
         .core
-        .set_device_name(name.clone())
+        .set_device_name(name)
         .await
         .map_err(|e| e.to_string())?;
+    let name = state.core.device_name().await;
     Ok(state.settings.update(|s| s.device_name = Some(name)))
 }
 
@@ -220,17 +220,22 @@ async fn nearby_list(state: State<'_, AppState>) -> Result<Vec<NearbyDevice>, St
     Ok(state.core.nearby_devices().await)
 }
 
-/// Offer the active send to a nearby device. Streams `OfferUpdate`s back over
-/// the channel; the final update is Accepted / Declined / Failed{reason}.
+/// Offer the send `transfer_id` (the card's id) to a nearby device. Streams
+/// `OfferUpdate`s back over the channel; the final update is Accepted /
+/// Declined / Failed{reason} / Withdrawn. Returns the offer's id.
 #[tauri::command]
 async fn nearby_offer(
     endpoint_id: String,
+    transfer_id: String,
     on_update: Channel<irohcore::OfferUpdate>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let (_id, mut stream) = state
+    let id = transfer_id
+        .parse::<TransferId>()
+        .map_err(|e| e.to_string())?;
+    let (offer_id, mut stream) = state
         .core
-        .offer_nearby(endpoint_id)
+        .offer_nearby(endpoint_id, id)
         .await
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn(async move {
@@ -238,8 +243,16 @@ async fn nearby_offer(
             let _ = on_update.send(u);
         }
     });
-    // The engine's offer id is internal; the UI keys off its own card id.
-    Ok(String::new())
+    // The offer's id, for nearby_cancel_offer.
+    Ok(offer_id)
+}
+
+/// Take back an offer this device sent (the id nearby_offer returned) before
+/// it is answered. Its channel then ends with `withdrawn`; the send goes on.
+#[tauri::command]
+async fn nearby_cancel_offer(offer_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.core.cancel_offer(&offer_id);
+    Ok(())
 }
 
 /// Answer an incoming offer (both-sides consent: this is the receiver half).
@@ -256,27 +269,40 @@ async fn nearby_respond(
         .map_err(|e| e.to_string())
 }
 
-/// Forward every incoming offer to the webview as `nearby-offer` events.
+/// Forward every incoming offer to the webview as `nearby-offer` events, and
+/// every offer that ended before it was answered here (the sender took it
+/// back, or it expired) as `nearby-offer-withdrawn`, so its dialog can close.
 /// One long-lived pump per app run (guarded so repeated nearby_start is cheap).
 fn spawn_offer_pump(app: &AppHandle, state: &State<'_, AppState>) {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if STARTED.set(()).is_err() {
         return;
     }
-    let mut rx = state.core.subscribe_offers();
-    let handle = app.clone();
+    emit_all(app.clone(), state.core.subscribe_offers(), "nearby-offer");
+    emit_all(
+        app.clone(),
+        state.core.subscribe_offer_withdrawals(),
+        "nearby-offer-withdrawn",
+    );
+}
+
+/// Emit everything `rx` carries to the webview as `event`, for the app run.
+fn emit_all<T>(handle: AppHandle, mut rx: tokio::sync::broadcast::Receiver<T>, event: &'static str)
+where
+    T: serde::Serialize + Clone + Send + 'static,
+{
     tauri::async_runtime::spawn(async move {
         use tokio::sync::broadcast::error::RecvError;
         loop {
             match rx.recv().await {
-                Ok(offer) => {
-                    let _ = handle.emit("nearby-offer", offer);
+                Ok(item) => {
+                    let _ = handle.emit(event, item);
                 }
-                // Lagged is RECOVERABLE: under a burst of offers we fell behind
-                // and lost `n` of them, but the receiver keeps working. This
-                // pump is a process-wide singleton, so treating Lagged as
-                // terminal (the old `while let Ok` did) would silently kill
-                // incoming-offer delivery for the whole app run. Keep looping.
+                // Lagged is RECOVERABLE: under a burst we fell behind and lost
+                // `n` items, but the receiver keeps working. This pump is a
+                // process-wide singleton, so treating Lagged as terminal (the
+                // old `while let Ok` did) would silently kill delivery for the
+                // whole app run. Keep looping.
                 Err(RecvError::Lagged(_)) => continue,
                 // The sender was dropped (engine gone) — nothing left to pump.
                 Err(RecvError::Closed) => break,
@@ -351,16 +377,17 @@ fn qr_svg(text: String) -> Result<String, String> {
         .build())
 }
 
-/// Start sending a file or folder. Streams `Progress` over the channel; returns the transfer id.
+/// Start sending one or more files and folders under one code. Streams
+/// `Progress` over the channel; returns the transfer id.
 #[tauri::command]
 async fn start_send(
-    path: String,
+    paths: Vec<String>,
     on_event: Channel<Progress>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let (id, mut stream) = state
         .core
-        .send(PathBuf::from(path))
+        .send_many(paths.into_iter().map(PathBuf::from).collect())
         .await
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn(async move {
@@ -443,6 +470,7 @@ async fn start_receive_selected(
 }
 
 /// Send a one-shot control message to the sender (e.g. an instant decline).
+/// A decline names the code, so the sender can release it for someone else.
 #[tauri::command]
 async fn send_control(
     ticket: String,
@@ -450,7 +478,7 @@ async fn send_control(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let msg = match kind.as_str() {
-        "decline" => CtrlMsg::Decline,
+        "decline" => return state.core.decline(ticket).await.map_err(|e| e.to_string()),
         "ack" => CtrlMsg::Ack,
         "hello" => CtrlMsg::Hello,
         other => return Err(format!("unknown control kind: {other}")),
@@ -652,7 +680,26 @@ pub fn run() {
             // A name chosen during setup outlives the hostname it was derived from.
             if let Some(name) = prefs.device_name.clone() {
                 let c = core.clone();
-                tauri::async_runtime::block_on(async move { c.set_device_name(name).await }).ok();
+                let used = tauri::async_runtime::block_on(async move {
+                    c.set_device_name(name).await?;
+                    Ok::<_, irohcore::CoreError>(c.device_name().await)
+                });
+                match used {
+                    // Saved as the engine tidied it, so both show the same.
+                    Ok(used) if prefs.device_name.as_deref() != Some(used.as_str()) => {
+                        store.update(|s| s.device_name = Some(used));
+                    }
+                    Ok(_) => {}
+                    // A name an older version saved that this one refuses
+                    // (too long, say): fall back to the hostname name rather
+                    // than keep showing one that nobody nearby sees.
+                    Err(e) => {
+                        eprintln!(
+                            "[dropwire] saved device name not usable ({e}); using the default"
+                        );
+                        store.update(|s| s.device_name = None);
+                    }
+                }
             }
             app.manage(AppState {
                 core,
@@ -711,6 +758,7 @@ pub fn run() {
             nearby_stop,
             nearby_list,
             nearby_offer,
+            nearby_cancel_offer,
             nearby_respond,
             list_transfers,
             clear_transfers,

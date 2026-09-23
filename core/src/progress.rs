@@ -96,8 +96,15 @@ pub enum Progress {
         total: u64,
     },
     /// Sender: content imported, ticket minted, now serving.
-    Ready { id: TransferId, ticket: String },
-    /// Sender: a receiver connected.
+    Ready {
+        id: TransferId,
+        ticket: String,
+        /// Links in a chosen folder that were left out because they point
+        /// outside it (or to a folder, or to nothing). Usually 0.
+        #[serde(default)]
+        skipped: usize,
+    },
+    /// Sender: a receiver started downloading file content.
     PeerJoined { id: TransferId },
     /// Receiver (and, later, sender): bytes are moving.
     Transferring {
@@ -106,7 +113,8 @@ pub enum Progress {
         total: u64,
         route: Route,
     },
-    /// Transfer completed successfully.
+    /// Transfer completed successfully. On a send: a receiver finished
+    /// downloading the file content it asked for (a preview never counts).
     Done {
         id: TransferId,
         stats: TransferStats,
@@ -115,6 +123,19 @@ pub enum Progress {
     Error { id: TransferId, message: String },
     /// Transfer was cancelled by the user.
     Cancelled { id: TransferId },
+    /// Sender: the receiver went away (it cancelled, or its connection
+    /// dropped) with nothing else in flight. The send stays live and the code
+    /// still works for that same device, so it can come back and resume; a
+    /// later `peerJoined` means it has.
+    PeerLeft { id: TransferId },
+    /// Sender: the device this code was bound to looked at the preview and
+    /// declined. Its binding is released and the send keeps serving, so the
+    /// code now works for the next device that uses it.
+    Declined { id: TransferId },
+    /// Sender: the receiver is looking at the file list (a preview, or the
+    /// size check before its download). No file content has been asked for
+    /// yet; `peerJoined` follows if it starts downloading.
+    Previewing { id: TransferId },
 }
 
 impl Progress {
@@ -127,7 +148,10 @@ impl Progress {
             | Progress::Transferring { id, .. }
             | Progress::Done { id, .. }
             | Progress::Error { id, .. }
-            | Progress::Cancelled { id, .. } => *id,
+            | Progress::Cancelled { id, .. }
+            | Progress::PeerLeft { id, .. }
+            | Progress::Declined { id, .. }
+            | Progress::Previewing { id, .. } => *id,
         }
     }
 }

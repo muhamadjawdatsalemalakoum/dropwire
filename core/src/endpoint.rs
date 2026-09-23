@@ -23,17 +23,21 @@ pub async fn build(secret_key: SecretKey, infra: &Infra) -> Result<Endpoint> {
         Infra::Decentralized => {
             use iroh::endpoint::RelayMode;
             use iroh_mainline_address_lookup::DhtAddressLookup;
-            // Publishes + resolves our address via the public BitTorrent DHT. Must be
-            // built inside a Tokio runtime (this fn is async). By default it publishes
-            // only relay addresses; the endpoint must stay online to republish.
-            let dht = DhtAddressLookup::builder()
-                .build()
-                .context("build DHT address lookup")?;
+            // Publishes + resolves our address via the public BitTorrent DHT. By
+            // default it publishes only relay addresses (no IPs); the endpoint
+            // must stay online to republish.
+            //
+            // Pass the BUILDER, not a built lookup. The builder's
+            // `AddressLookupBuilder` impl signs with this endpoint's secret key
+            // during `bind()` (inside the Tokio runtime). A lookup built up front
+            // has no key, and a keyless lookup only resolves: it never publishes
+            // our address, so a code whose embedded address went stale could not
+            // be found again.
             Endpoint::builder(presets::Minimal)
                 .secret_key(secret_key)
                 .alpns(alpns)
                 .relay_mode(RelayMode::Default) // n0's free public relays (fallback only)
-                .address_lookup(dht) // find peers via the public DHT (no server we run)
+                .address_lookup(DhtAddressLookup::builder()) // find peers via the public DHT (no server we run)
                 .bind()
                 .await
                 .context("bind endpoint (decentralized: DHT + n0 relay)")?

@@ -27,6 +27,11 @@ async fn send_record_keeps_the_source_path() {
         Some(src.to_string_lossy().as_ref()),
         "send must remember its source path so it can be re-shared"
     );
+    assert_eq!(
+        rec.sources,
+        vec![src.to_string_lossy().to_string()],
+        "the list of everything chosen holds the one path"
+    );
     assert!(rec.dest.is_none(), "a send has no destination");
     assert!(!rec.ticket.is_empty());
 }

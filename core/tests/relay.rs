@@ -16,7 +16,10 @@
 //! touches the shipped build.
 
 mod common;
-use common::{dir_size, make_payload, wait_done, wait_ready};
+use common::{
+    dir_size, done_bytes, drain_until_terminal, make_payload, send_events_through_done, wait_done,
+    wait_ready,
+};
 
 use irohcore::{Core, CoreConfig, Infra, Progress, Route};
 use tokio_stream::StreamExt;
@@ -105,14 +108,15 @@ async fn resume_after_interruption_over_relay() {
 
     let out = work.path().join("out");
 
-    // First attempt: cancel the moment bytes are moving (mid-flight).
+    // First attempt: cancel once part of the file itself has arrived (past the
+    // collection's own list, which comes first), mid-flight.
     let (rid, mut rs) = receiver.receive(ticket.clone(), out.clone()).await.unwrap();
     let interrupted = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         while let Some(ev) = rs.next().await {
             match ev {
                 Progress::Transferring {
                     offset, total: t, ..
-                } if offset < t => {
+                } if offset > 1024 * 1024 && offset < t => {
                     receiver.cancel(rid).await;
                     return true; // interrupted before completion
                 }
@@ -129,14 +133,11 @@ async fn resume_after_interruption_over_relay() {
         "payload must be large enough to interrupt before it completes"
     );
     // Drain the cancellation tail so the first receive fully unwinds.
-    while let Some(ev) = rs.next().await {
-        if matches!(
-            ev,
-            Progress::Cancelled { .. } | Progress::Error { .. } | Progress::Done { .. }
-        ) {
-            break;
-        }
-    }
+    let ended = drain_until_terminal(&mut rs).await;
+    assert!(
+        matches!(ended, Some(Progress::Cancelled { .. })),
+        "the first attempt must end cancelled, got {ended:?}"
+    );
 
     // The store must hold partial — but not complete — data to resume from.
     let partial = dir_size(&recv_data.path().join("blobs"));
@@ -152,6 +153,17 @@ async fn resume_after_interruption_over_relay() {
         std::fs::read(out.join("big.bin")).unwrap(),
         payload,
         "the resumed transfer must reconstruct the file byte-perfectly"
+    );
+
+    // And it really resumed: the sender's only delivery is the second attempt,
+    // which sent just the missing part. Starting over would send it all.
+    let seen = send_events_through_done(&mut ss).await;
+    let dones = done_bytes(&seen);
+    assert_eq!(dones.len(), 1, "one delivery: {seen:?}");
+    assert!(
+        dones[0] > 0 && dones[0] < total,
+        "the resumed download must fetch only the missing part (sent {} of {total})",
+        dones[0]
     );
 
     sender.shutdown().await.unwrap();

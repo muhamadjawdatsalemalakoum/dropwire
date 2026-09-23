@@ -12,7 +12,9 @@
 //! presence/chat and (b) the consent verdict carrier for offers — the sender
 //! reads its answer off its own outgoing connection, so no dial-back is needed.
 
-use iroh::endpoint::Connection;
+use std::time::Duration;
+
+use iroh::endpoint::{Connection, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_blobs::ticket::BlobTicket;
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,14 @@ pub(crate) const CTRL_ALPN: &[u8] = b"dropwire/ctrl/1";
 
 /// Control frames are tiny JSON messages; cap the read to a sane size.
 const MAX_FRAME: usize = 64 * 1024;
+
+/// How long a peer has to open its stream and send its one frame. One that
+/// stalls is dropped rather than holding a connection and a task.
+const STREAM_WAIT: Duration = Duration::from_secs(10);
+
+/// How long the reply gets to flush before the connection is let go, so a
+/// peer that never reads it (or never closes) cannot hold it open.
+const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
 /// A control-plane message exchanged out-of-band from the file transfer.
 /// (Public vocabulary; consent frames live in [`crate::offer::Frame`].)
@@ -51,11 +61,20 @@ pub(crate) struct Ctrl {
 
 impl ProtocolHandler for Ctrl {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
-        let (mut send, mut recv) = connection.accept_bi().await?;
-        let bytes = recv
-            .read_to_end(MAX_FRAME)
-            .await
-            .map_err(AcceptError::from_err)?;
+        let opened = tokio::time::timeout(STREAM_WAIT, async {
+            let (send, mut recv) = connection.accept_bi().await?;
+            let bytes = recv
+                .read_to_end(MAX_FRAME)
+                .await
+                .map_err(AcceptError::from_err)?;
+            Ok::<_, AcceptError>((send, bytes))
+        })
+        .await;
+        // Too slow: dropping the connection closes it.
+        let Ok(opened) = opened else {
+            return Ok(());
+        };
+        let (mut send, bytes) = opened?;
 
         // The dialer authenticated itself via the QUIC/TLS handshake — this is
         // the *proven* identity of the other endpoint, not a self-claimed field.
@@ -80,57 +99,80 @@ impl ProtocolHandler for Ctrl {
                 // Register the answer channel BEFORE surfacing the offer, so a
                 // fast accept can never race the wait below.
                 let (verdict_tx, mut verdict_rx) = mpsc::unbounded_channel();
-                self.core_ctx.add_verdict_waiter(&offer_id, verdict_tx);
-                offer::route_offer(&self.core_ctx, remote, via, &bytes);
-                // Park this connection until the local user answers (or the
-                // wait times out — an unanswered offer declines itself).
-                let verdict =
-                    match tokio::time::timeout(offer::ANSWER_WAIT, verdict_rx.recv()).await {
-                        Ok(Some(frame)) => Some(frame),
-                        _ => None, // timeout, waiter dropped, or channel gone
+                // An offer id that is already waiting (sent twice, or not
+                // theirs to use) is refused, leaving the first one alone.
+                if !self.core_ctx.add_verdict_waiter(&offer_id, verdict_tx) {
+                    let decline = offer::Frame::OfferDecline {
+                        offer_id,
+                        unseen: true,
                     };
-                // Unanswered (timeout / user ignored the dialog): forget the
-                // offer so neither map leaks and a stale Accept is reported as
-                // expired rather than silently starting a doomed download.
-                if verdict.is_none() {
-                    self.core_ctx.expire_offer(&offer_id);
+                    reply(&connection, &mut send, serde_json::to_vec(&decline).ok()).await;
+                    return Ok(());
                 }
+                offer::route_offer(&self.core_ctx, remote, via, &bytes);
+                // Park this connection until the local user answers, the
+                // sender goes away, or the wait times out (an unanswered offer
+                // declines itself).
+                let verdict = tokio::select! {
+                    verdict = verdict_rx.recv() => verdict,
+                    // The sender took the offer back, cancelled its send, or
+                    // left. Retire the offer now so its dialog closes and a
+                    // late Accept is reported as ended, not sent nowhere.
+                    _ = connection.closed() => {
+                        self.core_ctx
+                            .retire_offer(&offer_id, offer::WithdrawReason::Cancelled);
+                        return Ok(());
+                    }
+                    _ = tokio::time::sleep(offer::ANSWER_WAIT) => {
+                        // Unanswered: forget the offer so neither map leaks
+                        // and a stale Accept is reported as ended rather than
+                        // silently starting a doomed download.
+                        self.core_ctx
+                            .retire_offer(&offer_id, offer::WithdrawReason::Expired);
+                        None
+                    }
+                };
+                // No answer in time: it was on screen, so it counts as a no.
                 let answer = verdict.unwrap_or(offer::Frame::OfferDecline {
                     offer_id: offer_id.clone(),
+                    unseen: false,
                 });
-                if let Ok(echo) = serde_json::to_vec(&answer) {
-                    let _ = send.write_all(&echo).await;
-                }
-                let _ = send.finish();
-                let _ = connection.closed().await;
+                reply(&connection, &mut send, serde_json::to_vec(&answer).ok()).await;
             }
             Ok(other_frame) => {
-                offer::route_other(&self.core_ctx, other_frame.clone());
-                if let Ok(echo) = serde_json::to_vec(&other_frame) {
-                    let _ = send.write_all(&echo).await;
-                }
-                let _ = send.finish();
-                // Brief hold so the echo flushes before the QUIC close.
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed())
-                        .await;
+                offer::route_other(&self.core_ctx, remote, other_frame.clone());
+                reply(
+                    &connection,
+                    &mut send,
+                    serde_json::to_vec(&other_frame).ok(),
+                )
+                .await;
             }
             Err(_) => {
                 // Legacy/plain presence frames (older peers, direct tests).
-                if let Ok(msg) = serde_json::from_slice::<CtrlMsg>(&bytes) {
-                    if let Ok(echo) = serde_json::to_vec(&msg) {
-                        let _ = send.write_all(&echo).await;
-                    }
+                let msg = serde_json::from_slice::<CtrlMsg>(&bytes).ok();
+                let echo = msg.as_ref().and_then(|m| serde_json::to_vec(m).ok());
+                if let Some(msg) = msg {
                     let _ = self.core_ctx.ctrl_tx.send(msg);
                 }
-                let _ = send.finish();
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_secs(5), connection.closed())
-                        .await;
+                reply(&connection, &mut send, echo).await;
             }
         }
         Ok(())
     }
+}
+
+/// Send `echo` (if any) back on the frame's stream, then hold briefly so it
+/// flushes before the QUIC close. Bounded by [`CLOSE_GRACE`] as a whole.
+async fn reply(connection: &Connection, send: &mut SendStream, echo: Option<Vec<u8>>) {
+    let _ = tokio::time::timeout(CLOSE_GRACE, async {
+        if let Some(echo) = echo {
+            let _ = send.write_all(&echo).await;
+        }
+        let _ = send.finish();
+        connection.closed().await
+    })
+    .await;
 }
 
 impl Core {
@@ -141,22 +183,40 @@ impl Core {
 
     /// Send a one-shot control message to the peer that issued `ticket` (the
     /// sender). Dials the control ALPN on the same endpoint and waits for the ack.
+    /// A [`CtrlMsg::Decline`] goes out as [`Core::decline`] sends it.
     pub async fn send_control(&self, ticket: String, msg: CtrlMsg) -> Result<()> {
+        if msg == CtrlMsg::Decline {
+            return self.decline(ticket).await;
+        }
         let parsed: BlobTicket = ticket
             .parse()
             .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
-        self.dial_ctrl(parsed.addr().clone(), msg).await
+        self.dial_ctrl(parsed.addr().clone(), &offer::Frame::from(&msg))
+            .await
+    }
+
+    /// Decline the code in `ticket` after previewing it. The sender is told
+    /// right away, and if this device is the one the code is bound to, the
+    /// binding is released so the sender's code can go to someone else.
+    pub async fn decline(&self, ticket: String) -> Result<()> {
+        let parsed: BlobTicket = ticket
+            .parse()
+            .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
+        let frame = offer::Frame::Decline {
+            hash: Some(parsed.hash().to_string()),
+        };
+        self.dial_ctrl(parsed.addr().clone(), &frame).await
     }
 
     /// TEST-ONLY: send a control message to an explicit address (hermetic
     /// tests wire two loopback endpoints directly).
     #[cfg(feature = "test-utils")]
     pub async fn send_control_to(&self, addr: iroh::EndpointAddr, msg: CtrlMsg) -> Result<()> {
-        self.dial_ctrl(addr, msg).await
+        self.dial_ctrl(addr, &offer::Frame::from(&msg)).await
     }
 
-    /// Dial the control ALPN, deliver `msg`, wait for the echo-ack.
-    async fn dial_ctrl(&self, addr: iroh::EndpointAddr, msg: CtrlMsg) -> Result<()> {
+    /// Dial the control ALPN, deliver `frame`, wait for the echo-ack.
+    async fn dial_ctrl(&self, addr: iroh::EndpointAddr, frame: &offer::Frame) -> Result<()> {
         let endpoint = self.inner.router.endpoint();
         let conn = endpoint
             .connect(addr, CTRL_ALPN)
@@ -166,7 +226,7 @@ impl Core {
             .open_bi()
             .await
             .map_err(|e| CoreError::Other(anyhow::anyhow!("control stream: {e}")))?;
-        let bytes = serde_json::to_vec(&msg)
+        let bytes = serde_json::to_vec(frame)
             .map_err(|e| CoreError::Other(anyhow::anyhow!("encode: {e}")))?;
         send.write_all(&bytes)
             .await

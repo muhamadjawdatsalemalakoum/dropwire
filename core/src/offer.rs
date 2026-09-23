@@ -15,30 +15,65 @@
 //! handler echoes the frame back), so no dial-back address is ever needed. The
 //! ticket inside the offer commits to the manifest (names/sizes/hashes) via
 //! BLAKE3, so what the receiver confirms is exactly what arrives.
+//!
+//! Sender rules: the caller names the send; a send already going to another
+//! device is never offered; one offer per send at a time. An offer that is not
+//! taken (declined, withdrawn, unreachable) leaves the send and its code
+//! running and only releases the binding it made; a device that may hold the
+//! code from the offer is refused by the gate from then on. Ending the send,
+//! or [`Core::cancel_offer`], takes the offer back and closes its connection.
+//!
+//! Receiver rules: an offer is shown only while Nearby is on, from a device
+//! seen on the local network, whose code names that same device; one waiting
+//! offer per device, a few in all. One that ends unanswered (taken back,
+//! expired, replaced) is reported on [`Core::subscribe_offer_withdrawals`].
 
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use iroh::endpoint::{Connection, VarInt};
 use iroh::{Endpoint, EndpointAddr, EndpointId, TransportAddr};
 use iroh_blobs::ticket::BlobTicket;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::catalog::Status;
 use crate::control::CTRL_ALPN;
-use crate::discover::{parse_eid, NearbyDevice};
+use crate::discover::{parse_eid, NearbyDevice, PeerTable};
 use crate::error::{CoreError, Result};
-use crate::progress::Direction;
+use crate::progress::{Direction, TransferId};
 use crate::{Core, CtrlMsg};
 
 /// How long the sender waits for the receiver's answer before giving up.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
 /// Connect timeout for both sides of the consent handshake.
 const CONSENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Offers waiting for an answer here, at most, from all devices together.
+/// Each device has at most one (a newer one replaces it). More are declined
+/// unseen, so no one can stack up dialogs.
+const MAX_PENDING_OFFERS: usize = 4;
+/// Longest sender-written labels shown in the dialog, in characters.
+const MAX_DEVICE_NAME: usize = 64;
+const MAX_TITLE: usize = 200;
+
+/// Why an offer was refused before it went out. Shown to the sender as-is.
+const SEND_ENDED: &str = "This send has ended. Start a new one to offer it.";
+const SEND_TAKEN: &str =
+    "This send is already going to another device. Start a new send to offer it to someone else.";
+const OFFER_PENDING: &str =
+    "This send is already offered and waiting for an answer. Cancel that offer first.";
+
+/// Why an answer to an incoming offer went nowhere. Shown as-is.
+const OFFER_GONE: &str = "This offer is no longer open. They may have cancelled it, or it expired.";
+
+/// QUIC close code on an offer's connection when the sender takes it back.
+const WITHDRAWN_CODE: u32 = 1;
 
 /// Anything exchangeable over the control channel: the original presence
 /// frames plus the nearby-consent trio. One enum keeps parsing single-sourced.
@@ -48,7 +83,14 @@ pub(crate) enum Frame {
     // ---- presence / chat (public [`CtrlMsg`] vocabulary) ----
     Hello,
     Ack,
-    Decline,
+    /// Receiver to sender: no thanks, from the preview. `hash` names the code
+    /// being declined (hex content hash). Older peers send a bare
+    /// `{"kind":"decline"}`, which still parses (as `None`); older senders
+    /// ignore the extra field.
+    Decline {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hash: Option<String>,
+    },
     Chat {
         text: String,
     },
@@ -59,6 +101,8 @@ pub(crate) enum Frame {
     /// TLS-authenticated remote id, so a sender cannot claim someone else's
     /// pairing code. (`device_name`/`title`/counts remain sender-authored hints
     /// — the receiver's verified preview, not these fields, gates the download.)
+    /// The ticket must name the sender itself (the authenticated id); an offer
+    /// whose code points at any other device is declined unseen.
     Offer {
         offer_id: String,
         ticket: String,
@@ -67,26 +111,25 @@ pub(crate) enum Frame {
         file_count: usize,
         total_bytes: u64,
     },
-    /// Receiver → sender on the offer's own connection: yes.
+    /// Receiver → sender on the offer's own connection: yes. `device_name`
+    /// is the name the receiver gave itself, sent over this authenticated
+    /// connection so the sender can remember the device by it rather than
+    /// by a name anyone on the network could announce. Older peers send
+    /// none; older senders ignore it.
     OfferAccept {
         offer_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device_name: Option<String>,
     },
-    /// Receiver → sender on the offer's own connection: no.
+    /// Receiver → sender on the offer's own connection: no. `unseen` when the
+    /// receiving engine turned it down without showing it to anyone (Nearby
+    /// off, the sender not seen nearby, too many offers waiting): that device
+    /// never held the code. Older peers send no `unseen` (read as false).
     OfferDecline {
         offer_id: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        unseen: bool,
     },
-}
-
-impl Frame {
-    /// The offer id carried by consent frames (empty for presence frames).
-    pub(crate) fn offer_id_str(&self) -> String {
-        match self {
-            Frame::Offer { offer_id, .. }
-            | Frame::OfferAccept { offer_id }
-            | Frame::OfferDecline { offer_id } => offer_id.clone(),
-            _ => String::new(),
-        }
-    }
 }
 
 impl From<&CtrlMsg> for Frame {
@@ -94,7 +137,7 @@ impl From<&CtrlMsg> for Frame {
         match m {
             CtrlMsg::Hello => Frame::Hello,
             CtrlMsg::Ack => Frame::Ack,
-            CtrlMsg::Decline => Frame::Decline,
+            CtrlMsg::Decline => Frame::Decline { hash: None },
             CtrlMsg::Chat { text } => Frame::Chat { text: text.clone() },
         }
     }
@@ -139,12 +182,58 @@ pub enum EndpointReplyTransport {
 pub enum OfferUpdate {
     /// Delivered; the other side hasn't answered yet.
     Waiting,
-    /// They accepted — the transfer can proceed.
-    Accepted,
-    /// They declined.
-    Declined,
+    /// They accepted, and the transfer can proceed. `name` is the name their
+    /// device gives itself, sent over the connection that proved its id
+    /// (cleaned up and capped like other labels). Remember the device by it,
+    /// not by the name its local network announcement carries, which any
+    /// host there can fake. `None` from older versions.
+    Accepted {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// They declined. `unseen`: their device turned it down without showing
+    /// it (Nearby off there, this device not seen on their network, or too
+    /// many offers waiting), so no one there saw the offer or its code.
+    Declined {
+        #[serde(default)]
+        unseen: bool,
+    },
     /// Couldn't deliver / timed out / they went away.
     Failed { reason: String },
+    /// This device took the offer back ([`Core::cancel_offer`], or its send
+    /// ended) before they answered. Their dialog closes.
+    Withdrawn,
+}
+
+/// An offer that was showing (or waiting to show) on this device ended
+/// without an answer from the user here, so its dialog should close.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferWithdrawn {
+    /// The [`IncomingOffer::offer_id`] it was surfaced with.
+    pub offer_id: String,
+    pub reason: WithdrawReason,
+}
+
+/// Why an incoming offer ended without an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WithdrawReason {
+    /// The sender took it back, cancelled its send, or went away.
+    Cancelled,
+    /// Nobody answered in time.
+    Expired,
+    /// The same device sent a newer offer, which takes its place.
+    Replaced,
+}
+
+/// An offer this device sent that has no answer yet.
+pub(crate) struct OutgoingOffer {
+    /// The send it offers.
+    pub(crate) transfer: TransferId,
+    /// Fired to take the offer back: by [`Core::cancel_offer`], or when its
+    /// send ends (it is a child of the send's token).
+    pub(crate) token: CancellationToken,
 }
 
 /// The slice of engine state the control-ALPN handler needs to route frames.
@@ -159,19 +248,42 @@ pub(crate) struct ConsentCtx {
     /// is "invisible" while off must actually hold at the consent layer, not
     /// just for mDNS advertising.
     pub(crate) nearby_running: Arc<std::sync::atomic::AtomicBool>,
+    /// The live mDNS peer table: devices this one currently sees on the local
+    /// network. Only they can raise an offer dialog here.
+    pub(crate) nearby_peers: PeerTable,
     /// Verdict wait-list: offer_id → a oneshot the UI's answer is sent down.
     /// The control handler parks the sender's offer connection here until the
     /// local user responds, then the verdict travels back in-band.
     pub(crate) verdict_waiters: Arc<StdMutex<HashMap<String, mpsc::UnboundedSender<Frame>>>>,
+    /// Declines received from peers: (authenticated sender of the frame, the
+    /// code's hash if it named one). The engine acts on them in
+    /// `send::consume_declines`, which can reach the serving state.
+    pub(crate) decline_tx: mpsc::UnboundedSender<(EndpointId, Option<String>)>,
+    /// Surfaced offers that ended without the local user's answer.
+    pub(crate) withdrawn_tx: broadcast::Sender<OfferWithdrawn>,
 }
 
 impl ConsentCtx {
-    /// Park `tx` as the answer channel for `offer_id` (replaces any waiter).
-    pub(crate) fn add_verdict_waiter(&self, offer_id: &str, tx: mpsc::UnboundedSender<Frame>) {
-        self.verdict_waiters
+    /// Park `tx` as the answer channel for `offer_id`. False, and nothing
+    /// changes, if that id is already waiting.
+    pub(crate) fn add_verdict_waiter(
+        &self,
+        offer_id: &str,
+        tx: mpsc::UnboundedSender<Frame>,
+    ) -> bool {
+        use std::collections::hash_map::Entry;
+        match self
+            .verdict_waiters
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(offer_id.to_string(), tx);
+            .entry(offer_id.to_string())
+        {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(slot) => {
+                slot.insert(tx);
+                true
+            }
+        }
     }
 
     /// Deliver the local user's verdict to the parked connection, if any.
@@ -187,18 +299,28 @@ impl ConsentCtx {
         }
     }
 
-    /// Forget an offer that lapsed unanswered (its parked connection timed out).
-    /// Clears both maps so the pending-offer list can't grow without bound and a
-    /// late `respond_offer` finds nothing to accept (reported as expired).
-    pub(crate) fn expire_offer(&self, offer_id: &str) {
+    /// Forget an offer that ended without the local user's answer: the sender
+    /// withdrew it (or went away), or nobody answered in time. Clears both
+    /// maps so the pending-offer list can't grow without bound and a late
+    /// `respond_offer` finds nothing to accept (reported as ended). If it
+    /// was still waiting for the user, the UI is told, to close its dialog.
+    pub(crate) fn retire_offer(&self, offer_id: &str, reason: WithdrawReason) {
         self.verdict_waiters
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(offer_id);
-        self.incoming_offers
+        let pending = self
+            .incoming_offers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(offer_id);
+            .remove(offer_id)
+            .is_some();
+        if pending {
+            let _ = self.withdrawn_tx.send(OfferWithdrawn {
+                offer_id: offer_id.to_string(),
+                reason,
+            });
+        }
     }
 }
 
@@ -229,11 +351,15 @@ impl Core {
         self.inner.nearby.lock().await.device_name.clone()
     }
 
-    /// Change the name nearby devices see. Takes effect immediately: a live
-    /// advertisement is re-registered under the new name.
+    /// Change the name nearby devices see. The name is tidied first (control
+    /// characters and invisible marks removed, spaces collapsed, trimmed; the
+    /// result is what [`Self::device_name`] returns). An empty name, or one
+    /// over 40 characters, is refused with a message to show as it is, and
+    /// nothing changes. Takes effect immediately: a live advertisement is
+    /// re-registered under the new name, or kept as it was if that fails.
     pub async fn set_device_name(&self, name: String) -> Result<()> {
         let port = self.inner.nearby_port;
-        self.inner.nearby.lock().await.rename(name, port)
+        self.inner.nearby.lock().await.rename(&name, port)
     }
 
     /// Subscribe to offers arriving from nearby devices.
@@ -241,59 +367,84 @@ impl Core {
         self.inner.consent.offer_tx.subscribe()
     }
 
-    /// Offer the currently-active outgoing transfer (there can be only one —
-    /// Dropwire is one-to-one) to the nearby device `eid_hex`.
+    /// Subscribe to incoming offers that ended before the user here answered
+    /// them (the sender took one back, or it expired), so their dialogs can
+    /// close.
+    pub fn subscribe_offer_withdrawals(&self) -> broadcast::Receiver<OfferWithdrawn> {
+        self.inner.consent.withdrawn_tx.subscribe()
+    }
+
+    /// Take back an offer this device sent (by the id [`Self::offer_nearby`]
+    /// returned) before it is answered. The other device's dialog closes, the
+    /// offer ends as [`OfferUpdate::Withdrawn`], and the send goes on. An
+    /// unknown or finished offer is ignored.
+    pub fn cancel_offer(&self, offer_id: &str) {
+        let outgoing = self
+            .inner
+            .outgoing_offers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(offer) = outgoing.get(offer_id) {
+            offer.token.cancel();
+        }
+    }
+
+    /// Offer the send `id` (one the caller started, now sharing its code) to
+    /// the nearby device `eid_hex`.
     ///
     /// Returns a stream of [`OfferUpdate`]s ending in Accepted/Declined/Failed.
     pub async fn offer_nearby(
         &self,
         eid_hex: String,
+        id: TransferId,
     ) -> Result<(String, ReceiverStream<OfferUpdate>)> {
-        self.offer_nearby_dial(eid_hex, None).await
+        self.offer_nearby_dial(eid_hex, id, None).await
     }
 
     /// Like [`Self::offer_nearby`] with an explicit dial-address hint — used
     /// when the peer's transport was learned out-of-band (BLE bootstrap, or
-    /// hermetic tests). Dial priority: mDNS LAN socket → hint → engine lookup.
+    /// hermetic tests). Dials every LAN socket announced for the id plus the
+    /// hint, or looks the id up when there are none.
     pub async fn offer_nearby_dial(
         &self,
         eid_hex: String,
+        id: TransferId,
         addr_hint: Option<EndpointAddr>,
     ) -> Result<(String, ReceiverStream<OfferUpdate>)> {
         let peer = parse_eid(&eid_hex)?;
 
-        // The newest active Send record is the transfer being offered. Its
-        // ticket must already be minted (`Ready` flips status to Active).
+        // The send the caller named, never a guess: several can be live at
+        // once. Its code must already be out (`Ready` makes it Active).
         let record = self
             .inner
             .catalog
             .lock()
             .await
-            .list()
-            .into_iter()
-            .find(|r| r.direction == Direction::Send && r.status == Status::Active)
-            .ok_or_else(|| CoreError::Other(anyhow::anyhow!("no active send to offer")))?;
-        if record.ticket.is_empty() {
-            return Err(CoreError::Other(anyhow::anyhow!("send not ready yet")));
+            .get(id)
+            .ok_or_else(|| CoreError::NotFound(id.to_string()))?;
+        if record.direction != Direction::Send {
+            return Err(CoreError::Other(anyhow::anyhow!(
+                "Only something you are sending can be offered."
+            )));
+        }
+        if record.status != Status::Active || record.ticket.is_empty() {
+            return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
         }
 
-        // Dial priority: mDNS LAN socket → explicit hint → engine lookup.
+        // Dial every LAN socket announced for this id, plus the hint (else
+        // the engine looks the id up). Another host can announce this id with
+        // its own address, but the handshake proves which one is the device:
+        // a false address can never redirect the offer, and the real one is
+        // still tried.
         let lan = {
             let state = self.inner.nearby.lock().await;
-            state.peer_socket(&eid_hex)
+            state.peer_sockets(&eid_hex)
         };
-        let dial_addr = match lan {
-            Some(sock) => EndpointAddr::from_parts(peer, [TransportAddr::Ip(sock)]).with_addrs(
-                addr_hint
-                    .as_ref()
-                    .map(|a| a.addrs.iter().cloned())
-                    .unwrap_or_default(),
-            ),
-            None => match addr_hint {
-                Some(a) => EndpointAddr::from_parts(peer, a.addrs.iter().cloned()),
-                None => EndpointAddr::from_parts(peer, []),
-            },
-        };
+        let hint: Vec<TransportAddr> = addr_hint
+            .map(|a| a.addrs.into_iter().collect())
+            .unwrap_or_default();
+        let dial_addr =
+            EndpointAddr::from_parts(peer, lan.into_iter().map(TransportAddr::Ip).chain(hint));
 
         let device_name = self.device_name().await;
         let frame = Frame::Offer {
@@ -309,43 +460,88 @@ impl Core {
             _ => unreachable!("just built an Offer"),
         };
 
-        let (upd_tx, upd_rx) = mpsc::channel(8);
-
         // Bind the one-to-one gate to this neighbor NOW so no third party can
-        // pull the content between consent and download.
-        self.inner
-            .bound
-            .lock()
-            .await
-            .insert(record.hash.clone(), peer);
+        // pull the content between consent and download. A send that already
+        // has a receiver (someone used its code, or took an earlier offer) is
+        // never handed to a second device: that would take it from the first
+        // mid-transfer. Checked and bound under one lock, `serving` first.
+        // `already_ours`: this neighbor held the binding before this offer,
+        // so the offer's outcome must leave it alone. One offer per send at a
+        // time, so an offer's outcome is only ever its own. The offer's token
+        // is a child of the send's: ending the send takes the offer back.
+        let (already_ours, withdraw) = {
+            let mut serving = self.inner.serving.lock().await;
+            let Some(entry) = serving.get_mut(&record.hash).filter(|s| s.id == id) else {
+                return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
+            };
+            let mut bound = self.inner.bound.lock().await;
+            let mut outgoing = self
+                .inner
+                .outgoing_offers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if outgoing.values().any(|o| o.transfer == id) {
+                return Err(CoreError::Other(anyhow::anyhow!(OFFER_PENDING)));
+            }
+            let already_ours = match bound.get(&record.hash) {
+                Some(other) if *other != peer => {
+                    return Err(CoreError::Other(anyhow::anyhow!(SEND_TAKEN)));
+                }
+                Some(_) => true,
+                None => {
+                    bound.insert(record.hash.clone(), peer);
+                    false
+                }
+            };
+            // Offered again after turning it down: the sender chose them anew.
+            entry.denied.remove(&peer);
+            let withdraw = entry.token.child_token();
+            outgoing.insert(
+                offer_id.clone(),
+                OutgoingOffer {
+                    transfer: id,
+                    token: withdraw.clone(),
+                },
+            );
+            (already_ours, withdraw)
+        };
 
+        let (upd_tx, upd_rx) = mpsc::channel(8);
         let endpoint = self.inner.router.endpoint().clone();
         let core = self.clone();
         let hash_key = record.hash.clone();
-        let transfer_id = record.id;
         let offer_peer = peer;
+        let task_offer_id = offer_id.clone();
         tokio::spawn(async move {
             let _ = upd_tx.send(OfferUpdate::Waiting).await;
 
-            let update = match deliver_offer(&endpoint, dial_addr, frame).await {
-                Ok(u) => u,
-                Err(reason) => OfferUpdate::Failed { reason },
-            };
-
-            // Declined or undeliverable → release the early one-to-one binding
-            // (a manual code-share of this content must still work) and stop
-            // serving the offer (the user can simply send again) — but ONLY if
-            // this offer still owns the binding. If a newer offer for the same
-            // send replaced it (or that send is now streaming to another
-            // neighbor), tearing it down here would abort a live transfer.
-            if matches!(update, OfferUpdate::Declined | OfferUpdate::Failed { .. }) {
-                let mut bound = core.inner.bound.lock().await;
-                if bound.get(&hash_key) == Some(&offer_peer) {
-                    bound.remove(&hash_key);
-                    drop(bound);
-                    core.cancel(transfer_id).await;
-                }
+            let mut reached = false;
+            let mut update =
+                match deliver_offer(&endpoint, dial_addr, frame, &withdraw, &mut reached).await {
+                    Ok(u) => u,
+                    Err(reason) => OfferUpdate::Failed { reason },
+                };
+            // Taken back while their yes was on its way: this side's word
+            // stands, so the send is not reported as accepted after a Cancel.
+            if matches!(update, OfferUpdate::Accepted { .. }) && withdraw.is_cancelled() {
+                update = OfferUpdate::Withdrawn;
             }
+
+            // Not taken (declined, withdrawn, or it never got an answer): the
+            // send goes on, so its code and other offers still work. A
+            // neighbor that was already this send's receiver keeps it whatever
+            // it says to a repeat offer.
+            if !already_ours && !matches!(update, OfferUpdate::Accepted { .. }) {
+                // Their device may hold the code only if the offer got there
+                // and was not turned down unseen.
+                let may_hold = reached && !matches!(update, OfferUpdate::Declined { unseen: true });
+                release_offer(&core, id, &hash_key, offer_peer, may_hold).await;
+            }
+            core.inner
+                .outgoing_offers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&task_offer_id);
             let _ = upd_tx.send(update).await;
         });
 
@@ -356,24 +552,27 @@ impl Core {
     /// in-band on the sender's still-open offer connection (it parks waiting
     /// for exactly this), so no second connection or dial-back is needed.
     pub async fn respond_offer(&self, offer_id: String, accept: bool) -> Result<()> {
-        let offer = self
+        // Gone already: answered, taken back by the sender, or expired.
+        let open = self
             .inner
             .consent
             .incoming_offers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get(&offer_id)
-            .cloned()
-            .ok_or_else(|| CoreError::NotFound(offer_id.clone()))?;
-        let _ = offer; // validated above; the frame carries only the id
+            .contains_key(&offer_id);
+        if !open {
+            return Err(CoreError::Other(anyhow::anyhow!(OFFER_GONE)));
+        }
 
         let frame = if accept {
             Frame::OfferAccept {
                 offer_id: offer_id.clone(),
+                device_name: Some(self.device_name().await),
             }
         } else {
             Frame::OfferDecline {
                 offer_id: offer_id.clone(),
+                unseen: false,
             }
         };
 
@@ -392,12 +591,10 @@ impl Core {
         if !delivered {
             // The offering connection is already gone (it timed out after
             // ANSWER_WAIT, or the sender left). Report that so the UI shows
-            // "this offer expired" instead of starting a download the sender
+            // the offer has ended instead of starting a download the sender
             // has already abandoned.
             tracing::warn!(%offer_id, "offer connection already gone");
-            return Err(CoreError::Other(anyhow::anyhow!(
-                "this offer expired before you answered"
-            )));
+            return Err(CoreError::Other(anyhow::anyhow!(OFFER_GONE)));
         }
         Ok(())
     }
@@ -420,6 +617,31 @@ impl Core {
         EndpointAddr::from_parts(endpoint.id(), loopback.map(TransportAddr::Ip))
     }
 
+    /// TEST-ONLY: make this device see `eid_hex` on the local network, as if
+    /// mDNS had found it, so its offers pass the visibility gate. Hermetic
+    /// tests have no multicast.
+    #[cfg(feature = "test-utils")]
+    pub fn test_see_nearby_peer(&self, eid_hex: &str) {
+        let seen = crate::discover::Announcement {
+            instance: format!("test-{eid_hex}"),
+            eid: eid_hex.to_string(),
+            name: "Test device".to_string(),
+            os: None,
+            socks: Vec::new(),
+        };
+        crate::discover::apply(
+            &self.inner.consent.nearby_peers,
+            &crate::discover::Change::Seen(seen),
+        );
+    }
+
+    /// TEST-ONLY: whether this process is browsing the local network for
+    /// nearby devices (it should only while some session has sharing on).
+    #[cfg(feature = "test-utils")]
+    pub fn test_nearby_browsing(&self) -> bool {
+        crate::discover::browsing()
+    }
+
     /// TEST-ONLY: flip the "nearby sharing on" flag that gates incoming offers,
     /// without standing up the real mDNS daemon. Production sets this via
     /// [`Core::start_nearby`] / [`Core::stop_nearby`].
@@ -432,38 +654,89 @@ impl Core {
     }
 }
 
+/// An offer of send `id` to `peer` was not taken. Free its code for someone
+/// else, and when `peer` may hold the code (it travels inside the offer),
+/// refuse `peer` from now on. Both happen under the `serving` lock the gate
+/// takes, so the code is never open to `peer` in between. The send itself
+/// goes on.
+async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId, may_hold: bool) {
+    let mut serving = core.inner.serving.lock().await;
+    // The send ended, or a newer send of the same files took over: not ours.
+    let Some(entry) = serving.get_mut(hash).filter(|s| s.id == id) else {
+        return;
+    };
+    // Too late once it was downloaded: the code stays with the device that
+    // has the files, as it does when a preview is declined after that.
+    if entry.delivered.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    if may_hold {
+        entry.denied.insert(peer);
+    }
+    let mut bound = core.inner.bound.lock().await;
+    if bound.get(hash) == Some(&peer) {
+        bound.remove(hash);
+    }
+}
+
 /// Deliver the offer and read the verdict off our own connection (echoed).
+/// `reached` is set once a connection to the neighbor is up: from then on it
+/// may hold the code the offer carries. When `withdraw` fires first, the
+/// connection is closed with [`WITHDRAWN_CODE`], which the other side sees at
+/// once and closes its dialog.
 async fn deliver_offer(
     endpoint: &Endpoint,
     dial_addr: EndpointAddr,
     frame: Frame,
+    withdraw: &CancellationToken,
+    reached: &mut bool,
 ) -> std::result::Result<OfferUpdate, String> {
-    let conn = tokio::time::timeout(
-        CONSENT_CONNECT_TIMEOUT,
-        endpoint.connect(dial_addr, CTRL_ALPN),
-    )
-    .await
-    .map_err(|_| "neighbor unreachable".to_string())?
-    .map_err(|e| format!("connect failed: {e}"))?;
+    let conn = tokio::select! {
+        biased;
+        _ = withdraw.cancelled() => return Ok(OfferUpdate::Withdrawn),
+        conn = tokio::time::timeout(
+            CONSENT_CONNECT_TIMEOUT,
+            endpoint.connect(dial_addr, CTRL_ALPN),
+        ) => conn
+            .map_err(|_| "neighbor unreachable".to_string())?
+            .map_err(|e| format!("connect failed: {e}"))?,
+    };
+    *reached = true;
 
+    let answer = tokio::select! {
+        biased;
+        _ = withdraw.cancelled() => {
+            conn.close(VarInt::from_u32(WITHDRAWN_CODE), b"withdrawn");
+            return Ok(OfferUpdate::Withdrawn);
+        }
+        answer = exchange(&conn, &frame) => answer?,
+    };
+
+    match serde_json::from_slice::<Frame>(&answer) {
+        Ok(Frame::OfferAccept { device_name, .. }) => Ok(OfferUpdate::Accepted {
+            name: device_name
+                .map(|n| label(&n, MAX_DEVICE_NAME))
+                .filter(|n| !n.is_empty()),
+        }),
+        Ok(Frame::OfferDecline { unseen, .. }) => Ok(OfferUpdate::Declined { unseen }),
+        _ => Err("unexpected answer".into()),
+    }
+}
+
+/// Send the offer frame on a new stream and wait for the echoed verdict.
+async fn exchange(conn: &Connection, frame: &Frame) -> std::result::Result<Vec<u8>, String> {
     let (mut send, mut recv) = conn
         .open_bi()
         .await
         .map_err(|e| format!("stream open failed: {e}"))?;
-    let bytes = serde_json::to_vec(&frame).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(frame).map_err(|e| e.to_string())?;
     send.write_all(&bytes).await.map_err(|e| e.to_string())?;
     send.finish().map_err(|e| e.to_string())?;
 
-    let answer = tokio::time::timeout(ANSWER_TIMEOUT, recv.read_to_end(64 * 1024))
+    tokio::time::timeout(ANSWER_TIMEOUT, recv.read_to_end(64 * 1024))
         .await
         .map_err(|_| "they didn't answer in time".to_string())?
-        .map_err(|e| format!("read failed: {e}"))?;
-
-    match serde_json::from_slice::<Frame>(&answer) {
-        Ok(Frame::OfferAccept { .. }) => Ok(OfferUpdate::Accepted),
-        Ok(Frame::OfferDecline { .. }) => Ok(OfferUpdate::Declined),
-        _ => Err("unexpected answer".into()),
-    }
+        .map_err(|e| format!("read failed: {e}"))
 }
 
 /// How long the receiver's parked offer connection waits for the local user's
@@ -493,6 +766,13 @@ pub(crate) fn route_offer(
         return;
     };
 
+    // The id travels to the UI and back as the offer's handle: a long or odd
+    // one (up to the whole frame's size) is declined without being shown.
+    if !plain_offer_id(&offer_id) {
+        decline_unseen(ctx, offer_id);
+        return;
+    }
+
     // Nearby sharing off ⇒ invisible. The control ALPN is always registered (it
     // also carries presence + the receive-by-code decline), so a peer that
     // knows our endpoint id can still open a connection even when the user has
@@ -504,8 +784,22 @@ pub(crate) fn route_offer(
         .nearby_running
         .load(std::sync::atomic::Ordering::Relaxed);
     if !running {
-        let frame = Frame::OfferDecline { offer_id };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer_id);
+        return;
+    }
+
+    // Nearby means nearby: only a device this one currently sees on the local
+    // network (by its authenticated id) can raise a dialog. Anyone else who
+    // learned our id, from a code we shared or over the relay, is declined
+    // unseen, however it names itself.
+    let visible = ctx
+        .nearby_peers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(&remote.to_string());
+    if !visible {
+        tracing::debug!(%remote, "offer from a device not seen nearby");
+        decline_unseen(ctx, offer_id);
         return;
     }
 
@@ -513,36 +807,110 @@ pub(crate) fn route_offer(
     let Ok(parsed) = BlobTicket::from_str(&ticket) else {
         // Unknown ticket shape → decline immediately so the sender isn't left
         // waiting on a dialog that will never appear.
-        let frame = Frame::OfferDecline { offer_id };
-        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        decline_unseen(ctx, offer_id);
         return;
     };
+
+    // The code must be the sender's own. The dialog shows who offered it (the
+    // authenticated `remote` and its fingerprint), and accepting fetches from
+    // whoever the code names: a code naming some other device would have the
+    // user check one device and download from another. Declined unseen.
+    if parsed.addr().id != remote {
+        tracing::warn!(%remote, named = %parsed.addr().id, "offer's code names another device");
+        decline_unseen(ctx, offer_id);
+        return;
+    }
 
     let offer = IncomingOffer {
         reply_transport: via,
         offer_id,
         from_endpoint_id: remote.to_string(),
-        device_name,
+        device_name: label(&device_name, MAX_DEVICE_NAME),
         // Derive the pairing fingerprint from the TLS-AUTHENTICATED remote id,
         // never from a sender-supplied field: an impostor cannot then present a
         // victim's pairing code. This is the value the user compares aloud.
         fingerprint: NearbyDevice::fingerprint_for(&remote.to_string()),
         ticket: parsed.to_string(),
-        title,
+        title: label(&title, MAX_TITLE),
         file_count,
         total_bytes,
     };
-    ctx.incoming_offers
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(offer.offer_id.clone(), offer.clone());
+
+    // One waiting offer per device: a newer one replaces the older (from a
+    // sender that restarted, say). And a few at most in all. Checked and
+    // stored under one lock.
+    let (replaced, room) = {
+        let mut pending = ctx
+            .incoming_offers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let replaced: Vec<String> = pending
+            .values()
+            .filter(|o| o.from_endpoint_id == offer.from_endpoint_id)
+            .map(|o| o.offer_id.clone())
+            .collect();
+        for id in &replaced {
+            pending.remove(id);
+        }
+        let room = pending.len() < MAX_PENDING_OFFERS;
+        if room {
+            pending.insert(offer.offer_id.clone(), offer.clone());
+        }
+        (replaced, room)
+    };
+    for offer_id in replaced {
+        // It was on screen, so it counts as declined by the user.
+        let frame = Frame::OfferDecline {
+            offer_id: offer_id.clone(),
+            unseen: false,
+        };
+        ctx.resolve_verdict(&offer_id, frame);
+        let _ = ctx.withdrawn_tx.send(OfferWithdrawn {
+            offer_id,
+            reason: WithdrawReason::Replaced,
+        });
+    }
+    if !room {
+        tracing::debug!(%remote, "too many offers waiting; declining");
+        decline_unseen(ctx, offer.offer_id);
+        return;
+    }
     let _ = ctx.offer_tx.send(offer);
+}
+
+/// Answer an offer "no" without it ever being shown here.
+fn decline_unseen(ctx: &ConsentCtx, offer_id: String) {
+    let frame = Frame::OfferDecline {
+        offer_id: offer_id.clone(),
+        unseen: true,
+    };
+    ctx.resolve_verdict(&offer_id, frame);
+}
+
+/// A label another device wrote, made safe to show: no control characters
+/// or invisible formatting marks (which could make a name read backwards),
+/// one space between words, and at most `max` characters.
+fn label(s: &str, max: usize) -> String {
+    crate::discover::clean_label(s, max)
+}
+
+/// Longest offer id accepted, in bytes. Ours are UUIDs (36).
+const MAX_OFFER_ID: usize = 64;
+
+/// Whether a sender-chosen offer id is one the UI can carry: short, and
+/// letters, digits, dashes and underscores only.
+fn plain_offer_id(id: &str) -> bool {
+    (1..=MAX_OFFER_ID).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Route any other inbound control frame (presence/chat) to the broadcast bus.
 /// Verdict frames arriving unsolicited are ignored (the sender learns its
-/// verdict in-band on its own outgoing offer connection).
-pub(crate) fn route_other(ctx: &ConsentCtx, frame: Frame) {
+/// verdict in-band on its own outgoing offer connection). `remote` is the
+/// TLS-authenticated id of the peer that sent the frame.
+pub(crate) fn route_other(ctx: &ConsentCtx, remote: EndpointId, frame: Frame) {
     match frame {
         Frame::Hello => {
             let _ = ctx.ctrl_tx.send(CtrlMsg::Hello);
@@ -550,12 +918,106 @@ pub(crate) fn route_other(ctx: &ConsentCtx, frame: Frame) {
         Frame::Ack => {
             let _ = ctx.ctrl_tx.send(CtrlMsg::Ack);
         }
-        Frame::Decline => {
+        Frame::Decline { hash } => {
+            let _ = ctx.decline_tx.send((remote, hash));
             let _ = ctx.ctrl_tx.send(CtrlMsg::Decline);
         }
         Frame::Chat { text } => {
             let _ = ctx.ctrl_tx.send(CtrlMsg::Chat { text });
         }
         Frame::OfferAccept { .. } | Frame::OfferDecline { .. } | Frame::Offer { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decline_frame_stays_wire_compatible() {
+        // An older peer's bare decline still parses.
+        let old: Frame = serde_json::from_str(r#"{"kind":"decline"}"#).unwrap();
+        assert_eq!(old, Frame::Decline { hash: None });
+
+        // The new frame names the code and round-trips.
+        let new = Frame::Decline {
+            hash: Some("ab12".into()),
+        };
+        let json = serde_json::to_string(&new).unwrap();
+        assert_eq!(json, r#"{"kind":"decline","hash":"ab12"}"#);
+        assert_eq!(serde_json::from_str::<Frame>(&json).unwrap(), new);
+
+        // Without a hash it goes out exactly as older builds sent it.
+        let bare = serde_json::to_string(&Frame::Decline { hash: None }).unwrap();
+        assert_eq!(bare, r#"{"kind":"decline"}"#);
+
+        // An older sender, whose decline had no fields (the same shape as the
+        // public CtrlMsg), still reads the new frame.
+        assert_eq!(
+            serde_json::from_str::<CtrlMsg>(&json).unwrap(),
+            CtrlMsg::Decline
+        );
+    }
+
+    #[test]
+    fn offer_accept_stays_wire_compatible() {
+        // An older receiver's yes carries no name.
+        let old: Frame = serde_json::from_str(r#"{"kind":"offerAccept","offer_id":"o"}"#).unwrap();
+        assert_eq!(
+            old,
+            Frame::OfferAccept {
+                offer_id: "o".into(),
+                device_name: None
+            }
+        );
+        let named = Frame::OfferAccept {
+            offer_id: "o".into(),
+            device_name: Some("Keon's laptop".into()),
+        };
+        let json = serde_json::to_string(&named).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"offerAccept","offer_id":"o","device_name":"Keon's laptop"}"#
+        );
+        assert_eq!(serde_json::from_str::<Frame>(&json).unwrap(), named);
+        // The UI's update: the name, or null from an older receiver.
+        let update = OfferUpdate::Accepted { name: None };
+        assert_eq!(
+            serde_json::to_string(&update).unwrap(),
+            r#"{"kind":"accepted","name":null}"#
+        );
+    }
+
+    #[test]
+    fn offer_decline_stays_wire_compatible() {
+        // An older receiver's answer carries no `unseen`: read as seen.
+        let old: Frame = serde_json::from_str(r#"{"kind":"offerDecline","offer_id":"o"}"#).unwrap();
+        assert_eq!(
+            old,
+            Frame::OfferDecline {
+                offer_id: "o".into(),
+                unseen: false
+            }
+        );
+        // A user's "no" goes out exactly as older builds sent it.
+        let seen = Frame::OfferDecline {
+            offer_id: "o".into(),
+            unseen: false,
+        };
+        assert_eq!(
+            serde_json::to_string(&seen).unwrap(),
+            r#"{"kind":"offerDecline","offer_id":"o"}"#
+        );
+        // An unseen one round-trips, and older senders ignore the field.
+        let unseen = Frame::OfferDecline {
+            offer_id: "o".into(),
+            unseen: true,
+        };
+        let json = serde_json::to_string(&unseen).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"offerDecline","offer_id":"o","unseen":true}"#
+        );
+        assert_eq!(serde_json::from_str::<Frame>(&json).unwrap(), unseen);
     }
 }
