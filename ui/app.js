@@ -32,14 +32,14 @@ function fmtBytes(n) {
 /* ========================= frameless window chrome ======================== */
 const appWindow = (HAS_TAURI && TAURI.window && TAURI.window.getCurrentWindow) ? TAURI.window.getCurrentWindow() : null;
 if (appWindow) {
-  $('#win-min').addEventListener('click', () => appWindow.minimize().catch(() => {}));
-  $('#win-max').addEventListener('click', () => appWindow.toggleMaximize().catch(() => {}));
-  $('#win-close').addEventListener('click', () => appWindow.close().catch(() => {}));
-  // Double-clicking the bar toggles maximise, the platform convention.
-  $('.titlebar').addEventListener('dblclick', (e) => {
-    if (e.target.closest('.tb-controls')) return;
-    appWindow.toggleMaximize().catch(() => {});
-  });
+  // These need the window permissions in capabilities/main-window.json. Log a
+  // refusal instead of swallowing it, so a missing permission is visible.
+  const chrome = (p) => p.catch((e) => console.warn('window control refused:', e));
+  $('#win-min').addEventListener('click', () => chrome(appWindow.minimize()));
+  $('#win-max').addEventListener('click', () => chrome(appWindow.toggleMaximize()));
+  $('#win-close').addEventListener('click', () => chrome(appWindow.close()));
+  // Dragging the bar and double-clicking it to maximize come from Tauri's own
+  // data-tauri-drag-region handling. A dblclick listener here would toggle twice.
 }
 
 /* ============================== navigation ===============================
