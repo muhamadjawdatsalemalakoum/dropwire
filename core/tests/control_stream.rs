@@ -155,6 +155,52 @@ async fn only_the_bound_device_can_decline() {
     assert_eq!(std::fs::read(out.join("f.bin")).unwrap(), payload);
 }
 
+/// Once the bound device has downloaded the content, its decline (say, from
+/// looking at the transfer again later) changes nothing: the code must not
+/// open up for a second device after the first one already got the files.
+#[tokio::test(flavor = "multi_thread")]
+async fn decline_after_the_download_changes_nothing() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let a_data = tempfile::tempdir().unwrap();
+    let b_data = tempfile::tempdir().unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let a = local_core(a_data.path()).await;
+    let b = local_core(b_data.path()).await;
+
+    let src = work.path().join("f.bin");
+    std::fs::write(&src, make_payload(64 * 1024)).unwrap();
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    let (_rid, mut rs) = a
+        .receive(ticket.clone(), work.path().join("out"))
+        .await
+        .unwrap();
+    wait_done(&mut rs).await;
+    assert!(
+        saw(&mut ss, Duration::from_secs(10), |ev| {
+            matches!(ev, Progress::Done { .. })
+        })
+        .await,
+        "the sender sees the delivery"
+    );
+
+    a.decline(ticket.clone()).await.unwrap();
+    assert!(
+        !saw(&mut ss, Duration::from_secs(1), |ev| {
+            matches!(ev, Progress::Declined { .. })
+        })
+        .await,
+        "a decline after the download is ignored"
+    );
+    assert!(
+        b.inspect(ticket).await.is_err(),
+        "the code stays with the device that downloaded it"
+    );
+}
+
 /// An older receiver's decline names no code. It is still honored when that
 /// device holds exactly one of this sender's live codes, and ignored when it
 /// holds two (there would be no telling which one it meant).

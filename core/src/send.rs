@@ -530,7 +530,8 @@ async fn approve_one_to_one(
 /// with the sender's authenticated id). Only the device a code is bound to
 /// can decline it, so no one else can release someone's binding. Declining
 /// releases the binding and tells the send; the send keeps serving, so its
-/// code can go to someone else.
+/// code can go to someone else. A decline after that device downloaded the
+/// content is ignored.
 pub(crate) async fn consume_declines(
     core: Core,
     mut rx: mpsc::UnboundedReceiver<(iroh::EndpointId, Option<String>)>,
@@ -557,6 +558,11 @@ pub(crate) async fn consume_declines(
         let Some(entry) = serving.get(&h) else {
             continue;
         };
+        // Too late once the device has downloaded it: releasing the code now
+        // would let a second device have what the first one already got.
+        if entry.delivered.load(Ordering::Acquire) {
+            continue;
+        }
         bound.remove(&h);
         let _ = entry.events.send(ProviderEvent::Declined);
     }
