@@ -453,21 +453,41 @@ async fn inspect_ticket(
     state.core.inspect(ticket).await.map_err(|e| e.to_string())
 }
 
-/// Resolve a destination directory, defaulting to Downloads/Dropwire.
-fn dest_or_default(dest: Option<String>) -> PathBuf {
-    match dest {
-        Some(d) => PathBuf::from(d),
-        None => dirs::download_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Dropwire"),
-    }
+/// Where receives land when no folder was chosen: Downloads/Dropwire, or
+/// Dropwire in the home folder when the system names no Downloads folder
+/// (Linux without xdg-user-dirs). Never a relative path: saving into one fails,
+/// and only after the whole download.
+fn default_dest() -> Result<PathBuf, String> {
+    dirs::download_dir()
+        .filter(|d| d.is_absolute())
+        .or_else(|| dirs::home_dir().filter(|h| h.is_absolute()))
+        .map(|base| base.join("Dropwire"))
+        .ok_or_else(|| "There is no folder to save into. Choose one in Settings.".to_string())
 }
 
-/// The default save folder (Downloads/Dropwire). The UI shows this and uses it as
-/// the path to reveal when a receive used the default destination.
+/// Resolve a receive's destination folder, defaulting to [`default_dest`].
+fn dest_or_default(dest: Option<String>) -> Result<PathBuf, String> {
+    let Some(d) = dest.filter(|d| !d.trim().is_empty()) else {
+        return default_dest();
+    };
+    let p = PathBuf::from(d);
+    if p.is_absolute() {
+        return Ok(p);
+    }
+    // Only the old fallback ("./Dropwire") ever produced a relative folder, and
+    // it may still be saved in settings. Resolve it against the home folder,
+    // where that default now lives, never against wherever the app started.
+    dirs::home_dir()
+        .map(|home| home.join(&p).components().collect::<PathBuf>())
+        .filter(|abs| abs.is_absolute())
+        .ok_or_else(|| "Choose a full folder path to save into.".to_string())
+}
+
+/// The default save folder (see [`default_dest`]). The UI shows this and uses
+/// it as the path to reveal when a receive used the default destination.
 #[tauri::command]
-fn default_dest_dir() -> String {
-    dest_or_default(None).to_string_lossy().into_owned()
+fn default_dest_dir() -> Result<String, String> {
+    default_dest().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Pump a transfer's progress stream to the UI channel.
@@ -489,7 +509,7 @@ async fn start_receive(
 ) -> Result<String, String> {
     let (id, stream) = state
         .core
-        .receive(ticket, dest_or_default(dest))
+        .receive(ticket, dest_or_default(dest)?)
         .await
         .map_err(|e| e.to_string())?;
     pump(stream, on_event);
@@ -507,7 +527,7 @@ async fn start_receive_selected(
 ) -> Result<String, String> {
     let (id, stream) = state
         .core
-        .receive_selected(ticket, dest_or_default(dest), selected)
+        .receive_selected(ticket, dest_or_default(dest)?, selected)
         .await
         .map_err(|e| e.to_string())?;
     pump(stream, on_event);
@@ -1209,6 +1229,36 @@ mod tests {
         assert!(is_store_locked(&err), "not recognized as a lock: {err:?}");
         first.shutdown().await.expect("shutdown");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The default save folder is always absolute, whatever the system reports.
+    #[test]
+    fn the_default_destination_is_absolute() {
+        if let Ok(p) = default_dest() {
+            assert!(p.is_absolute(), "{p:?}");
+            assert!(p.ends_with("Dropwire"), "{p:?}");
+        }
+        if let Ok(p) = dest_or_default(None) {
+            assert!(p.is_absolute(), "{p:?}");
+        }
+        if let Ok(p) = dest_or_default(Some("   ".into())) {
+            assert!(p.is_absolute(), "{p:?}");
+        }
+    }
+
+    /// A chosen absolute folder is used as it is; the old relative fallback
+    /// saved in settings resolves into the home folder, not the working dir.
+    #[test]
+    fn a_relative_destination_never_reaches_the_engine() {
+        let chosen = std::env::temp_dir().join("Dropwire test");
+        let got = dest_or_default(Some(chosen.to_string_lossy().into_owned())).expect("absolute");
+        assert_eq!(got, chosen);
+
+        if let Some(home) = dirs::home_dir() {
+            let got = dest_or_default(Some("./Dropwire".into())).expect("resolved");
+            assert!(got.is_absolute(), "{got:?}");
+            assert_eq!(got, home.join("Dropwire"));
+        }
     }
 
     const PANEL: (f64, f64) = (360.0, 470.0);
