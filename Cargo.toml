@@ -13,7 +13,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/muhamadjawdatsalemalakoum/dropwire"
 homepage = "https://muhamadjawdatsalemalakoum.github.io/dropwire/"
 authors = ["Dropwire contributors"]
-rust-version = "1.82"
+# The floor set by the pinned iroh 1.0 / iroh-blobs 0.103 line (both declare
+# 1.91). Raise it whenever those pins move to a release that needs a newer rustc.
+rust-version = "1.91"
 
 # Pinned exactly: iroh core is stable (1.0); iroh-blobs is pre-1.0 (0.10x line) and
 # wrapped behind the `irohcore` crate so its churn never leaks past one boundary.
