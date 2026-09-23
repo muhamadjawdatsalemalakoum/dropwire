@@ -1014,24 +1014,47 @@ async fn offer_labels_are_cleaned_up() {
         "kind": "offer",
         "offer_id": "labels",
         "ticket": code_naming(x.id()),
-        "device_name": format!("  Mom\u{7}'s\r\nphone{}", "!".repeat(500)),
-        "title": format!("report\u{0}.pdf{}", "x".repeat(1000)),
+        "device_name": format!("  Mom\u{7}'s\r\n\u{202E}phone{}", "!".repeat(500)),
+        "title": format!("report\u{0}.pdf\u{2066}{}", "x".repeat(1000)),
         "file_count": 1,
         "total_bytes": 1,
     });
     let pending = tokio::spawn(raw_frame(x.clone(), receiver.test_dial_addr(), frame));
     let offer = next_offer(&mut offers).await;
+    // Line breaks become one space; the direction override is gone.
     assert!(
-        offer.device_name.starts_with("Mom's"),
+        offer.device_name.starts_with("Mom's phone!"),
         "{}",
         offer.device_name
     );
     assert!(!offer.device_name.chars().any(char::is_control));
     assert!(offer.device_name.chars().count() <= 64);
-    assert!(offer.title.starts_with("report.pdf"), "{}", offer.title);
+    assert!(offer.title.starts_with("report.pdfxxx"), "{}", offer.title);
     assert!(offer.title.chars().count() <= 200);
     receiver.respond_offer(offer.offer_id, false).await.unwrap();
     assert_eq!(answer_of(pending).await.as_deref(), Some("offerDecline"));
+}
+
+/// The offer id is the sender's to choose, and it travels to the screen and
+/// back: one that is long or odd is declined without being shown.
+#[tokio::test]
+async fn an_offer_with_an_odd_id_is_declined_unseen() {
+    let r_dir = tempdir::dir();
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+    let x = seen_peer(&receiver).await;
+
+    for id in ["x".repeat(65), "line\nbreak".into(), String::new()] {
+        let pending = offer_from(&x, &receiver, &id);
+        assert_eq!(answer_of(pending).await.as_deref(), Some("offerDecline"));
+    }
+    let shown = tokio::time::timeout(Duration::from_millis(300), offers.recv()).await;
+    assert!(shown.is_err(), "none of them may be shown: {shown:?}");
+
+    // A plain one of the longest kind is shown.
+    let _pending = offer_from(&x, &receiver, &"x".repeat(64));
+    assert_eq!(next_offer(&mut offers).await.offer_id, "x".repeat(64));
 }
 
 /// An offer nobody has answered yet stays open while both devices are up,

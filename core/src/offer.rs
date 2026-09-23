@@ -765,6 +765,13 @@ pub(crate) fn route_offer(
         return;
     };
 
+    // The id travels to the UI and back as the offer's handle: a long or odd
+    // one (up to the whole frame's size) is declined without being shown.
+    if !plain_offer_id(&offer_id) {
+        decline_unseen(ctx, offer_id);
+        return;
+    }
+
     // Nearby sharing off ⇒ invisible. The control ALPN is always registered (it
     // also carries presence + the receive-by-code decline), so a peer that
     // knows our endpoint id can still open a connection even when the user has
@@ -879,11 +886,23 @@ fn decline_unseen(ctx: &ConsentCtx, offer_id: String) {
     ctx.resolve_verdict(&offer_id, frame);
 }
 
-/// A sender-written label for the dialog: no control characters, trimmed, and
-/// at most `max` characters.
+/// A label another device wrote, made safe to show: no control characters
+/// or invisible formatting marks (which could make a name read backwards),
+/// one space between words, and at most `max` characters.
 fn label(s: &str, max: usize) -> String {
-    let clean: String = s.chars().filter(|c| !c.is_control()).collect();
-    clean.trim().chars().take(max).collect()
+    crate::discover::clean_label(s, max)
+}
+
+/// Longest offer id accepted, in bytes. Ours are UUIDs (36).
+const MAX_OFFER_ID: usize = 64;
+
+/// Whether a sender-chosen offer id is one the UI can carry: short, and
+/// letters, digits, dashes and underscores only.
+fn plain_offer_id(id: &str) -> bool {
+    (1..=MAX_OFFER_ID).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Route any other inbound control frame (presence/chat) to the broadcast bus.

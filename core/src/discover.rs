@@ -27,12 +27,12 @@
 //! anew, so the devices still around show again at once.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use iroh::EndpointId;
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo, UnregisterStatus};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo, TxtProperties, UnregisterStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
@@ -339,40 +339,70 @@ fn pump(receiver: mdns_sd::Receiver<ServiceEvent>, id: u64) {
     }
 }
 
+/// Longest name kept from a peer's announcement, in characters. Wider than
+/// [`MAX_NAME`] so names from older versions, which had no limit of their
+/// own, still show whole in most cases.
+pub(crate) const MAX_PEER_NAME: usize = 64;
+
 /// What `event` changes, if it is about a Dropwire device.
 fn change_of(event: &ServiceEvent) -> Option<Change> {
     match event {
-        ServiceEvent::ServiceResolved(info) => {
-            let props = info.get_properties();
-            // Not a Dropwire announcement, or an id that is not one.
-            let eid = parse_eid(props.get_property_val_str(TXT_EID)?).ok()?;
-            let name = props
-                .get_property_val_str(TXT_NAME)
-                .map(str::to_owned)
-                .unwrap_or_else(|| "Dropwire device".into());
-            let os = props.get_property_val_str(TXT_OS).map(str::to_owned);
-            let port = info.get_port();
-            let mut socks: Vec<SocketAddr> = if port == 0 {
-                Vec::new()
-            } else {
-                info.get_addresses_v4()
-                    .into_iter()
-                    .map(|ip| SocketAddr::new(IpAddr::V4(ip), port))
-                    .collect()
-            };
-            socks.sort();
-            socks.truncate(MAX_SOCKS);
-            Some(Change::Seen(Announcement {
-                instance: info.get_fullname().to_string(),
-                eid: eid.to_string(),
-                name,
-                os,
-                socks,
-            }))
-        }
+        ServiceEvent::ServiceResolved(info) => announced(
+            info.get_fullname(),
+            info.get_properties(),
+            info.get_addresses_v4(),
+            info.get_port(),
+        ),
         ServiceEvent::ServiceRemoved(_ty, full_name) => Some(Change::Gone(full_name.clone())),
         _ => None,
     }
+}
+
+/// Read a Dropwire announcement from one resolved instance. Everything in
+/// it is written by whoever sent it, so it is checked and cleaned here,
+/// before any of it can reach the screen: the id must be one, the name is
+/// cleaned up and capped, and the platform is kept only if it looks like
+/// one.
+fn announced(
+    instance: &str,
+    props: &TxtProperties,
+    v4: impl IntoIterator<Item = Ipv4Addr>,
+    port: u16,
+) -> Option<Change> {
+    // Not a Dropwire announcement, or an id that is not one.
+    let eid = parse_eid(props.get_property_val_str(TXT_EID)?).ok()?;
+    let name = props
+        .get_property_val_str(TXT_NAME)
+        .map(|n| clean_label(n, MAX_PEER_NAME))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "Dropwire device".into());
+    let os = props.get_property_val_str(TXT_OS).and_then(platform);
+    let mut socks: Vec<SocketAddr> = if port == 0 {
+        Vec::new()
+    } else {
+        v4.into_iter()
+            .map(|ip| SocketAddr::new(IpAddr::V4(ip), port))
+            .collect()
+    };
+    socks.sort();
+    socks.truncate(MAX_SOCKS);
+    Some(Change::Seen(Announcement {
+        instance: instance.to_string(),
+        eid: eid.to_string(),
+        name,
+        os,
+        socks,
+    }))
+}
+
+/// An announced platform ("windows", "macos", "linux"...), if it looks
+/// like one: a short lowercase word.
+fn platform(os: &str) -> Option<String> {
+    let ok = (1..=16).contains(&os.len())
+        && os
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-');
+    ok.then(|| os.to_string())
 }
 
 /// Fold one change into one peer table.
@@ -1044,6 +1074,67 @@ mod tests {
         }
         assert_eq!(table.lock().unwrap().len(), MAX_PEERS);
         assert_eq!(shown(&table, EID).unwrap().name, "Bob");
+    }
+
+    fn txt(pairs: &[(&str, &str)]) -> TxtProperties {
+        use mdns_sd::IntoTxtProperties;
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<HashMap<_, _>>()
+            .into_txt_properties()
+    }
+
+    fn read(props: &[(&str, &str)], port: u16) -> Option<Announcement> {
+        match announced("x", &txt(props), [Ipv4Addr::new(10, 0, 0, 2)], port) {
+            Some(Change::Seen(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// What a peer announces is checked and cleaned before it is kept.
+    #[test]
+    fn announcements_are_checked_and_cleaned() {
+        let key = iroh::SecretKey::from_bytes(&[7; 32]).public();
+        let hex = key.to_string();
+        let other_form = data_encoding::BASE32_NOPAD
+            .encode(key.as_bytes())
+            .to_lowercase();
+        let a = read(
+            &[
+                (TXT_EID, &other_form),
+                (TXT_NAME, "\u{202E}Windows Security:\n action\t required"),
+                (TXT_OS, "macos"),
+            ],
+            4242,
+        )
+        .expect("a valid announcement");
+        assert_eq!(a.eid, hex, "ids are kept in their canonical form");
+        assert_eq!(a.name, "Windows Security: action required");
+        assert_eq!(a.os.as_deref(), Some("macos"));
+        assert_eq!(a.socks, [SocketAddr::from(([10, 0, 0, 2], 4242))]);
+
+        let long = "W".repeat(200);
+        let a = read(
+            &[
+                (TXT_EID, &hex),
+                (TXT_NAME, &long),
+                (TXT_OS, "Windows 11\u{202E}"),
+            ],
+            0,
+        )
+        .expect("a valid announcement");
+        assert_eq!(a.name.chars().count(), MAX_PEER_NAME);
+        assert_eq!(a.os, None, "not a platform");
+        assert!(a.socks.is_empty(), "port 0 cannot be dialed");
+
+        let a = read(&[(TXT_EID, &hex), (TXT_NAME, " \u{200B}")], 1).unwrap();
+        assert_eq!(a.name, "Dropwire device");
+
+        // Without an id that is one, it is not a Dropwire device at all.
+        assert!(read(&[(TXT_EID, "not-an-id"), (TXT_NAME, "N")], 1).is_none());
+        assert!(read(&[(TXT_EID, &hex.to_uppercase()), (TXT_NAME, "N")], 1).is_none());
+        assert!(read(&[(TXT_NAME, "N")], 1).is_none());
     }
 
     #[test]
