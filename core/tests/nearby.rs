@@ -58,6 +58,22 @@ fn hash_of(ticket: &str) -> String {
     ticket.parse::<BlobTicket>().unwrap().hash().to_string()
 }
 
+/// The request reached the sender and its one-to-one gate refused it:
+/// iroh-blobs resets a refused request's stream with ERR_PERMISSION (1).
+fn assert_refused<T: std::fmt::Debug>(res: Result<T, CoreError>, what: &str) {
+    const NEEDLE: &str = "reset by peer: error 1";
+    match res {
+        Ok(v) => panic!("{what}: expected a refusal, got {v:?}"),
+        Err(e) => {
+            let chain = format!("{e:#}");
+            let refused = chain
+                .match_indices(NEEDLE)
+                .any(|(i, m)| !chain[i + m.len()..].starts_with(|c: char| c.is_ascii_digit()));
+            assert!(refused, "{what}: expected the gate to refuse, got: {chain}");
+        }
+    }
+}
+
 /// Sender offers; receiver accepts; the file lands. The full two-sided flow.
 #[tokio::test]
 async fn nearby_offer_accept_transfers() {
@@ -384,6 +400,106 @@ async fn offer_never_takes_a_send_from_its_receiver() {
     assert!(
         !seen.iter().any(|e| matches!(e, Progress::Cancelled { .. })),
         "the send must keep going: {seen:?}"
+    );
+}
+
+/// Declining an offer does not end the send: its code still works for
+/// someone else. The device that declined holds the code (it came with the
+/// offer), but the sender refuses it from the moment it says no.
+#[tokio::test]
+async fn declined_offer_keeps_the_send_and_shuts_the_decliner_out() {
+    let dir = tempdir::dir();
+    let bob_dir = tempdir::dir();
+    let carol_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let bob = local_core(bob_dir.path()).await;
+    let carol = local_core(carol_dir.path()).await;
+    bob.test_set_nearby_running(true);
+    let mut offers = bob.subscribe_offers();
+
+    let src = dir.path().join("plans.pdf");
+    std::fs::write(&src, make_payload(80 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut send_stream).await;
+
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(bob.endpoint_id(), id, Some(bob.test_dial_addr()))
+        .await
+        .expect("offer");
+    let offer = next_offer(&mut offers).await;
+    bob.respond_offer(offer.offer_id.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Declined);
+
+    // Bob cannot use the code the offer carried.
+    assert_refused(bob.inspect(offer.ticket.clone()).await, "bob's preview");
+
+    // The send is still going, and its code works for Carol.
+    let dest = carol_dir.path().join("out");
+    let (_rid, mut rx) = carol.receive(ticket, dest.clone()).await.unwrap();
+    wait_done(&mut rx).await;
+    assert_eq!(
+        std::fs::read(dest.join("plans.pdf")).unwrap(),
+        make_payload(80 * 1024)
+    );
+    let seen = drain_for(&mut send_stream, Duration::from_millis(300)).await;
+    assert!(
+        !seen.iter().any(|e| matches!(e, Progress::Cancelled { .. })),
+        "a declined offer must not cancel the send: {seen:?}"
+    );
+
+    // Bob is still refused after Carol took it (and would be if she had not).
+    assert_refused(bob.inspect(offer.ticket).await, "bob after carol");
+}
+
+/// An offer that never reaches the device fails without ending the send, and
+/// without holding the code: that device never saw it, so it may still use
+/// it if it gets it another way, and so may anyone else.
+#[tokio::test]
+async fn failed_offer_keeps_the_send_and_frees_the_code() {
+    let dir = tempdir::dir();
+    let bob_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let bob = local_core(bob_dir.path()).await;
+
+    let src = dir.path().join("notes.txt");
+    std::fs::write(&src, make_payload(20 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut send_stream).await;
+
+    // No address to dial (not on the LAN, no hint): it cannot be delivered.
+    let (_oid, mut updates) = sender
+        .offer_nearby(bob.endpoint_id(), id)
+        .await
+        .expect("offer");
+    let update = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match updates.next().await {
+                Some(OfferUpdate::Waiting) => continue,
+                other => return other.expect("offer stream ended"),
+            }
+        }
+    })
+    .await
+    .expect("no verdict in time");
+    assert!(
+        matches!(update, OfferUpdate::Failed { .. }),
+        "got {update:?}"
+    );
+
+    // Bob gets the code some other way (a chat), and it works.
+    let dest = bob_dir.path().join("out");
+    let (_rid, mut rx) = bob.receive(ticket, dest.clone()).await.unwrap();
+    wait_done(&mut rx).await;
+    assert_eq!(
+        std::fs::read(dest.join("notes.txt")).unwrap(),
+        make_payload(20 * 1024)
+    );
+    let seen = drain_for(&mut send_stream, Duration::from_millis(300)).await;
+    assert!(
+        !seen.iter().any(|e| matches!(e, Progress::Cancelled { .. })),
+        "a failed offer must not cancel the send: {seen:?}"
     );
 }
 

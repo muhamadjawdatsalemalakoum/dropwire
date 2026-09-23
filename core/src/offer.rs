@@ -338,12 +338,12 @@ impl Core {
         // `already_ours`: this neighbor held the binding before this offer,
         // so the offer's outcome must leave it alone.
         let already_ours = {
-            let serving = self.inner.serving.lock().await;
-            if !serving.get(&record.hash).is_some_and(|s| s.id == id) {
+            let mut serving = self.inner.serving.lock().await;
+            let Some(entry) = serving.get_mut(&record.hash).filter(|s| s.id == id) else {
                 return Err(CoreError::Other(anyhow::anyhow!(SEND_ENDED)));
-            }
+            };
             let mut bound = self.inner.bound.lock().await;
-            match bound.get(&record.hash) {
+            let already_ours = match bound.get(&record.hash) {
                 Some(other) if *other != peer => {
                     return Err(CoreError::Other(anyhow::anyhow!(SEND_TAKEN)));
                 }
@@ -352,37 +352,32 @@ impl Core {
                     bound.insert(record.hash.clone(), peer);
                     false
                 }
-            }
+            };
+            // Offered again after turning it down: the sender chose them anew.
+            entry.denied.remove(&peer);
+            already_ours
         };
 
         let (upd_tx, upd_rx) = mpsc::channel(8);
         let endpoint = self.inner.router.endpoint().clone();
         let core = self.clone();
         let hash_key = record.hash.clone();
-        let transfer_id = record.id;
         let offer_peer = peer;
         tokio::spawn(async move {
             let _ = upd_tx.send(OfferUpdate::Waiting).await;
 
-            let update = match deliver_offer(&endpoint, dial_addr, frame).await {
+            let mut reached = false;
+            let update = match deliver_offer(&endpoint, dial_addr, frame, &mut reached).await {
                 Ok(u) => u,
                 Err(reason) => OfferUpdate::Failed { reason },
             };
 
-            // Declined or undeliverable → release the early one-to-one binding
-            // (a manual code-share of this content must still work) and stop
-            // serving the offer (the user can simply send again) — but ONLY if
-            // this offer made the binding and still owns it. A neighbor that
-            // was already this send's receiver keeps it whatever it says to a
+            // Not taken (declined, or it never got an answer): the send goes
+            // on, so its code and other offers still work. A neighbor that was
+            // already this send's receiver keeps it whatever it says to a
             // repeat offer.
-            if !already_ours && matches!(update, OfferUpdate::Declined | OfferUpdate::Failed { .. })
-            {
-                let mut bound = core.inner.bound.lock().await;
-                if bound.get(&hash_key) == Some(&offer_peer) {
-                    bound.remove(&hash_key);
-                    drop(bound);
-                    core.cancel(transfer_id).await;
-                }
+            if !already_ours && update != OfferUpdate::Accepted {
+                release_offer(&core, id, &hash_key, offer_peer, reached).await;
             }
             let _ = upd_tx.send(update).await;
         });
@@ -470,11 +465,39 @@ impl Core {
     }
 }
 
+/// An offer of send `id` to `peer` was not taken. Free its code for someone
+/// else, and when the offer may have reached `peer` (the code travels inside
+/// it), refuse `peer` from now on. Both happen under the `serving` lock the
+/// gate takes, so the code is never open to `peer` in between. The send itself
+/// goes on.
+async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId, reached: bool) {
+    let mut serving = core.inner.serving.lock().await;
+    // The send ended, or a newer send of the same files took over: not ours.
+    let Some(entry) = serving.get_mut(hash).filter(|s| s.id == id) else {
+        return;
+    };
+    // Too late once it was downloaded: the code stays with the device that
+    // has the files, as it does when a preview is declined after that.
+    if entry.delivered.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    if reached {
+        entry.denied.insert(peer);
+    }
+    let mut bound = core.inner.bound.lock().await;
+    if bound.get(hash) == Some(&peer) {
+        bound.remove(hash);
+    }
+}
+
 /// Deliver the offer and read the verdict off our own connection (echoed).
+/// `reached` is set once a connection to the neighbor is up: from then on it
+/// may hold the code the offer carries.
 async fn deliver_offer(
     endpoint: &Endpoint,
     dial_addr: EndpointAddr,
     frame: Frame,
+    reached: &mut bool,
 ) -> std::result::Result<OfferUpdate, String> {
     let conn = tokio::time::timeout(
         CONSENT_CONNECT_TIMEOUT,
@@ -483,6 +506,7 @@ async fn deliver_offer(
     .await
     .map_err(|_| "neighbor unreachable".to_string())?
     .map_err(|e| format!("connect failed: {e}"))?;
+    *reached = true;
 
     let (mut send, mut recv) = conn
         .open_bi()

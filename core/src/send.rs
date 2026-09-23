@@ -181,6 +181,7 @@ async fn run_send(
                 token: token.clone(),
                 delivered: delivered.clone(),
                 files: sent.into(),
+                denied: Default::default(),
             },
         );
         // A new share starts unbound: the first device to use it takes it.
@@ -607,6 +608,10 @@ pub(crate) struct Serving {
     /// `i` is request offset `i + 2`). Tells a download from a preview, sizes
     /// a download, and shows whether a file was edited since.
     pub(crate) files: Arc<[SentFile]>,
+    /// Devices this send was offered to (nearby) that did not take it. The
+    /// code went out with the offer, so they hold it, but the gate refuses
+    /// them. A new offer to one of them lets it back in.
+    pub(crate) denied: std::collections::HashSet<iroh::EndpointId>,
 }
 
 /// One file of a live send, as it was when it was shared.
@@ -852,8 +857,9 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
 /// binding; that same device may come back (preview, then accept, or resume).
 ///
 /// Everything else is refused: an unknown peer, a child blob fetched on its
-/// own, content this device received, and any send that has ended (cancelled,
-/// dismissed, or from before a restart; a restarted sender must Resend).
+/// own, content this device received, any send that has ended (cancelled,
+/// dismissed, or from before a restart; a restarted sender must Resend), and
+/// a device that turned down a nearby offer of the send.
 ///
 /// On approval, returns where that request's progress should be routed. The
 /// check and the binding happen under the `serving` lock, so a send tearing
@@ -866,6 +872,9 @@ async fn approve_one_to_one(
     let eid = endpoint?;
     let serving = core.inner.serving.lock().await;
     let entry = serving.get(hash_key)?;
+    if entry.denied.contains(&eid) {
+        return None;
+    }
     let mut bound = core.inner.bound.lock().await;
     match bound.get(hash_key) {
         None => {
