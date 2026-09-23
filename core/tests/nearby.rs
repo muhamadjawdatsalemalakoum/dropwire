@@ -10,8 +10,10 @@ mod common;
 
 use std::time::Duration;
 
-use common::{drain_for, local_core, make_payload, wait_done, wait_ready};
+use common::{drain_for, local_core, make_payload, raw_endpoint, wait_done, wait_ready};
+use iroh::{Endpoint, EndpointAddr};
 use iroh_blobs::ticket::BlobTicket;
+use iroh_blobs::BlobFormat;
 use irohcore::{
     CoreError, CtrlMsg, IncomingOffer, OfferUpdate, OfferWithdrawn, Progress, TransferId,
     WithdrawReason,
@@ -59,6 +61,41 @@ async fn wait_cancelled(stream: &mut irohcore::ProgressStream) {
 /// The content hash a code names.
 fn hash_of(ticket: &str) -> String {
     ticket.parse::<BlobTicket>().unwrap().hash().to_string()
+}
+
+/// Offer `ticket` to `to` from a bare endpoint, the way any peer that knows
+/// the address could, and return the kind of answer that comes back
+/// ("offerAccept" or "offerDecline"), or None if the connection ended first.
+async fn raw_offer(
+    from: Endpoint,
+    to: EndpointAddr,
+    offer_id: String,
+    ticket: String,
+) -> Option<String> {
+    let conn = from.connect(to, b"dropwire/ctrl/1").await.ok()?;
+    let (mut send, mut recv) = conn.open_bi().await.ok()?;
+    let frame = serde_json::json!({
+        "kind": "offer",
+        "offer_id": offer_id,
+        "ticket": ticket,
+        "device_name": "Test peer",
+        "title": "notes.txt",
+        "file_count": 1,
+        "total_bytes": 1024,
+    });
+    send.write_all(&serde_json::to_vec(&frame).unwrap())
+        .await
+        .ok()?;
+    send.finish().ok()?;
+    let answer = recv.read_to_end(64 * 1024).await.ok()?;
+    let answer: serde_json::Value = serde_json::from_slice(&answer).ok()?;
+    answer["kind"].as_str().map(str::to_string)
+}
+
+/// A code naming `eid`, for content that does not need to exist.
+fn code_naming(eid: iroh::EndpointId) -> String {
+    let hash = iroh_blobs::Hash::new(b"anything");
+    BlobTicket::new(EndpointAddr::from_parts(eid, []), hash, BlobFormat::HashSeq).to_string()
 }
 
 /// The request reached the sender and its one-to-one gate refused it:
@@ -654,6 +691,49 @@ async fn a_send_has_one_offer_at_a_time() {
     let offer = next_offer(&mut carol_offers).await;
     carol.respond_offer(offer.offer_id, true).await.unwrap();
     assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+}
+
+/// An offer whose code names some other device than the one offering it is
+/// declined without a dialog: the user would check one device's fingerprint
+/// and then download from another.
+#[tokio::test]
+async fn offer_of_someone_elses_code_is_declined_unseen() {
+    let z_dir = tempdir::dir();
+    let r_dir = tempdir::dir();
+    let z = local_core(z_dir.path()).await;
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+
+    // Z really shares something; X, a different device, offers Z's code.
+    let src = z_dir.path().join("z.txt");
+    std::fs::write(&src, make_payload(4 * 1024)).unwrap();
+    let (_id, mut z_stream) = z.send(src).await.unwrap();
+    let z_code = wait_ready(&mut z_stream).await;
+    let x = raw_endpoint().await;
+
+    let answer = tokio::time::timeout(
+        Duration::from_secs(10),
+        raw_offer(x.clone(), receiver.test_dial_addr(), "o-1".into(), z_code),
+    )
+    .await
+    .expect("the sender must get a prompt answer");
+    assert_eq!(answer.as_deref(), Some("offerDecline"));
+    let surfaced = tokio::time::timeout(Duration::from_millis(300), offers.recv()).await;
+    assert!(surfaced.is_err(), "the offer must not be shown");
+
+    // The same device offering a code of its own is shown.
+    let pending = tokio::spawn(raw_offer(
+        x.clone(),
+        receiver.test_dial_addr(),
+        "o-2".into(),
+        code_naming(x.id()),
+    ));
+    let offer = next_offer(&mut offers).await;
+    assert_eq!(offer.offer_id, "o-2");
+    assert_eq!(offer.from_endpoint_id, x.id().to_string());
+    receiver.respond_offer(offer.offer_id, false).await.unwrap();
+    assert_eq!(pending.await.unwrap().as_deref(), Some("offerDecline"));
 }
 
 /// The pairing fingerprint must depend on the WHOLE identity, not a short

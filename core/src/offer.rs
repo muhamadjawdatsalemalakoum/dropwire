@@ -81,6 +81,8 @@ pub(crate) enum Frame {
     /// TLS-authenticated remote id, so a sender cannot claim someone else's
     /// pairing code. (`device_name`/`title`/counts remain sender-authored hints
     /// — the receiver's verified preview, not these fields, gates the download.)
+    /// The ticket must name the sender itself (the authenticated id); an offer
+    /// whose code points at any other device is declined unseen.
     Offer {
         offer_id: String,
         ticket: String,
@@ -702,6 +704,17 @@ pub(crate) fn route_offer(
         ctx.resolve_verdict(&frame.offer_id_str(), frame);
         return;
     };
+
+    // The code must be the sender's own. The dialog shows who offered it (the
+    // authenticated `remote` and its fingerprint), and accepting fetches from
+    // whoever the code names: a code naming some other device would have the
+    // user check one device and download from another. Declined unseen.
+    if parsed.addr().id != remote {
+        tracing::warn!(%remote, named = %parsed.addr().id, "offer's code names another device");
+        let frame = Frame::OfferDecline { offer_id };
+        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        return;
+    }
 
     let offer = IncomingOffer {
         reply_transport: via,
