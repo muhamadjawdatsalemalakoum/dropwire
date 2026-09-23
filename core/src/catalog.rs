@@ -5,10 +5,12 @@
 //! after a crash/restart. Nothing here is ever sent anywhere.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::progress::{Direction, TransferId};
 
@@ -29,7 +31,8 @@ pub enum Status {
 pub struct TransferRecord {
     pub id: TransferId,
     pub direction: Direction,
-    /// Display name (file or folder name).
+    /// Display name: the file or top-level folder name, or "N files" when a
+    /// transfer holds several of them side by side.
     pub name: String,
     /// The ticket string (lets a receive be resumed).
     pub ticket: String,
@@ -46,10 +49,17 @@ pub struct TransferRecord {
     /// only `source`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
-    /// Number of files in the transfer (0 for records created before this
-    /// field existed). Surfaced in nearby-offer summaries.
+    /// Number of files in the transfer; for a receive, the files chosen (0 for
+    /// records created before this field was filled in). Surfaced in
+    /// nearby-offer summaries.
     #[serde(default)]
     pub file_count: usize,
+    /// Receive only: the files chosen in the preview (0-based indices into the
+    /// transfer's file list), or `None` for all of them. A resume asks for
+    /// these again and nothing else. Records from before this field existed
+    /// read as `None`.
+    #[serde(default)]
+    pub selected: Option<Vec<usize>>,
     pub total_bytes: u64,
     pub transferred: u64,
     pub status: Status,
@@ -64,22 +74,75 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// The persisted catalog.
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// The persisted catalog: `{"entries": {"<id>": <record>, ...}}` on disk.
+#[derive(Debug, Default)]
 pub struct Catalog {
-    #[serde(default)]
     entries: BTreeMap<String, TransferRecord>,
-    #[serde(skip)]
+    /// Records this version cannot read (written by a newer version, or
+    /// damaged), kept exactly as found so saving never drops them.
+    unreadable: Map<String, Value>,
+    /// Where the catalog is saved. Empty means "do not save" (tests, or a file
+    /// that exists but could not be read, which must not be overwritten).
     path: PathBuf,
 }
 
 impl Catalog {
-    /// Load the catalog from disk, or start empty if absent/corrupt.
+    /// Load the catalog from disk. A missing file starts an empty history. One
+    /// record that cannot be read is set aside, not the whole history. A file
+    /// that is not a catalog at all is copied to `transfers.json.bad` before
+    /// starting empty, so nothing is lost for good.
     pub fn load(path: PathBuf) -> Self {
-        let mut cat = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<Catalog>(&bytes).unwrap_or_default(),
-            Err(_) => Catalog::default(),
+        let mut cat = Catalog::default();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                cat.path = path;
+                return cat;
+            }
+            Err(e) => {
+                // It is there but unreadable right now. Saving over it would
+                // erase every record it holds, so leave it alone this session.
+                tracing::warn!(
+                    "could not read {}: {e}; history will not be saved until restart",
+                    path.display()
+                );
+                return cat;
+            }
         };
+        match catalog_entries(&bytes) {
+            Some(raw) => {
+                for (key, value) in raw {
+                    match serde_json::from_value::<TransferRecord>(value.clone()) {
+                        Ok(rec) => {
+                            cat.entries.insert(key, rec);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "keeping history record {key} as is, it could not be read: {e}"
+                            );
+                            cat.unreadable.insert(key, value);
+                        }
+                    }
+                }
+            }
+            None => {
+                let backup = backup_path(&path);
+                match std::fs::copy(&path, &backup) {
+                    Ok(_) => tracing::warn!(
+                        "{} is damaged; kept a copy at {} and started a new history",
+                        path.display(),
+                        backup.display()
+                    ),
+                    Err(e) => {
+                        tracing::warn!(
+                            "{} is damaged and could not be copied aside ({e}); leaving it untouched",
+                            path.display()
+                        );
+                        return cat;
+                    }
+                }
+            }
+        }
         cat.path = path;
         cat
     }
@@ -91,6 +154,15 @@ impl Catalog {
         self.save();
     }
 
+    /// Record that a transfer is starting. A resumed transfer reuses its entry
+    /// and keeps the time it was first started.
+    pub fn begin(&mut self, mut rec: TransferRecord) {
+        if let Some(old) = self.entries.get(&rec.id.to_string()) {
+            rec.created_at = old.created_at;
+        }
+        self.upsert(rec);
+    }
+
     /// Update the status (and optionally transferred bytes) of an entry.
     pub fn set_status(&mut self, id: TransferId, status: Status, transferred: Option<u64>) {
         if let Some(rec) = self.entries.get_mut(&id.to_string()) {
@@ -99,8 +171,63 @@ impl Catalog {
                 rec.transferred = t;
             }
             rec.updated_at = now_secs();
+            self.save();
         }
-        self.save();
+    }
+
+    /// Forget the unfinished receives that the receive `id` takes over: the
+    /// same content into the same folder, wanting no file that `id` does not
+    /// also fetch. Their Resume would only repeat this one, so history keeps a
+    /// single entry. Returns the ids forgotten.
+    pub fn retire_superseded(&mut self, id: TransferId) -> Vec<TransferId> {
+        let Some(new) = self.entries.get(&id.to_string()) else {
+            return Vec::new();
+        };
+        let takes_over = |old: &TransferRecord| match (&new.selected, &old.selected) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(now), Some(then)) => {
+                let now: std::collections::HashSet<_> = now.iter().collect();
+                then.iter().all(|i| now.contains(i))
+            }
+        };
+        let retired: Vec<TransferId> = self
+            .entries
+            .values()
+            .filter(|old| {
+                old.id != id
+                    && old.direction == Direction::Receive
+                    && matches!(old.status, Status::Interrupted | Status::Error)
+                    && old.hash == new.hash
+                    && old.dest == new.dest
+                    && takes_over(old)
+            })
+            .map(|old| old.id)
+            .collect();
+        for old in &retired {
+            self.entries.remove(&old.to_string());
+        }
+        if !retired.is_empty() {
+            self.save();
+        }
+        retired
+    }
+
+    /// Mark an entry failed, unless it already ended some other way (for
+    /// example Interrupted, which keeps it resumable).
+    pub fn fail_if_active(&mut self, id: TransferId) {
+        if self.entries.get(&id.to_string()).map(|r| r.status) == Some(Status::Active) {
+            self.set_status(id, Status::Error, None);
+        }
+    }
+
+    /// Rename an entry (a receive learns its files' names once they arrive).
+    pub fn set_name(&mut self, id: TransferId, name: String) {
+        if let Some(rec) = self.entries.get_mut(&id.to_string()) {
+            rec.name = name;
+            rec.updated_at = now_secs();
+            self.save();
+        }
     }
 
     /// One record, by its transfer id.
@@ -116,10 +243,22 @@ impl Catalog {
     }
 
     /// Forget every finished record. In-flight transfers are kept: clearing the
-    /// list must never orphan something the UI is still driving.
-    pub fn clear_finished(&mut self) {
+    /// list must never orphan something the UI is still driving. Returns the ids
+    /// of the receives that were forgotten, so the data they kept for a resume
+    /// can be let go too.
+    pub fn clear_finished(&mut self) -> Vec<TransferId> {
+        let removed = self
+            .entries
+            .values()
+            .filter(|r| r.status != Status::Active && r.direction == Direction::Receive)
+            .map(|r| r.id)
+            .collect();
         self.entries.retain(|_, r| r.status == Status::Active);
+        // Records this version could not read are not shown, so the user cannot
+        // tell them apart; clearing history clears them too.
+        self.unreadable.clear();
         self.save();
+        removed
     }
 
     /// On startup, mark any still-"active" entries as interrupted (the process
@@ -161,6 +300,7 @@ impl Catalog {
             source,
             sources: Vec::new(),
             file_count,
+            selected: None,
             total_bytes,
             transferred: 0,
             status: Status::Active,
@@ -173,12 +313,202 @@ impl Catalog {
         if self.path.as_os_str().is_empty() {
             return;
         }
-        if let Ok(json) = serde_json::to_vec_pretty(self) {
-            // Atomic-ish write: tmp then rename.
-            let tmp = self.path.with_extension("json.tmp");
-            if std::fs::write(&tmp, &json).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.path);
+        let mut entries = self.unreadable.clone();
+        for (key, rec) in &self.entries {
+            if let Ok(value) = serde_json::to_value(rec) {
+                entries.insert(key.clone(), value);
             }
         }
+        let mut doc = Map::new();
+        doc.insert("entries".into(), Value::Object(entries));
+        let Ok(json) = serde_json::to_vec_pretty(&Value::Object(doc)) else {
+            return;
+        };
+        // Write a temporary file in full and flush it to disk before it
+        // replaces the old one, so a crash or power cut mid-save leaves either
+        // the old history or the new one, never half of a file.
+        let tmp = self.path.with_extension("json.tmp");
+        let written = std::fs::File::create(&tmp).and_then(|mut f| {
+            f.write_all(&json)?;
+            f.sync_all()
+        });
+        match written.and_then(|()| std::fs::rename(&tmp, &self.path)) {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::warn!("could not save {}: {e}", self.path.display());
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
+    }
+}
+
+/// The records of a catalog file, keyed by id. `None` when the file is not a
+/// catalog at all (not JSON, or `entries` is not a map).
+fn catalog_entries(bytes: &[u8]) -> Option<Map<String, Value>> {
+    let Value::Object(mut doc) = serde_json::from_slice::<Value>(bytes).ok()? else {
+        return None;
+    };
+    match doc.remove("entries") {
+        None => Some(Map::new()),
+        Some(Value::Object(entries)) => Some(entries),
+        Some(_) => None,
+    }
+}
+
+/// Where a damaged catalog is copied before a new one is started. An earlier
+/// copy is never replaced.
+fn backup_path(path: &Path) -> PathBuf {
+    let first = path.with_extension("json.bad");
+    if !first.exists() {
+        return first;
+    }
+    path.with_extension(format!("json.{}.bad", now_secs()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(name: &str) -> TransferRecord {
+        Catalog::new_record(
+            TransferId::new(),
+            Direction::Receive,
+            name.into(),
+            "ticket".into(),
+            "hash".into(),
+            Some("/dest".into()),
+            None,
+            1,
+            10,
+        )
+    }
+
+    #[test]
+    fn a_record_it_cannot_read_does_not_cost_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transfers.json");
+        let good = record("good");
+        let good_json = serde_json::to_value(&good).unwrap();
+        let mut odd = serde_json::to_value(record("from a newer version")).unwrap();
+        odd["status"] = Value::String("paused".into());
+        let odd_id = odd["id"].as_str().unwrap().to_string();
+        let file = serde_json::json!({
+            "entries": { good.id.to_string(): good_json, odd_id.clone(): odd.clone() }
+        });
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+
+        let mut cat = Catalog::load(path.clone());
+        let listed = cat.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "good");
+
+        // Saving keeps the record it could not read, exactly as it was.
+        cat.upsert(record("new"));
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["entries"][&odd_id], odd);
+        assert_eq!(saved["entries"].as_object().unwrap().len(), 3);
+        assert_eq!(Catalog::load(path).list().len(), 2);
+    }
+
+    #[test]
+    fn a_damaged_file_is_copied_aside_before_starting_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transfers.json");
+        std::fs::write(&path, b"{\"entries\": {\"abc\": ").unwrap();
+
+        let mut cat = Catalog::load(path.clone());
+        assert!(cat.list().is_empty());
+        let backup = dir.path().join("transfers.json.bad");
+        assert_eq!(
+            std::fs::read(&backup).unwrap(),
+            b"{\"entries\": {\"abc\": ".to_vec()
+        );
+
+        // A second damaged file does not replace the first copy.
+        cat.upsert(record("after"));
+        std::fs::write(&path, b"not json").unwrap();
+        let _ = Catalog::load(path);
+        assert_eq!(
+            std::fs::read(&backup).unwrap(),
+            b"{\"entries\": {\"abc\": ".to_vec()
+        );
+        let copies = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".bad"))
+            .count();
+        assert_eq!(copies, 2);
+    }
+
+    #[test]
+    fn records_from_older_versions_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transfers.json");
+        let id = TransferId::new();
+        // No source, file_count or any later field.
+        let file = serde_json::json!({ "entries": { id.to_string(): {
+            "id": id, "direction": "receive", "name": "old", "ticket": "t",
+            "hash": "h", "dest": "/d", "total_bytes": 5, "transferred": 0,
+            "status": "interrupted", "created_at": 1, "updated_at": 2
+        }}});
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+
+        let cat = Catalog::load(path);
+        let rec = cat.get(id).expect("the old record loads");
+        assert_eq!(rec.status, Status::Interrupted);
+        assert_eq!(rec.file_count, 0);
+        assert_eq!(rec.selected, None);
+    }
+
+    #[test]
+    fn a_new_receive_takes_over_unfinished_ones_of_the_same_files() {
+        let mut cat = Catalog::default();
+        let add = |cat: &mut Catalog, status, hash: &str, dest: &str, sel: Option<Vec<usize>>| {
+            let mut rec = record("x");
+            rec.status = status;
+            rec.hash = hash.into();
+            rec.dest = Some(dest.into());
+            rec.selected = sel;
+            let id = rec.id;
+            cat.upsert(rec);
+            id
+        };
+        let interrupted = add(&mut cat, Status::Interrupted, "h", "/d", None);
+        let failed = add(&mut cat, Status::Error, "h", "/d", Some(vec![1]));
+        let other_folder = add(&mut cat, Status::Interrupted, "h", "/e", None);
+        let other_content = add(&mut cat, Status::Interrupted, "g", "/d", None);
+        let finished = add(&mut cat, Status::Done, "h", "/d", None);
+        let cancelled = add(&mut cat, Status::Cancelled, "h", "/d", None);
+        let running = add(&mut cat, Status::Active, "h", "/d", None);
+
+        // A selection only takes over receives it covers.
+        let partial = add(&mut cat, Status::Active, "h", "/d", Some(vec![1, 2]));
+        let mut gone = cat.retire_superseded(partial);
+        assert_eq!(gone, vec![failed]);
+        assert!(cat.get(interrupted).is_some());
+
+        // A whole-transfer receive covers any selection.
+        let whole = add(&mut cat, Status::Active, "h", "/d", None);
+        gone = cat.retire_superseded(whole);
+        assert_eq!(gone, vec![interrupted]);
+        for kept in [
+            other_folder,
+            other_content,
+            finished,
+            cancelled,
+            running,
+            partial,
+        ] {
+            assert!(cat.get(kept).is_some());
+        }
+    }
+
+    #[test]
+    fn updating_an_unknown_transfer_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transfers.json");
+        let mut cat = Catalog::load(path.clone());
+        cat.set_status(TransferId::new(), Status::Error, None);
+        assert!(!path.exists());
     }
 }

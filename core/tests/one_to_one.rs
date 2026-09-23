@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use common::{local_core, make_payload, wait_done, wait_ready};
-use irohcore::{CoreError, Progress, ProgressStream};
+use irohcore::{CoreError, ErrorCode, Progress, ProgressStream};
 use tokio_stream::StreamExt;
 
 /// Drive a SEND stream until the send has fully torn down, returning what it
@@ -39,10 +39,13 @@ fn is_permission_refusal(chain: &str) -> bool {
         .any(|(i, m)| !chain[i + m.len()..].starts_with(|c: char| c.is_ascii_digit()))
 }
 
-/// The request reached the sender and the gate refused it.
+/// The request reached the sender and the gate refused it. The engine turns
+/// the gate's permission reset into [`CoreError::AlreadyClaimed`]; a raw chain
+/// carrying the reset code counts too.
 fn assert_refused<T: std::fmt::Debug>(res: Result<T, CoreError>, what: &str) {
     match res {
         Ok(v) => panic!("{what}: expected a refusal, got {v:?}"),
+        Err(CoreError::AlreadyClaimed) => {}
         Err(e) => {
             let chain = format!("{e:#}");
             assert!(
@@ -59,19 +62,20 @@ async fn assert_receive_refused(stream: &mut ProgressStream, what: &str) {
     let fut = async {
         while let Some(ev) = stream.next().await {
             match ev {
-                Progress::Error { message, .. } => return message,
+                Progress::Error { code, message, .. } => return (code, message),
                 Progress::Done { .. } => panic!("{what}: the download completed"),
                 _ => {}
             }
         }
         panic!("{what}: receive stream ended without an outcome");
     };
-    let message = tokio::time::timeout(Duration::from_secs(30), fut)
+    let (code, message) = tokio::time::timeout(Duration::from_secs(30), fut)
         .await
         .expect("timed out waiting for the refusal");
-    assert!(
-        !message.contains("can't reach the sender"),
-        "{what}: the sender was unreachable ({message}), so nothing was refused"
+    assert_eq!(
+        code,
+        ErrorCode::AlreadyClaimed,
+        "{what}: expected the gate's refusal, got: {message}"
     );
 }
 
@@ -98,9 +102,28 @@ async fn ticket_is_bound_to_first_device() {
     assert_eq!(preview.file_count, 1);
 
     // Device 2 (a different device) is denied: it cannot even preview.
-    assert_refused(
-        r2.inspect(ticket.clone()).await,
-        "a second device must be denied the same ticket (one-to-one)",
+    let denied = r2.inspect(ticket.clone()).await;
+    assert!(
+        matches!(denied, Err(CoreError::AlreadyClaimed)),
+        "a second device must be told the code was already used (one-to-one), got {denied:?}"
+    );
+
+    // Receiving is refused the same way, and says so.
+    let (_rid2, mut rs2) = r2
+        .receive(ticket.clone(), work.path().join("out2"))
+        .await
+        .unwrap();
+    let (code, message) = loop {
+        match rs2.next().await.expect("stream ended before an error") {
+            Progress::Error { code, message, .. } => break (code, message),
+            Progress::Done { .. } => panic!("a second device must not receive the content"),
+            _ => {}
+        }
+    };
+    assert_eq!(code, ErrorCode::AlreadyClaimed);
+    assert!(
+        message.contains("already used by another device"),
+        "{message}"
     );
 
     // Device 1 can still complete its download (same device as the binding).

@@ -53,12 +53,9 @@ impl Core {
         let tx_err = tx.clone();
         tokio::spawn(async move {
             if let Err(e) = run_send(core.clone(), id, paths, tx, token).await {
-                let _ = tx_err
-                    .send(Progress::Error {
-                        id,
-                        message: e.to_string(),
-                    })
-                    .await;
+                tracing::warn!("send {id} failed: {e:#}");
+                let (code, message) = crate::fail::describe(&e);
+                let _ = tx_err.send(Progress::Error { id, code, message }).await;
                 core.inner
                     .catalog
                     .lock()
@@ -131,7 +128,10 @@ async fn run_send(
     // 3. Bundle into a Collection (a HashSeq) — uniform for single file or folder.
     let files_count = entries.len();
     let collection: Collection = entries.into_iter().collect();
-    let collection_tag = collection.store(store).await.context("store collection")?;
+    let collection_tag = collection
+        .store(store)
+        .await
+        .context("could not prepare the transfer")?;
     let hash = collection_tag.hash();
 
     // 4. Mint the ticket from our endpoint address. For relay-backed modes, wait
@@ -274,7 +274,7 @@ async fn run_send(
                         .lock()
                         .await
                         .set_status(id, Status::Done, Some(body.min(total)));
-                    let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds } }).await;
+                    let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds, ..Default::default() } }).await;
                     // Keep serving until cancelled: the same device may come
                     // back for it (the one-to-one gate still applies).
                 }
@@ -325,6 +325,7 @@ async fn run_send(
         let _ = tx
             .send(Progress::Error {
                 id,
+                code: crate::progress::ErrorCode::Other,
                 message: format!(
                     "{name} was changed after it was shared, so this code no longer works. \
                      Share it again to send it as it is now."
@@ -399,10 +400,12 @@ async fn import_file(
                 return Ok(Some((tt, len)));
             }
             Some(AddProgressItem::Error(e)) => {
-                return Err(anyhow::Error::from(e).context(format!("import {}", path.display())))
+                return Err(
+                    anyhow::Error::from(e).context(format!("could not read {}", path.display()))
+                )
             }
             Some(AddProgressItem::CopyProgress(_) | AddProgressItem::CopyDone) => {}
-            None => anyhow::bail!("import {} ended unexpectedly", path.display()),
+            None => anyhow::bail!("could not read {}: it ended unexpectedly", path.display()),
         }
     }
 }
@@ -542,12 +545,13 @@ fn unique_name(name: &str, is_dir: bool, taken: &mut std::collections::HashSet<S
 fn collect_files(path: &Path) -> anyhow::Result<(Vec<(String, PathBuf)>, usize)> {
     use walkdir::WalkDir;
 
-    let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    let meta =
+        std::fs::metadata(path).with_context(|| format!("could not open {}", path.display()))?;
     if meta.is_file() {
         let name = path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
-            .context("file has no name")?;
+            .with_context(|| format!("{} has no file name", path.display()))?;
         return Ok((vec![(name, path.to_path_buf())], 0));
     }
 
@@ -555,11 +559,13 @@ fn collect_files(path: &Path) -> anyhow::Result<(Vec<(String, PathBuf)>, usize)>
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    let root = std::fs::canonicalize(path).with_context(|| format!("open {}", path.display()))?;
+    let root = std::fs::canonicalize(path)
+        .with_context(|| format!("could not open {}", path.display()))?;
     let mut out = Vec::new();
     let mut skipped = 0usize;
     for entry in WalkDir::new(path).follow_links(false) {
-        let entry = entry?;
+        let entry =
+            entry.with_context(|| format!("could not read the folder {}", path.display()))?;
         let ft = entry.file_type();
         let file = if ft.is_file() {
             entry.path().to_path_buf()

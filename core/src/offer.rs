@@ -198,7 +198,8 @@ pub enum OfferUpdate {
         #[serde(default)]
         unseen: bool,
     },
-    /// Couldn't deliver / timed out / they went away.
+    /// Couldn't deliver / timed out / they went away. `reason` is a whole plain
+    /// sentence, meant to be shown as it is.
     Failed { reason: String },
     /// This device took the offer back ([`Core::cancel_offer`], or its send
     /// ended) before they answered. Their dialog closes.
@@ -679,6 +680,22 @@ async fn release_offer(core: &Core, id: TransferId, hash: &str, peer: EndpointId
     }
 }
 
+/// Why an offer failed, as the sender reads it in [`OfferUpdate::Failed`]:
+/// whole sentences, shown as they are.
+const OFFER_UNREACHABLE: &str =
+    "Could not reach this device. Check that Dropwire is open on it with Nearby turned on.";
+const OFFER_DROPPED: &str = "The connection dropped before they answered. Try again.";
+const OFFER_NO_ANSWER: &str = "They did not answer in time.";
+const OFFER_UNREADABLE: &str =
+    "Their answer could not be read. Check that both devices run the latest Dropwire.";
+
+/// Log the technical detail of an offer failure (locally only) and hand back
+/// the plain reason.
+fn offer_failed(reason: &str, detail: impl std::fmt::Display) -> String {
+    tracing::warn!("nearby offer failed: {detail}");
+    reason.to_string()
+}
+
 /// Deliver the offer and read the verdict off our own connection (echoed).
 /// `reached` is set once a connection to the neighbor is up: from then on it
 /// may hold the code the offer carries. When `withdraw` fires first, the
@@ -698,8 +715,8 @@ async fn deliver_offer(
             CONSENT_CONNECT_TIMEOUT,
             endpoint.connect(dial_addr, CTRL_ALPN),
         ) => conn
-            .map_err(|_| "neighbor unreachable".to_string())?
-            .map_err(|e| format!("connect failed: {e}"))?,
+            .map_err(|_| offer_failed(OFFER_UNREACHABLE, "connect timed out"))?
+            .map_err(|e| offer_failed(OFFER_UNREACHABLE, format!("connect: {e:#}")))?,
     };
     *reached = true;
 
@@ -719,7 +736,10 @@ async fn deliver_offer(
                 .filter(|n| !n.is_empty()),
         }),
         Ok(Frame::OfferDecline { unseen, .. }) => Ok(OfferUpdate::Declined { unseen }),
-        _ => Err("unexpected answer".into()),
+        _ => Err(offer_failed(
+            OFFER_UNREADABLE,
+            format!("unexpected answer of {} bytes", answer.len()),
+        )),
     }
 }
 
@@ -728,15 +748,19 @@ async fn exchange(conn: &Connection, frame: &Frame) -> std::result::Result<Vec<u
     let (mut send, mut recv) = conn
         .open_bi()
         .await
-        .map_err(|e| format!("stream open failed: {e}"))?;
-    let bytes = serde_json::to_vec(frame).map_err(|e| e.to_string())?;
-    send.write_all(&bytes).await.map_err(|e| e.to_string())?;
-    send.finish().map_err(|e| e.to_string())?;
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("open stream: {e:#}")))?;
+    let bytes = serde_json::to_vec(frame)
+        .map_err(|e| offer_failed("Could not prepare the offer.", format!("encode: {e}")))?;
+    send.write_all(&bytes)
+        .await
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("write: {e:#}")))?;
+    send.finish()
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("finish: {e:#}")))?;
 
     tokio::time::timeout(ANSWER_TIMEOUT, recv.read_to_end(64 * 1024))
         .await
-        .map_err(|_| "they didn't answer in time".to_string())?
-        .map_err(|e| format!("read failed: {e}"))
+        .map_err(|_| offer_failed(OFFER_NO_ANSWER, "no answer in time"))?
+        .map_err(|e| offer_failed(OFFER_DROPPED, format!("read: {e:#}")))
 }
 
 /// How long the receiver's parked offer connection waits for the local user's

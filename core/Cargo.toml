@@ -40,14 +40,20 @@ walkdir.workspace = true
 uuid.workspace = true
 data-encoding.workspace = true
 url.workspace = true
-# BLAKE3, to check a file this device already held before it is reported as
-# received (see receive.rs). Same version iroh-blobs hashes with.
+# BLAKE3: tells whether a receive would save content already on disk, and
+# re-checks a file this device already held before it is reported as received
+# (see export.rs). Same version iroh-blobs hashes with; already in the tree.
 blake3 = "1.8"
 # Nearby-device discovery (mDNS/DNS-SD). Runtime-threaded (no async runtime
 # coupling), pure Rust, works on Windows/macOS/Linux.
 mdns-sd = "0.21"
 # OS hostname → default device display name.
 hostname = "0.4"
+
+# Sets the com.apple.quarantine attribute on received files through a safe API
+# (this crate forbids unsafe code of its own). Already in the tree.
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -68,4 +74,10 @@ required-features = ["test-utils"]
 [[test]]
 name = "nearby"
 path = "tests/nearby.rs"
+required-features = ["test-utils"]
+
+# Watches the store shrink, which needs the test-only fast collection interval.
+[[test]]
+name = "cleanup"
+path = "tests/cleanup.rs"
 required-features = ["test-utils"]

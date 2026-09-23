@@ -19,6 +19,8 @@ mod control;
 mod discover;
 mod endpoint;
 mod error;
+mod export;
+mod fail;
 mod identity;
 mod offer;
 mod progress;
@@ -43,10 +45,13 @@ pub use control::CtrlMsg;
 pub use discover::NearbyDevice;
 pub use error::{CoreError, Result};
 pub use offer::{IncomingOffer, OfferUpdate, OfferWithdrawn, WithdrawReason};
+pub use progress::RenamedFile;
 pub use progress::{
-    Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
-    TransferStats,
+    Direction, ErrorCode, FilePreview, Progress, ProgressStream, Route, TransferId,
+    TransferPreview, TransferStats,
 };
+#[cfg(feature = "test-utils")]
+pub use store::set_gc_interval_for_tests;
 
 use catalog::Catalog;
 use discover::NearbyState;
@@ -163,6 +168,7 @@ impl Core {
 
         let mut catalog = Catalog::load(config.data_dir.join("transfers.json"));
         catalog.mark_stale_interrupted();
+        store::reconcile_receive_tags(&store, &catalog.list()).await;
 
         let inner = Arc::new(Inner {
             store,
@@ -210,7 +216,10 @@ impl Core {
     /// Clear finished history. Records live only on this device, so this is the
     /// whole delete story: there is nothing on a server to remove as well.
     pub async fn clear_transfers(&self) {
-        self.inner.catalog.lock().await.clear_finished();
+        let removed = self.inner.catalog.lock().await.clear_finished();
+        for id in removed {
+            store::release_receive(&self.inner.store, id).await;
+        }
     }
 
     /// Gracefully shut down the engine.

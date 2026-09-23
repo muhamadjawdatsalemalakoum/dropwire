@@ -50,7 +50,8 @@ async fn an_edited_local_copy_is_not_passed_off_as_received() {
     match ended {
         Some(Progress::Error { message, .. }) => {
             assert!(
-                message.starts_with("report-original.bin could not be verified"),
+                message.contains("report-original.bin")
+                    && message.contains("could not be verified"),
                 "a plain reason: {message}"
             );
             assert!(!saved.exists(), "nothing unverified is left behind");

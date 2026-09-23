@@ -136,11 +136,13 @@ fn code_naming(eid: iroh::EndpointId) -> String {
 }
 
 /// The request reached the sender and its one-to-one gate refused it:
-/// iroh-blobs resets a refused request's stream with ERR_PERMISSION (1).
+/// iroh-blobs resets a refused request's stream with ERR_PERMISSION (1), which
+/// the engine reports as [`CoreError::AlreadyClaimed`].
 fn assert_refused<T: std::fmt::Debug>(res: Result<T, CoreError>, what: &str) {
     const NEEDLE: &str = "reset by peer: error 1";
     match res {
         Ok(v) => panic!("{what}: expected a refusal, got {v:?}"),
+        Err(CoreError::AlreadyClaimed) => {}
         Err(e) => {
             let chain = format!("{e:#}");
             let refused = chain
@@ -1160,4 +1162,50 @@ mod tempdir {
         std::fs::create_dir_all(&p).unwrap();
         TempDir(p)
     }
+}
+
+/// An offer that cannot be delivered fails with a plain sentence, shown as it
+/// is, not with the connection library's error text.
+#[tokio::test]
+async fn an_undeliverable_offer_fails_in_plain_words() {
+    let dir = tempdir::dir();
+    let dir2 = tempdir::dir();
+    let dir3 = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let receiver = local_core(dir2.path()).await;
+    let stranger = local_core(dir3.path()).await;
+    receiver.test_set_nearby_running(true);
+
+    let src = dir.path().join("album.zip");
+    std::fs::write(&src, make_payload(1024)).unwrap();
+    let (send_id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+
+    // The address answers, but as a different device than the one asked for.
+    let (_offer_id, mut updates) = sender
+        .offer_nearby_dial(
+            stranger.endpoint_id(),
+            send_id,
+            Some(receiver.test_dial_addr()),
+        )
+        .await
+        .expect("offer");
+    let update = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match updates.next().await {
+                Some(OfferUpdate::Waiting) => continue,
+                other => return other.expect("offer stream ended"),
+            }
+        }
+    })
+    .await
+    .expect("no outcome in time");
+    let OfferUpdate::Failed { reason } = update else {
+        panic!("expected a failure, got {update:?}");
+    };
+    assert!(
+        reason.starts_with("Could not reach this device."),
+        "unexpected reason: {reason}"
+    );
+    assert!(!reason.contains('\u{2014}'), "no em dashes: {reason}");
 }
