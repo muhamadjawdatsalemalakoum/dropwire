@@ -592,6 +592,12 @@ img, svg { max-width: 100%; }
 }
 .faq-item summary::-webkit-details-marker { display: none; }
 .faq-item summary:hover { color: var(--link); }
+/* The card clips its overflow, so draw the keyboard focus ring inside the
+   question instead of around it, where it would be cut off. */
+.faq-item summary:focus-visible {
+  outline-offset: -3px;
+  border-radius: calc(var(--radius-sm) - 1px);
+}
 .chevron {
   flex: none;
   width: 11px;
