@@ -403,7 +403,8 @@ impl Core {
 
     /// Like [`Self::offer_nearby`] with an explicit dial-address hint — used
     /// when the peer's transport was learned out-of-band (BLE bootstrap, or
-    /// hermetic tests). Dial priority: mDNS LAN socket → hint → engine lookup.
+    /// hermetic tests). Dials every LAN socket announced for the id plus the
+    /// hint, or looks the id up when there are none.
     pub async fn offer_nearby_dial(
         &self,
         eid_hex: String,

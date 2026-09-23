@@ -64,7 +64,8 @@ pub struct NearbyDevice {
     /// TXT key, so the UI simply omits the badge.
     #[serde(default)]
     pub os: Option<String>,
-    /// Most recent LAN socket, e.g. `"192.168.1.20:48726"` (display/debug).
+    /// LAN socket from the first announcement of this id, e.g.
+    /// `"192.168.1.20:48726"` (display/debug).
     pub addr: Option<String>,
     /// Unix seconds of last sighting.
     pub seen_at: u64,
@@ -537,7 +538,7 @@ impl NearbyState {
             .map_err(|e| CoreError::Other(anyhow::anyhow!("mDNS register: {e}")))?;
 
         self.registered = Some(fullname);
-        // Self-announcements are filtered at read time (list/peer_socket),
+        // Self-announcements are filtered at read time (list/peer_sockets),
         // so each session's table takes every event as it comes.
         discovery().join(&self.peers);
         self.running.store(true, Ordering::Relaxed);
