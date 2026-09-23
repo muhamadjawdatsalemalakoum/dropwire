@@ -20,6 +20,7 @@ mod discover;
 mod endpoint;
 mod error;
 mod export;
+mod fail;
 mod identity;
 mod offer;
 mod progress;
@@ -46,8 +47,8 @@ pub use error::{CoreError, Result};
 pub use offer::{IncomingOffer, OfferUpdate};
 pub use progress::RenamedFile;
 pub use progress::{
-    Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
-    TransferStats,
+    Direction, ErrorCode, FilePreview, Progress, ProgressStream, Route, TransferId,
+    TransferPreview, TransferStats,
 };
 #[cfg(feature = "test-utils")]
 pub use store::set_gc_interval_for_tests;

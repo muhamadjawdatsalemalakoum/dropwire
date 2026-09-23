@@ -313,3 +313,27 @@ async fn sender_sees_progress() {
     assert!(peer, "sender should see PeerJoined");
     assert!(done, "sender should see Done");
 }
+
+/// A failed send says which file and why, in plain words, with a code the app
+/// can act on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_file_fails_with_a_plain_reason() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let sender = local_core(send_data.path()).await;
+
+    let gone = work.path().join("gone.pdf");
+    let (_sid, mut ss) = sender.send(gone.clone()).await.unwrap();
+    let (code, message) = loop {
+        match ss.next().await.expect("stream ended before an error") {
+            Progress::Error { code, message, .. } => break (code, message),
+            Progress::Ready { .. } => panic!("a missing file must not be shared"),
+            _ => {}
+        }
+    };
+    assert_eq!(code, irohcore::ErrorCode::NotFound);
+    assert_eq!(
+        message,
+        format!("Could not open {}: it is no longer there.", gone.display())
+    );
+}

@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::catalog::{Catalog, Status};
 use crate::error::{CoreError, Result};
 use crate::export;
+use crate::fail;
 use crate::progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
     TransferStats,
@@ -49,8 +50,8 @@ const MAX_META_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_HASH_SEQ_BYTES: u64 = (MAX_FILES as u64 + 1) * 32;
 
 /// What the receiver is told when a transfer is over the limits above.
-const TOO_LARGE: &str = "this transfer is too large to open: it lists more than 100000 files, \
-     or its list of names is bigger than 16 MB";
+const TOO_LARGE: &str = "This transfer is too large to open: it lists more than 100000 files, \
+     or its list of names is bigger than 16 MB.";
 
 /// Fetch the collection's hash list and every child's verified size, refusing
 /// transfers over the file-count limit before any size is probed.
@@ -68,9 +69,8 @@ async fn fetch_sizes(
         Err(iroh_blobs::get::GetError::BadRequest { .. }) => {
             Err(CoreError::Other(anyhow!(TOO_LARGE)))
         }
-        Err(e) => Err(CoreError::Other(
-            anyhow::Error::new(e).context("fetch sizes"),
-        )),
+        // The sender went away, or no longer shares this code.
+        Err(e) => Err(CoreError::Unreachable(format!("fetch sizes: {e:#}"))),
     }
 }
 
@@ -79,7 +79,7 @@ async fn fetch_sizes(
 fn check_manifest(sizes: &[u64], max_files: usize, max_meta: u64) -> Result<()> {
     let Some(&meta) = sizes.first() else {
         return Err(CoreError::Other(anyhow!(
-            "this transfer's file list is empty or damaged"
+            "This transfer's file list is empty or damaged."
         )));
     };
     if meta > max_meta || sizes.len() - 1 > max_files {
@@ -133,12 +133,9 @@ impl Core {
             if let Err(e) =
                 run_receive(core.clone(), id, parsed, ticket, dest, selected, tx, token).await
             {
-                let _ = tx_err
-                    .send(Progress::Error {
-                        id,
-                        message: e.to_string(),
-                    })
-                    .await;
+                tracing::warn!("receive {id} failed: {e:#}");
+                let (code, message) = fail::describe(&e);
+                let _ = tx_err.send(Progress::Error { id, code, message }).await;
                 core.inner
                     .catalog
                     .lock()
@@ -175,12 +172,8 @@ impl Core {
         .await
         {
             Ok(Ok(c)) => c,
-            Ok(Err(e)) => return Err(CoreError::Unreachable(e.to_string())),
-            Err(_) => {
-                return Err(CoreError::Unreachable(
-                    "timed out — the sender may be offline or the link may have expired".into(),
-                ))
-            }
+            Ok(Err(e)) => return Err(CoreError::Unreachable(format!("{e:#}"))),
+            Err(_) => return Err(CoreError::Unreachable("connect timed out".into())),
         };
 
         let store = &self.inner.store;
@@ -214,7 +207,7 @@ impl Core {
             match item {
                 GetProgressItem::Done(_) => break,
                 GetProgressItem::Error(e) => {
-                    return Err(CoreError::Other(anyhow!("fetch metadata: {e}")))
+                    return Err(CoreError::Unreachable(format!("fetch metadata: {e:#}")))
                 }
                 GetProgressItem::Progress(_) => {}
             }
@@ -222,7 +215,7 @@ impl Core {
 
         let collection = Collection::load(hash, store.as_ref())
             .await
-            .context("load collection metadata")?;
+            .context("The list of files in this transfer could not be read.")?;
         let files: Vec<FilePreview> = collection
             .iter()
             .enumerate()
@@ -269,16 +262,8 @@ async fn run_receive(
     .await
     {
         Ok(Ok(c)) => c,
-        Ok(Err(e)) => {
-            return Err(anyhow!(
-                "can't reach the sender (offline or link expired): {e}"
-            ))
-        }
-        Err(_) => {
-            return Err(anyhow!(
-                "can't reach the sender — they may be offline or the link expired"
-            ))
-        }
+        Ok(Err(e)) => return Err(CoreError::Unreachable(format!("{e:#}")).into()),
+        Err(_) => return Err(CoreError::Unreachable("connect timed out".into()).into()),
     };
     // Track the connection path; relay→direct can upgrade after hole-punch, so we
     // watch it live and the badge reflects the *current* path during the transfer.
@@ -421,7 +406,9 @@ async fn run_receive(
                         }
                     }
                     Some(GetProgressItem::Done(_stats)) => break,
-                    Some(GetProgressItem::Error(e)) => return Err(anyhow!("download failed: {e}")),
+                    Some(GetProgressItem::Error(e)) => {
+                        return Err(anyhow::Error::new(e).context("the download stopped"))
+                    }
                     None => break,
                 }
             }
@@ -441,7 +428,7 @@ async fn run_receive(
     // Export the collection tree to `dest`.
     let collection = Collection::load(hash, store.as_ref())
         .await
-        .context("load collection")?;
+        .context("the list of files in this transfer could not be read")?;
     if name.is_none() {
         let name = name_from(&collection);
         core.inner.catalog.lock().await.set_name(id, name);
@@ -452,7 +439,8 @@ async fn run_receive(
     // transfer is left as it is. This touches the disk (and may hash existing
     // files), so it runs off the async threads.
     let dest = std::path::absolute(&dest).unwrap_or(dest);
-    std::fs::create_dir_all(&dest)?;
+    std::fs::create_dir_all(&dest)
+        .with_context(|| format!("could not create the folder {}", dest.display()))?;
     let wanted_files: Vec<export::Wanted> = collection
         .iter()
         .enumerate()

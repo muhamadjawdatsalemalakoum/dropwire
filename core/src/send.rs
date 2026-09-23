@@ -31,12 +31,9 @@ impl Core {
         let tx_err = tx.clone();
         tokio::spawn(async move {
             if let Err(e) = run_send(core.clone(), id, path, tx, token).await {
-                let _ = tx_err
-                    .send(Progress::Error {
-                        id,
-                        message: e.to_string(),
-                    })
-                    .await;
+                tracing::warn!("send {id} failed: {e:#}");
+                let (code, message) = crate::fail::describe(&e);
+                let _ = tx_err.send(Progress::Error { id, code, message }).await;
                 core.inner
                     .catalog
                     .lock()
@@ -86,7 +83,7 @@ async fn run_send(
             })
             .temp_tag()
             .await
-            .with_context(|| format!("import {}", p.display()))?;
+            .with_context(|| format!("could not read {}", p.display()))?;
         entries.push((name, tt.hash()));
         tags.push(tt);
         imported += file_len(&p);
@@ -102,7 +99,10 @@ async fn run_send(
     // 3. Bundle into a Collection (a HashSeq) — uniform for single file or folder.
     let files_count = entries.len();
     let collection: Collection = entries.into_iter().collect();
-    let collection_tag = collection.store(store).await.context("store collection")?;
+    let collection_tag = collection
+        .store(store)
+        .await
+        .context("could not prepare the transfer")?;
     let hash = collection_tag.hash();
 
     // 4. Mint the ticket from our endpoint address. For relay-backed modes, wait
@@ -198,12 +198,13 @@ fn file_len(p: &Path) -> u64 {
 fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
     use walkdir::WalkDir;
 
-    let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    let meta =
+        std::fs::metadata(path).with_context(|| format!("could not open {}", path.display()))?;
     if meta.is_file() {
         let name = path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
-            .context("file has no name")?;
+            .with_context(|| format!("{} has no file name", path.display()))?;
         return Ok(vec![(name, path.to_path_buf())]);
     }
 
@@ -213,7 +214,8 @@ fn collect_files(path: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
         .unwrap_or_default();
     let mut out = Vec::new();
     for entry in WalkDir::new(path).follow_links(false) {
-        let entry = entry?;
+        let entry =
+            entry.with_context(|| format!("could not read the folder {}", path.display()))?;
         if !entry.file_type().is_file() {
             continue;
         }

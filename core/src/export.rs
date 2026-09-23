@@ -578,11 +578,14 @@ pub(crate) async fn save(
     transfer: &str,
     token: &CancellationToken,
 ) -> Result<Saved, String> {
-    let mut target = join_under(dest, &file.segs).ok_or("unsafe file name")?;
-    let parent = target.parent().ok_or("unsafe file name")?.to_path_buf();
-    std::fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
+    let mut target = join_under(dest, &file.segs).ok_or("the name is not safe to use")?;
+    let parent = target
+        .parent()
+        .ok_or("the name is not safe to use")?
+        .to_path_buf();
+    std::fs::create_dir_all(&parent).map_err(|e| crate::fail::io_reason(&e).1)?;
 
-    let leaf = file.segs.last().ok_or("unsafe file name")?;
+    let leaf = file.segs.last().ok_or("the name is not safe to use")?;
     let mut renamed = None;
     let mut n = 0;
     loop {
@@ -605,7 +608,7 @@ pub(crate) async fn save(
                     saved_as: segs.join("/"),
                 });
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(crate::fail::io_reason(&e).1),
         }
     }
 
@@ -622,7 +625,7 @@ pub(crate) async fn save(
         })
         .finish();
     let copied = tokio::select! {
-        res = export => res.map_err(|e| e.to_string()),
+        res = export => res.map_err(|e| crate::fail::reason_of(&e)),
         _ = token.cancelled() => {
             cleanup(&temp, &target);
             // The store stops copying at its next chunk once nobody listens;
@@ -654,7 +657,7 @@ pub(crate) async fn save(
             }
             Err(e) => {
                 cleanup(&temp, &target);
-                return Err(e.to_string());
+                return Err(crate::fail::io_reason(&e).1);
             }
         }
     }

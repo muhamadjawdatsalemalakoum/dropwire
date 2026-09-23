@@ -105,6 +105,27 @@ pub struct TransferPreview {
     pub route: Route,
 }
 
+/// What kind of failure ended a transfer (see [`Progress::Error`]), so the app
+/// can decide what to offer without reading the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorCode {
+    /// The sender could not be reached: offline, or the code has expired.
+    Unreachable,
+    /// A file or folder is no longer there.
+    NotFound,
+    /// The system refused access to a file or folder, or the drive is
+    /// read-only.
+    PermissionDenied,
+    /// The disk is full.
+    DiskFull,
+    /// A file is open in another app.
+    FileInUse,
+    /// Anything else. The message says what happened.
+    #[default]
+    Other,
+}
+
 /// Progress events emitted on a transfer's [`ProgressStream`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -131,8 +152,14 @@ pub enum Progress {
         id: TransferId,
         stats: TransferStats,
     },
-    /// Transfer failed.
-    Error { id: TransferId, message: String },
+    /// Transfer failed. `message` is a plain sentence meant for the screen;
+    /// `code` says what kind of failure it was, for choosing what to offer next.
+    Error {
+        id: TransferId,
+        #[serde(default)]
+        code: ErrorCode,
+        message: String,
+    },
     /// Transfer was cancelled by the user.
     Cancelled { id: TransferId },
 }
