@@ -210,6 +210,9 @@ async fn run_send(
                         let _ = tx.send(Progress::PeerLeft { id }).await;
                     }
                 }
+                Some(ProviderEvent::Declined) => {
+                    let _ = tx.send(Progress::Declined { id }).await;
+                }
                 None => break,
             }
         }
@@ -297,9 +300,17 @@ pub(crate) struct Serving {
 /// Sender-side events distilled from iroh-blobs provider events, routed per hash.
 pub(crate) enum ProviderEvent {
     PeerJoined,
-    Progress { offset: u64, total: u64 },
-    Done { bytes: u64, seconds: f64 },
+    Progress {
+        offset: u64,
+        total: u64,
+    },
+    Done {
+        bytes: u64,
+        seconds: f64,
+    },
     Aborted,
+    /// The bound device declined from the preview (see [`consume_declines`]).
+    Declined,
 }
 
 /// Consume the global provider-event stream from the blobs server and route each
@@ -431,4 +442,40 @@ async fn approve_one_to_one(
         Some(_) => return None,
     }
     Some(entry.clone())
+}
+
+/// Act on declines from receivers' previews (routed from the control channel
+/// with the sender's authenticated id). Only the device a code is bound to
+/// can decline it, so no one else can release someone's binding. Declining
+/// releases the binding and tells the send; the send keeps serving, so its
+/// code can go to someone else.
+pub(crate) async fn consume_declines(
+    core: Core,
+    mut rx: mpsc::UnboundedReceiver<(iroh::EndpointId, Option<String>)>,
+) {
+    while let Some((remote, hash)) = rx.recv().await {
+        let serving = core.inner.serving.lock().await;
+        let mut bound = core.inner.bound.lock().await;
+        let declined = match hash {
+            Some(h) => (bound.get(&h) == Some(&remote)).then_some(h),
+            // An older peer's decline names no code. Act only when exactly one
+            // live send is bound to that device, so there is no guessing.
+            None => {
+                let mut theirs = bound
+                    .iter()
+                    .filter(|(h, eid)| **eid == remote && serving.contains_key(*h))
+                    .map(|(h, _)| h.clone());
+                match (theirs.next(), theirs.next()) {
+                    (Some(h), None) => Some(h),
+                    _ => None,
+                }
+            }
+        };
+        let Some(h) = declined else { continue };
+        let Some(entry) = serving.get(&h) else {
+            continue;
+        };
+        bound.remove(&h);
+        let _ = entry.events.send(ProviderEvent::Declined);
+    }
 }

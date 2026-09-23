@@ -48,7 +48,14 @@ pub(crate) enum Frame {
     // ---- presence / chat (public [`CtrlMsg`] vocabulary) ----
     Hello,
     Ack,
-    Decline,
+    /// Receiver to sender: no thanks, from the preview. `hash` names the code
+    /// being declined (hex content hash). Older peers send a bare
+    /// `{"kind":"decline"}`, which still parses (as `None`); older senders
+    /// ignore the extra field.
+    Decline {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hash: Option<String>,
+    },
     Chat {
         text: String,
     },
@@ -94,7 +101,7 @@ impl From<&CtrlMsg> for Frame {
         match m {
             CtrlMsg::Hello => Frame::Hello,
             CtrlMsg::Ack => Frame::Ack,
-            CtrlMsg::Decline => Frame::Decline,
+            CtrlMsg::Decline => Frame::Decline { hash: None },
             CtrlMsg::Chat { text } => Frame::Chat { text: text.clone() },
         }
     }
@@ -163,6 +170,10 @@ pub(crate) struct ConsentCtx {
     /// The control handler parks the sender's offer connection here until the
     /// local user responds, then the verdict travels back in-band.
     pub(crate) verdict_waiters: Arc<StdMutex<HashMap<String, mpsc::UnboundedSender<Frame>>>>,
+    /// Declines received from peers: (authenticated sender of the frame, the
+    /// code's hash if it named one). The engine acts on them in
+    /// `send::consume_declines`, which can reach the serving state.
+    pub(crate) decline_tx: mpsc::UnboundedSender<(EndpointId, Option<String>)>,
 }
 
 impl ConsentCtx {
@@ -541,8 +552,9 @@ pub(crate) fn route_offer(
 
 /// Route any other inbound control frame (presence/chat) to the broadcast bus.
 /// Verdict frames arriving unsolicited are ignored (the sender learns its
-/// verdict in-band on its own outgoing offer connection).
-pub(crate) fn route_other(ctx: &ConsentCtx, frame: Frame) {
+/// verdict in-band on its own outgoing offer connection). `remote` is the
+/// TLS-authenticated id of the peer that sent the frame.
+pub(crate) fn route_other(ctx: &ConsentCtx, remote: EndpointId, frame: Frame) {
     match frame {
         Frame::Hello => {
             let _ = ctx.ctrl_tx.send(CtrlMsg::Hello);
@@ -550,12 +562,44 @@ pub(crate) fn route_other(ctx: &ConsentCtx, frame: Frame) {
         Frame::Ack => {
             let _ = ctx.ctrl_tx.send(CtrlMsg::Ack);
         }
-        Frame::Decline => {
+        Frame::Decline { hash } => {
+            let _ = ctx.decline_tx.send((remote, hash));
             let _ = ctx.ctrl_tx.send(CtrlMsg::Decline);
         }
         Frame::Chat { text } => {
             let _ = ctx.ctrl_tx.send(CtrlMsg::Chat { text });
         }
         Frame::OfferAccept { .. } | Frame::OfferDecline { .. } | Frame::Offer { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decline_frame_stays_wire_compatible() {
+        // An older peer's bare decline still parses.
+        let old: Frame = serde_json::from_str(r#"{"kind":"decline"}"#).unwrap();
+        assert_eq!(old, Frame::Decline { hash: None });
+
+        // The new frame names the code and round-trips.
+        let new = Frame::Decline {
+            hash: Some("ab12".into()),
+        };
+        let json = serde_json::to_string(&new).unwrap();
+        assert_eq!(json, r#"{"kind":"decline","hash":"ab12"}"#);
+        assert_eq!(serde_json::from_str::<Frame>(&json).unwrap(), new);
+
+        // Without a hash it goes out exactly as older builds sent it.
+        let bare = serde_json::to_string(&Frame::Decline { hash: None }).unwrap();
+        assert_eq!(bare, r#"{"kind":"decline"}"#);
+
+        // An older sender, whose decline had no fields (the same shape as the
+        // public CtrlMsg), still reads the new frame.
+        assert_eq!(
+            serde_json::from_str::<CtrlMsg>(&json).unwrap(),
+            CtrlMsg::Decline
+        );
     }
 }

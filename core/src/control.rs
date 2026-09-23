@@ -105,7 +105,7 @@ impl ProtocolHandler for Ctrl {
                 let _ = connection.closed().await;
             }
             Ok(other_frame) => {
-                offer::route_other(&self.core_ctx, other_frame.clone());
+                offer::route_other(&self.core_ctx, remote, other_frame.clone());
                 if let Ok(echo) = serde_json::to_vec(&other_frame) {
                     let _ = send.write_all(&echo).await;
                 }
@@ -141,22 +141,40 @@ impl Core {
 
     /// Send a one-shot control message to the peer that issued `ticket` (the
     /// sender). Dials the control ALPN on the same endpoint and waits for the ack.
+    /// A [`CtrlMsg::Decline`] goes out as [`Core::decline`] sends it.
     pub async fn send_control(&self, ticket: String, msg: CtrlMsg) -> Result<()> {
+        if msg == CtrlMsg::Decline {
+            return self.decline(ticket).await;
+        }
         let parsed: BlobTicket = ticket
             .parse()
             .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
-        self.dial_ctrl(parsed.addr().clone(), msg).await
+        self.dial_ctrl(parsed.addr().clone(), &offer::Frame::from(&msg))
+            .await
+    }
+
+    /// Decline the code in `ticket` after previewing it. The sender is told
+    /// right away, and if this device is the one the code is bound to, the
+    /// binding is released so the sender's code can go to someone else.
+    pub async fn decline(&self, ticket: String) -> Result<()> {
+        let parsed: BlobTicket = ticket
+            .parse()
+            .map_err(|_| CoreError::InvalidTicket(ticket.clone()))?;
+        let frame = offer::Frame::Decline {
+            hash: Some(parsed.hash().to_string()),
+        };
+        self.dial_ctrl(parsed.addr().clone(), &frame).await
     }
 
     /// TEST-ONLY: send a control message to an explicit address (hermetic
     /// tests wire two loopback endpoints directly).
     #[cfg(feature = "test-utils")]
     pub async fn send_control_to(&self, addr: iroh::EndpointAddr, msg: CtrlMsg) -> Result<()> {
-        self.dial_ctrl(addr, msg).await
+        self.dial_ctrl(addr, &offer::Frame::from(&msg)).await
     }
 
-    /// Dial the control ALPN, deliver `msg`, wait for the echo-ack.
-    async fn dial_ctrl(&self, addr: iroh::EndpointAddr, msg: CtrlMsg) -> Result<()> {
+    /// Dial the control ALPN, deliver `frame`, wait for the echo-ack.
+    async fn dial_ctrl(&self, addr: iroh::EndpointAddr, frame: &offer::Frame) -> Result<()> {
         let endpoint = self.inner.router.endpoint();
         let conn = endpoint
             .connect(addr, CTRL_ALPN)
@@ -166,7 +184,7 @@ impl Core {
             .open_bi()
             .await
             .map_err(|e| CoreError::Other(anyhow::anyhow!("control stream: {e}")))?;
-        let bytes = serde_json::to_vec(&msg)
+        let bytes = serde_json::to_vec(frame)
             .map_err(|e| CoreError::Other(anyhow::anyhow!("encode: {e}")))?;
         send.write_all(&bytes)
             .await

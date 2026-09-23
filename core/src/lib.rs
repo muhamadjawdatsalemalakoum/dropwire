@@ -122,6 +122,7 @@ impl Core {
         // Control plane (presence/chat + nearby consent frames).
         let (ctrl_tx, _) = broadcast::channel(64);
         let (offer_tx, _) = broadcast::channel(64);
+        let (decline_tx, decline_rx) = mpsc::unbounded_channel();
 
         // Nearby discovery session. The mDNS SRV record points at this
         // endpoint's real QUIC port so peers can dial straight over the LAN.
@@ -142,6 +143,7 @@ impl Core {
             incoming_offers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             nearby_running: nearby.running_flag(),
             verdict_waiters: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            decline_tx,
         };
 
         let router = Router::builder(endpoint)
@@ -173,6 +175,7 @@ impl Core {
         });
         let core = Core { inner };
         tokio::spawn(send::consume_provider_events(core.clone(), ev_rx));
+        tokio::spawn(send::consume_declines(core.clone(), decline_rx));
         Ok(core)
     }
 

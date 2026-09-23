@@ -120,6 +120,10 @@ pub enum Progress {
     /// still works for that same device, so it can come back and resume; a
     /// later `peerJoined` means it has.
     PeerLeft { id: TransferId },
+    /// Sender: the device this code was bound to looked at the preview and
+    /// declined. Its binding is released and the send keeps serving, so the
+    /// code now works for the next device that uses it.
+    Declined { id: TransferId },
 }
 
 impl Progress {
@@ -133,7 +137,8 @@ impl Progress {
             | Progress::Done { id, .. }
             | Progress::Error { id, .. }
             | Progress::Cancelled { id, .. }
-            | Progress::PeerLeft { id, .. } => *id,
+            | Progress::PeerLeft { id, .. }
+            | Progress::Declined { id, .. } => *id,
         }
     }
 }
