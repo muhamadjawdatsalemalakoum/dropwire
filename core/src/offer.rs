@@ -338,11 +338,15 @@ impl Core {
         self.inner.nearby.lock().await.device_name.clone()
     }
 
-    /// Change the name nearby devices see. Takes effect immediately: a live
-    /// advertisement is re-registered under the new name.
+    /// Change the name nearby devices see. The name is tidied first (control
+    /// characters and invisible marks removed, spaces collapsed, trimmed; the
+    /// result is what [`Self::device_name`] returns). An empty name, or one
+    /// over 40 characters, is refused with a message to show as it is, and
+    /// nothing changes. Takes effect immediately: a live advertisement is
+    /// re-registered under the new name, or kept as it was if that fails.
     pub async fn set_device_name(&self, name: String) -> Result<()> {
         let port = self.inner.nearby_port;
-        self.inner.nearby.lock().await.rename(name, port)
+        self.inner.nearby.lock().await.rename(&name, port)
     }
 
     /// Subscribe to offers arriving from nearby devices.

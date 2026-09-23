@@ -252,6 +252,37 @@ async fn mdns_peers_survive_a_toggle_and_a_rename() {
     }
 }
 
+/// A name the network cannot carry is refused while sharing, and the device
+/// stays visible under its old name instead of silently dropping off.
+#[tokio::test]
+#[ignore = "requires a live multicast-capable network; run with --ignored"]
+async fn mdns_a_refused_rename_keeps_the_device_visible() {
+    let _serial = serial().await;
+    let (a, b, dirs) = pair("refused").await;
+    let eid_a = a.endpoint_id();
+    a.set_device_name("Old name".into()).await.unwrap();
+    assert!(sees_named(&b, &eid_a, "Old name", 10).await, "first name");
+
+    assert!(a.set_device_name("千".repeat(90)).await.is_err());
+    assert_eq!(a.device_name().await, "Old name");
+    assert!(sees(&a, &b.endpoint_id(), 5).await, "A still shares");
+    assert!(
+        sees_named(&b, &eid_a, "Old name", 5).await,
+        "B still sees A"
+    );
+
+    // A wide name within the limit goes out whole.
+    let wide = "千".repeat(40);
+    a.set_device_name(wide.clone()).await.unwrap();
+    assert!(sees_named(&b, &eid_a, &wide, 10).await, "wide name");
+
+    let _ = a.shutdown().await;
+    let _ = b.shutdown().await;
+    for dir in dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// With sharing off everywhere in the app, the browse stops too, so a hidden
 /// device sends no Dropwire queries. Turning sharing on again browses afresh,
 /// and the devices around show again.

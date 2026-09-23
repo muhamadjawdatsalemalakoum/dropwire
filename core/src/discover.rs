@@ -394,12 +394,15 @@ impl NearbyState {
         Ok(())
     }
 
-    /// Rename this device. If a session is live the advertisement is
-    /// re-registered under the new name so peers see the change without the
-    /// user having to toggle sharing off and on. Only the advertisement
-    /// changes: the browse, and the devices it shows, carry on.
-    pub(crate) fn rename(&mut self, name: String, port: u16) -> Result<()> {
+    /// Rename this device. The name is checked first ([`device_name_from`]);
+    /// one that is refused changes nothing. If a session is live the
+    /// advertisement is re-registered under the new name so peers see the
+    /// change without the user having to toggle sharing off and on. Only the
+    /// advertisement changes: the browse, and the devices it shows, carry on.
+    /// If the new advertisement cannot go out, the old one is put back.
+    pub(crate) fn rename(&mut self, name: &str, port: u16) -> Result<()> {
         use std::sync::atomic::Ordering;
+        let name = device_name_from(name)?;
         if self.device_name == name {
             return Ok(());
         }
@@ -415,9 +418,23 @@ impl NearbyState {
                 }
             }
             if let Err(e) = d.register(info) {
-                self.running.store(false, Ordering::Relaxed);
-                discovery().leave();
-                return Err(CoreError::Other(anyhow::anyhow!("mDNS register: {e}")));
+                tracing::warn!("mDNS register for a rename: {e}");
+                let restored = advertisement(&self.self_eid, &self.device_name, port)
+                    .ok()
+                    .and_then(|info| {
+                        let old = info.get_fullname().to_string();
+                        d.register(info).ok().map(|()| old)
+                    });
+                match restored {
+                    Some(old) => self.registered = Some(old),
+                    None => {
+                        // Not even the old name could go back out: this
+                        // device is no longer advertised, so say so.
+                        self.running.store(false, Ordering::Relaxed);
+                        discovery().leave();
+                    }
+                }
+                return Err(CoreError::Other(anyhow::anyhow!(RENAME_FAILED)));
             }
             self.registered = Some(fullname);
         }
@@ -501,7 +518,7 @@ fn advertisement(eid: &str, name: &str, port: u16) -> Result<ServiceInfo> {
 
     let mut props = HashMap::new();
     props.insert(TXT_EID.to_string(), eid.to_string());
-    props.insert(TXT_NAME.to_string(), name.to_string());
+    props.insert(TXT_NAME.to_string(), fit_txt(TXT_NAME, name).to_string());
     props.insert(TXT_OS.to_string(), std::env::consts::OS.to_string());
 
     // No explicit IP: `addr_auto` announces on every interface and fills
@@ -551,17 +568,109 @@ fn sanitize_instance(name: &str) -> String {
     }
 }
 
+/// Longest name this device can take, in characters. The setup screen has
+/// the same limit, and even in four-byte characters it fits the 255-byte
+/// TXT entry with room to spare.
+pub(crate) const MAX_NAME: usize = 40;
+
+const NAME_EMPTY: &str = "A device name cannot be empty.";
+const RENAME_FAILED: &str =
+    "The new name could not be shown on this network, so the old one is kept.";
+
+/// Check and tidy a name chosen for this device: cleaned as [`clean_label`]
+/// does, and refused when that leaves nothing or more than [`MAX_NAME`]
+/// characters. The errors are meant to be shown as they are.
+pub(crate) fn device_name_from(raw: &str) -> Result<String> {
+    let name = clean_label(raw, usize::MAX);
+    if name.is_empty() {
+        return Err(CoreError::Other(anyhow::anyhow!(NAME_EMPTY)));
+    }
+    if name.chars().count() > MAX_NAME {
+        return Err(CoreError::Other(anyhow::anyhow!(
+            "That name is too long. Keep it to {MAX_NAME} characters or fewer."
+        )));
+    }
+    Ok(name)
+}
+
+/// Text a device or a person wrote, made safe to show: control characters
+/// and invisible formatting marks dropped (the direction overrides among
+/// them can make a name read backwards), runs of whitespace turned into one
+/// space, trimmed, and cut to at most `max` characters.
+pub(crate) fn clean_label(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut gap = false;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            gap = !out.is_empty();
+            continue;
+        }
+        if c.is_control() || invisible(c) {
+            continue;
+        }
+        let need = if gap { 2 } else { 1 };
+        if count + need > max {
+            break;
+        }
+        if gap {
+            out.push(' ');
+            count += 1;
+            gap = false;
+        }
+        out.push(c);
+        count += 1;
+    }
+    out
+}
+
+/// Formatting marks that show nothing themselves but change how the text
+/// around them reads: direction marks, embeddings, overrides and isolates,
+/// zero-width spaces and the like. (Joiners and variation selectors stay:
+/// emoji and some scripts need them.)
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
+}
+
+/// `value` cut on a character boundary so `key=value` fits one TXT entry
+/// (255 bytes). A checked device name always fits; this only guards the
+/// advertisement against a name that was never checked.
+fn fit_txt<'a>(key: &str, value: &'a str) -> &'a str {
+    let room = 255usize.saturating_sub(key.len() + 1);
+    if value.len() <= room {
+        return value;
+    }
+    let mut end = room;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
 /// Derive a default device name from the OS hostname, without the local
-/// domain a Mac adds (`Keons-MacBook-Pro.local` becomes `Keons-MacBook-Pro`).
+/// domain a Mac adds (`Keons-MacBook-Pro.local` becomes `Keons-MacBook-Pro`),
+/// tidied and cut to [`MAX_NAME`] so it is always a name the device can take.
 pub(crate) fn default_device_name() -> String {
     let host = hostname::get()
         .map(|h| h.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let name = without_local_domain(host.trim()).trim();
+    let name = clean_label(without_local_domain(host.trim()), MAX_NAME);
     if name.is_empty() {
         "My device".to_string()
     } else {
-        name.to_string()
+        name
     }
 }
 
@@ -621,6 +730,48 @@ mod tests {
             info.get_property_val_str(TXT_NAME),
             Some("Keons-MacBook-Pro.local")
         );
+    }
+
+    #[test]
+    fn labels_lose_hidden_characters_and_extra_space() {
+        assert_eq!(
+            clean_label("  Keon\u{202E}'s\t\r\n laptop\u{7} \u{200B}", 64),
+            "Keon's laptop"
+        );
+        assert_eq!(clean_label("\u{2067}evil\u{2069}", 64), "evil");
+        assert_eq!(clean_label("a    b", 64), "a b");
+        // Cut on characters, never leaving a space at the end.
+        assert_eq!(clean_label("ab cd", 3), "ab");
+        assert_eq!(clean_label("千代田区", 2), "千代");
+        // Emoji joiners stay.
+        assert_eq!(clean_label("👩\u{200D}💻", 64), "👩\u{200D}💻");
+        assert_eq!(clean_label("\u{7}\n\u{202E}", 64), "");
+    }
+
+    #[test]
+    fn device_names_are_checked() {
+        assert_eq!(
+            device_name_from("  Keon's\nlaptop ").unwrap(),
+            "Keon's laptop"
+        );
+        assert!(device_name_from(" \u{202E}\t").is_err());
+        assert!(device_name_from(&"x".repeat(MAX_NAME)).is_ok());
+        let long = device_name_from(&"x".repeat(MAX_NAME + 1)).unwrap_err();
+        assert!(long.to_string().contains("40 characters"), "{long}");
+        // Forty of the widest characters still make a valid advertisement.
+        let wide = device_name_from(&"𝄞".repeat(MAX_NAME)).unwrap();
+        let info = advertisement(EID, &wide, 4242).unwrap();
+        assert_eq!(info.get_property_val_str(TXT_NAME), Some(wide.as_str()));
+    }
+
+    #[test]
+    fn an_unchecked_name_still_fits_the_txt_record() {
+        let name = "千".repeat(100); // 300 bytes
+        let fitted = fit_txt(TXT_NAME, &name);
+        assert!(TXT_NAME.len() + 1 + fitted.len() <= 255);
+        assert!(fitted.chars().all(|c| c == '千'));
+        assert!(advertisement(EID, &name, 4242).is_ok());
+        assert_eq!(fit_txt(TXT_NAME, "short"), "short");
     }
 
     #[test]
