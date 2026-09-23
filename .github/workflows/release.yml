@@ -11,6 +11,10 @@
 # If a leg fails, the release stays a draft that only maintainers can see.
 # Re-run the failed jobs; the publish job runs again once they pass.
 #
+# MANUAL RUNS: to rebuild an existing tag's installers, use "Run workflow" and
+# pick that v* tag (not a branch) under "Use workflow from". A run started from
+# a branch does nothing, rather than minting a tag and a release named after it.
+#
 # COST: free and unlimited on a PUBLIC repo. On a PRIVATE repo it bills Actions
 # minutes against your monthly allotment with multipliers Linux x1 / Windows x2 /
 # macOS x10, so run this on TAGS only (not every push) while private.
@@ -43,6 +47,8 @@ env:
 jobs:
   create-release:
     name: create draft release
+    # Only for v* tags. The other jobs need this one, so they skip with it.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.draft.outputs.release_id }}
