@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::catalog::{Catalog, Status};
 use crate::error::{CoreError, Result};
+use crate::export;
 use crate::progress::{
     Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
     TransferStats,
@@ -391,7 +392,8 @@ async fn run_receive(
         if !is_wanted(i) {
             continue;
         }
-        let target = dest.join(sanitize_rel(name));
+        let target = export::join_under(&dest, &export::sanitize_segments(name))
+            .ok_or_else(|| anyhow!("unsafe file name in transfer: {name}"))?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -458,23 +460,6 @@ fn u8_route(v: u8) -> Route {
         2 => Route::Relayed,
         _ => Route::Unknown,
     }
-}
-
-/// Prevent path traversal when writing received files: drop any `..`, absolute
-/// roots, or drive prefixes; keep only normal path components.
-fn sanitize_rel(name: &str) -> PathBuf {
-    use std::path::Component;
-    let raw = PathBuf::from(name.replace('\\', "/"));
-    let mut out = PathBuf::new();
-    for comp in raw.components() {
-        if let Component::Normal(c) = comp {
-            out.push(c);
-        }
-    }
-    if out.as_os_str().is_empty() {
-        out.push("file");
-    }
-    out
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ mod control;
 mod discover;
 mod endpoint;
 mod error;
+mod export;
 mod identity;
 mod offer;
 mod progress;
