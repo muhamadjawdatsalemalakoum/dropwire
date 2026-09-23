@@ -17,7 +17,7 @@ Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, mac
 
 ## Key features
 - Nearby devices: apps on the same network discover each other over mDNS and appear as one-tap targets, so no code is needed locally. Both sides confirm before anything moves, and each shows a short pairing code to compare aloud. With nearby sharing off, the device stops advertising and refuses incoming requests
-- One code, one recipient: the code is served to the first device that connects; others are refused
+- One code, one recipient: the code works for the first device that connects; others are refused. It only works while the sender is sharing: once they cancel, dismiss the send, or quit, the code stops working, and they can resend from their history
 - Preview before accept: see what's incoming before any byte downloads
 - Direct vs relayed badge: live indicator of how the transfer is travelling
 - Resumable transfers; multiple transfers at once; take only the files you want
