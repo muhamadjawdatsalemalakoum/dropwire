@@ -29,7 +29,7 @@ Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, mac
 - Notifications for three events only: a transfer finished, an offer arrived while you were away, and a failure that needs a decision. Progress never notifies
 
 ## How it compares
-- vs WeTransfer: WeTransfer uploads files to its servers and limits file size; Dropwire is serverless, peer-to-peer, no size limit, free
+- vs WeTransfer: WeTransfer uploads files to its servers and limits file size; Dropwire sends peer-to-peer with no upload and no size limit, free
 - vs Send Anywhere: Send Anywhere is closed-source with a paid tier; Dropwire is open source and free forever
 - vs Snapdrop / AirDrop / LocalSend: those are LAN-only (AirDrop also Apple-only). Dropwire does the same nearby-device flow on a local network AND works across the internet with a code, so one app covers both
 

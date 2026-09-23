@@ -53,9 +53,9 @@
     "@type": "FAQPage",
     "mainEntity": [
       {"@type":"Question","name":"Can I use AirDrop to send files from Mac to Windows?","acceptedAnswer":{"@type":"Answer","text":"No. AirDrop is Apple-exclusive and only works between Mac, iPad, and iPhone. For cross-platform sharing, use cloud services (WeTransfer), local-network tools (LocalSend), or internet P2P (Dropwire or magic-wormhole)."}},
-      {"@type":"Question","name":"What's the fastest way to send large files between Mac and Windows?","acceptedAnswer":{"@type":"Answer","text":"If both devices are on the same Wi-Fi, LocalSend is fastest — unlimited file sizes, no server latency, instant transfer. If they're on different networks, Dropwire or magic-wormhole use direct P2P encryption without a server, which is faster than uploading to and downloading from cloud storage."}},
-      {"@type":"Question","name":"Is WeTransfer or Send Anywhere free for large files?","acceptedAnswer":{"@type":"Answer","text":"Partially. WeTransfer's free tier caps transfers at a few GB with monthly limits; Send Anywhere's free tier allows up to about 10 GB with a roughly 48-hour expiry. Both require files to touch their servers. For no size limits and no server, use P2P tools like Dropwire or LocalSend."}},
-      {"@type":"Question","name":"Can LocalSend send files across the internet, or only on local Wi-Fi?","acceptedAnswer":{"@type":"Answer","text":"LocalSend is designed to work over the local Wi-Fi network. For internet-based P2P without a server, Dropwire is built specifically for cross-network transfer."}}
+      {"@type":"Question","name":"What's the fastest way to send large files between Mac and Windows?","acceptedAnswer":{"@type":"Answer","text":"If both devices are on the same Wi-Fi, LocalSend is fastest — unlimited file sizes, no server latency, instant transfer. If they're on different networks, Dropwire or magic-wormhole send encrypted data peer to peer with no cloud upload, which is faster than uploading to and downloading from cloud storage."}},
+      {"@type":"Question","name":"Is WeTransfer or Send Anywhere free for large files?","acceptedAnswer":{"@type":"Answer","text":"Partially. WeTransfer's free tier caps transfers at a few GB with monthly limits; Send Anywhere's free tier allows up to about 10 GB with a roughly 48-hour expiry. Both require files to touch their servers. For no size limits and no cloud upload, use P2P tools like Dropwire or LocalSend."}},
+      {"@type":"Question","name":"Can LocalSend send files across the internet, or only on local Wi-Fi?","acceptedAnswer":{"@type":"Answer","text":"LocalSend is designed to work over the local Wi-Fi network. For internet-based P2P with no cloud upload, Dropwire is built specifically for cross-network transfer."}}
     ]
   }
   </script>
@@ -223,7 +223,7 @@
 <td>Yes</td>
 <td>None</td>
 <td>Install app on both devices</td>
-<td>High (P2P, encrypted, no server)</td>
+<td>High (P2P, encrypted, no cloud copy)</td>
 </tr>
 <tr>
 <td>Magic-wormhole (CLI P2P)</td>
@@ -231,7 +231,7 @@
 <td>Yes</td>
 <td>None</td>
 <td>Install CLI; code-based pairing</td>
-<td>High (P2P, encrypted, no server)</td>
+<td>High (P2P, encrypted, no cloud copy)</td>
 </tr>
 </tbody>
 </table>
@@ -244,7 +244,7 @@
 
 <p><strong>For a household or team on the same Wi-Fi:</strong> LocalSend. Fast, no server, open-source, instant approval.</p>
 
-<p><strong>For remote teams or frequent file exchange:</strong> Dropwire or magic-wormhole. True P2P over the internet, no accounts, no servers.</p>
+<p><strong>For remote teams or frequent file exchange:</strong> Dropwire or magic-wormhole. True P2P over the internet, no accounts, no cloud storage.</p>
 
 <p><strong>For sensitive or confidential files:</strong> Dropwire, magic-wormhole, or USB (offline). Avoid cloud services.</p>
 
@@ -276,9 +276,9 @@
         <h2>FAQ</h2>
         <div class="faq-list">
           <details class="faq-item"><summary><span>Can I use AirDrop to send files from Mac to Windows?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>No. AirDrop is Apple-exclusive and only works between Mac, iPad, and iPhone. For cross-platform sharing, use cloud services (WeTransfer), local-network tools (LocalSend), or internet P2P (Dropwire or magic-wormhole).</p></div></details>
-          <details class="faq-item"><summary><span>What's the fastest way to send large files between Mac and Windows?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>If both devices are on the same Wi-Fi, LocalSend is fastest — unlimited file sizes, no server latency. If they're on different networks, Dropwire or magic-wormhole use direct P2P encryption without a server, which is faster than uploading to and downloading from cloud storage.</p></div></details>
-          <details class="faq-item"><summary><span>Is WeTransfer or Send Anywhere free for large files?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Partially. WeTransfer's free tier caps transfers at a few GB with monthly limits; Send Anywhere's free tier allows up to about 10 GB with a roughly 48-hour expiry. Both require files to touch their servers. For no size limits and no server, use P2P tools like Dropwire or LocalSend.</p></div></details>
-          <details class="faq-item"><summary><span>Can LocalSend send files across the internet, or only on local Wi-Fi?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>LocalSend is designed to work over the local Wi-Fi network. For internet-based P2P without a server, Dropwire is built specifically for cross-network transfer.</p></div></details>
+          <details class="faq-item"><summary><span>What's the fastest way to send large files between Mac and Windows?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>If both devices are on the same Wi-Fi, LocalSend is fastest — unlimited file sizes, no server latency. If they're on different networks, Dropwire or magic-wormhole send encrypted data peer to peer with no cloud upload, which is faster than uploading to and downloading from cloud storage.</p></div></details>
+          <details class="faq-item"><summary><span>Is WeTransfer or Send Anywhere free for large files?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>Partially. WeTransfer's free tier caps transfers at a few GB with monthly limits; Send Anywhere's free tier allows up to about 10 GB with a roughly 48-hour expiry. Both require files to touch their servers. For no size limits and no cloud upload, use P2P tools like Dropwire or LocalSend.</p></div></details>
+          <details class="faq-item"><summary><span>Can LocalSend send files across the internet, or only on local Wi-Fi?</span><span class="chevron" aria-hidden="true"></span></summary><div class="faq-body"><p>LocalSend is designed to work over the local Wi-Fi network. For internet-based P2P with no cloud upload, Dropwire is built specifically for cross-network transfer.</p></div></details>
         </div>
       </section>
 
