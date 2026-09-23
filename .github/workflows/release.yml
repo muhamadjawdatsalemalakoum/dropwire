@@ -1,19 +1,24 @@
-# Dropwire — cross-platform release builds in the cloud (GitHub Actions).
+# Dropwire: cross-platform release builds in the cloud (GitHub Actions).
 #
-# Builds Windows, macOS, and Linux installers from ONE machine you don't own —
-# push a tag like `v0.1.0` (or run manually) and it produces a draft GitHub
-# Release with all installers attached.
+# Push a tag like `v0.3.1` and this builds the Windows, macOS, and Linux
+# installers on GitHub's runners. Publishing is all or nothing:
+#   1. create-release makes a DRAFT release for the tag, or reuses the release
+#      that tag already has (a re-run, or notes written by hand beforehand).
+#   2. Each platform leg builds its installers and uploads them into that draft.
+#   3. publish-release publishes it only once every leg has succeeded and every
+#      platform's installer is attached. A -beta / -alpha / -rc tag goes out as
+#      a prerelease; any other tag becomes the Latest release.
+# If a leg fails, the release stays a draft that only maintainers can see.
+# Re-run the failed jobs; the publish job runs again once they pass.
 #
-# COST: free + unlimited on a PUBLIC repo. On a PRIVATE repo it bills Actions
+# COST: free and unlimited on a PUBLIC repo. On a PRIVATE repo it bills Actions
 # minutes against your monthly allotment with multipliers Linux x1 / Windows x2 /
-# macOS x10 — so run this on TAGS only (not every push) while private.
+# macOS x10, so run this on TAGS only (not every push) while private.
 #
 # SIGNING: unsigned by default (fine for testing; users see Gatekeeper/SmartScreen
-# warnings). To ship trusted builds, add the secrets noted in the `env:` block —
+# warnings). To ship trusted builds, add the secrets noted in the `env:` block:
 # Apple Developer ID ($99/yr) for macOS notarization, a code-signing cert for
 # Windows. No secrets are required for the build itself to succeed.
-#
-# This file does nothing until the repo is on GitHub and a tag is pushed.
 
 name: Release
 
@@ -25,8 +30,66 @@ on:
 permissions:
   contents: write
 
+# Two runs for the same tag would race to create its draft; queue them instead.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # A -beta / -alpha / -rc tag is a prerelease, so it does not become the
+  # "Latest release" people land on from the repo front page.
+  PRERELEASE: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
+
 jobs:
+  create-release:
+    name: create draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Create the draft (or reuse this tag's release)
+        id: draft
+        run: |
+          # The API's by-tag lookup skips drafts, so search the list instead.
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | .id')
+          id=${existing%%$'\n'*}
+          if [ -n "$id" ]; then
+            echo "Reusing release $id for $TAG."
+          else
+            notes=$(cat <<'EOF'
+          **Dropwire @TAG@**: free, private, peer-to-peer file transfer.
+
+          Send any file straight from one device to another: end-to-end encrypted, resumable,
+          no account, no server holding your data. Built on iroh.
+
+          ### Downloads
+          - **Windows**: `_x64-setup.exe`
+          - **macOS**: `_universal.dmg` (Apple Silicon + Intel)
+          - **Linux**: `.AppImage`, `.deb`, or `.rpm`
+
+          > Builds are currently **unsigned**, so the OS may warn about an unverified developer.
+          > On Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
+          > Security → "Open Anyway".
+
+          What changed: see [CHANGELOG.md](https://github.com/@REPO@/blob/@TAG@/CHANGELOG.md).
+          EOF
+            )
+            notes=${notes//@TAG@/$TAG}
+            notes=${notes//@REPO@/$GITHUB_REPOSITORY}
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG" -f name="Dropwire $TAG" -f body="$notes" \
+              -F draft=true -F prerelease="$PRERELEASE" --jq .id)
+            echo "Created draft release $id for $TAG."
+          fi
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
   release:
+    name: build (${{ matrix.platform }})
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +126,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Build + bundle + draft release
+      - name: Build + bundle + upload to the draft release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,25 +145,48 @@ jobs:
           # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # Upload into the draft create-release made; with releaseId set the
+          # action never creates or publishes a release itself. tagName only
+          # feeds the updater JSON's download links, should that be enabled.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
-          releaseName: "Dropwire ${{ github.ref_name }}"
-          releaseBody: |
-            **Dropwire ${{ github.ref_name }}**: free, private, peer-to-peer file transfer.
-
-            Send any file straight from one device to another: end-to-end encrypted, resumable,
-            no account, no server holding your data. Built on iroh.
-
-            ### Downloads
-            - **Windows**: `_x64-setup.exe`
-            - **macOS**: `_universal.dmg` (Apple Silicon + Intel)
-            - **Linux**: `.AppImage`, `.deb`, or `.rpm`
-
-            > Builds are currently **unsigned**, so the OS may warn about an unverified developer.
-            > On Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
-            > Security → "Open Anyway".
-          # Publish the release automatically on tag (set true to review as a draft first).
-          releaseDraft: false
-          # A -beta / -alpha / -rc tag is a prerelease, so it does not become the
-          # "Latest release" people land on from the repo front page.
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    name: publish release
+    # Runs only when create-release and every build leg succeeded.
+    needs: [create-release, release]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+    steps:
+      - name: Check every platform's installer is attached
+        run: |
+          assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[].name')
+          printf '%s\n' "$assets"
+          missing=0
+          for suffix in _x64-setup.exe _universal.dmg .AppImage .deb .rpm; do
+            if ! printf '%s\n' "$assets" | grep -qF -- "$suffix"; then
+              echo "::error::No $suffix installer on the draft; leaving it unpublished."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Publish
+        run: |
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq .draft)
+          if [ "$draft" != "true" ]; then
+            echo "This tag's release is already published; leaving it as it is."
+            exit 0
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -F draft=false -F prerelease=true --silent
+          else
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -F draft=false -F prerelease=false -f make_latest=true --silent
+          fi
+          echo "Published release $RELEASE_ID."
