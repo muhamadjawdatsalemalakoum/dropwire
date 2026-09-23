@@ -69,9 +69,16 @@ async fn fetch_sizes(
         Err(iroh_blobs::get::GetError::BadRequest { .. }) => {
             Err(CoreError::Other(anyhow!(TOO_LARGE)))
         }
+        Err(e) if refused(&e) => Err(CoreError::AlreadyClaimed),
         // The sender went away, or no longer shares this code.
         Err(e) => Err(CoreError::Unreachable(format!("fetch sizes: {e:#}"))),
     }
+}
+
+/// Whether the sender turned this device away: a code is served to the first
+/// device that uses it, and to nobody once the sender stops sharing it.
+fn refused(e: &iroh_blobs::get::GetError) -> bool {
+    e.iroh_error_code() == Some(iroh_blobs::protocol::ERR_PERMISSION)
 }
 
 /// Bounds on the sender-controlled manifest: `sizes[0]` is the names blob and
@@ -206,6 +213,7 @@ impl Core {
         while let Some(item) = stream.next().await {
             match item {
                 GetProgressItem::Done(_) => break,
+                GetProgressItem::Error(e) if refused(&e) => return Err(CoreError::AlreadyClaimed),
                 GetProgressItem::Error(e) => {
                     return Err(CoreError::Unreachable(format!("fetch metadata: {e:#}")))
                 }
@@ -406,6 +414,9 @@ async fn run_receive(
                         }
                     }
                     Some(GetProgressItem::Done(_stats)) => break,
+                    Some(GetProgressItem::Error(e)) if refused(&e) => {
+                        return Err(CoreError::AlreadyClaimed.into())
+                    }
                     Some(GetProgressItem::Error(e)) => {
                         return Err(anyhow::Error::new(e).context("the download stopped"))
                     }

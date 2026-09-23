@@ -142,3 +142,29 @@ async fn inspect_invalid_ticket_errors() {
         .unwrap_err();
     assert!(matches!(err, CoreError::InvalidTicket(_)));
 }
+
+/// A code cut off when it was copied is reported as not valid (so the person
+/// copies it again), not as an offline sender.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_truncated_code_is_invalid_not_offline() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("f.bin");
+    std::fs::write(&src, make_payload(1024)).unwrap();
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+    let receiver = local_core(recv_data.path()).await;
+
+    let cut = ticket[..ticket.len() - 20].to_string();
+    let err = receiver.inspect(cut.clone()).await.unwrap_err();
+    assert!(matches!(err, CoreError::InvalidTicket(_)), "{err:?}");
+    assert_eq!(err.kind(), "invalidTicket");
+    assert!(err.to_string().contains("cut off"), "{err}");
+    assert!(receiver
+        .receive(cut, work.path().join("out"))
+        .await
+        .is_err());
+}

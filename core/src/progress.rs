@@ -112,6 +112,9 @@ pub struct TransferPreview {
 pub enum ErrorCode {
     /// The sender could not be reached: offline, or the code has expired.
     Unreachable,
+    /// The sender refused this device: another device already used the code,
+    /// or the sender stopped sharing it.
+    AlreadyClaimed,
     /// A file or folder is no longer there.
     NotFound,
     /// The system refused access to a file or folder, or the drive is
@@ -124,6 +127,21 @@ pub enum ErrorCode {
     /// Anything else. The message says what happened.
     #[default]
     Other,
+}
+
+impl ErrorCode {
+    /// The name this code is serialized as.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::Unreachable => "unreachable",
+            ErrorCode::AlreadyClaimed => "alreadyClaimed",
+            ErrorCode::NotFound => "notFound",
+            ErrorCode::PermissionDenied => "permissionDenied",
+            ErrorCode::DiskFull => "diskFull",
+            ErrorCode::FileInUse => "fileInUse",
+            ErrorCode::Other => "other",
+        }
+    }
 }
 
 /// Progress events emitted on a transfer's [`ProgressStream`].
@@ -183,3 +201,34 @@ impl Progress {
 /// [`futures_lite::Stream`] (and `tokio_stream::Stream`), so the shell can
 /// `.next().await` it.
 pub type ProgressStream = tokio_stream::wrappers::ReceiverStream<Progress>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_code_names_match_their_serialized_form() {
+        for code in [
+            ErrorCode::Unreachable,
+            ErrorCode::AlreadyClaimed,
+            ErrorCode::NotFound,
+            ErrorCode::PermissionDenied,
+            ErrorCode::DiskFull,
+            ErrorCode::FileInUse,
+            ErrorCode::Other,
+        ] {
+            let json = serde_json::to_value(code).unwrap();
+            assert_eq!(json, serde_json::Value::String(code.as_str().into()));
+        }
+    }
+
+    #[test]
+    fn an_error_without_a_code_still_reads() {
+        let id = TransferId::new();
+        let json = serde_json::json!({ "kind": "error", "id": id, "message": "x" });
+        let Progress::Error { code, .. } = serde_json::from_value(json).unwrap() else {
+            panic!("expected an error event");
+        };
+        assert_eq!(code, ErrorCode::Other);
+    }
+}

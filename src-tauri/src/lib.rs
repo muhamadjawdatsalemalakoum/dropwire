@@ -371,14 +371,32 @@ async fn start_send(
     Ok(id.to_string())
 }
 
+/// A receive command's error as the UI gets it: `kind` to choose the help to
+/// show (`invalidTicket`, `unreachable`, `alreadyClaimed`, ...) and a plain
+/// `message` that can be shown as it is.
+#[derive(serde::Serialize)]
+struct CommandError {
+    kind: &'static str,
+    message: String,
+}
+
+impl From<irohcore::CoreError> for CommandError {
+    fn from(e: irohcore::CoreError) -> Self {
+        Self {
+            kind: e.kind(),
+            message: e.to_string(),
+        }
+    }
+}
+
 /// Preview a ticket's contents (file list, sizes, total, route) WITHOUT
 /// downloading any file content. Powers the receive "preview before you accept".
 #[tauri::command]
 async fn inspect_ticket(
     ticket: String,
     state: State<'_, AppState>,
-) -> Result<TransferPreview, String> {
-    state.core.inspect(ticket).await.map_err(|e| e.to_string())
+) -> Result<TransferPreview, CommandError> {
+    Ok(state.core.inspect(ticket).await?)
 }
 
 /// Resolve a destination directory, defaulting to Downloads/Dropwire.
@@ -414,12 +432,12 @@ async fn start_receive(
     dest: Option<String>,
     on_event: Channel<Progress>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let (id, stream) = state
         .core
         .receive(ticket, dest_or_default(dest))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
     pump(stream, on_event);
     Ok(id.to_string())
 }
@@ -432,12 +450,12 @@ async fn start_receive_selected(
     selected: Vec<usize>,
     on_event: Channel<Progress>,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<String, CommandError> {
     let (id, stream) = state
         .core
         .receive_selected(ticket, dest_or_default(dest), selected)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
     pump(stream, on_event);
     Ok(id.to_string())
 }

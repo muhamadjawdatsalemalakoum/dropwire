@@ -4,6 +4,8 @@
 
 mod common;
 use common::{local_core, make_payload, wait_done, wait_ready};
+use irohcore::{CoreError, ErrorCode, Progress};
+use tokio_stream::StreamExt;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ticket_is_bound_to_first_device() {
@@ -30,8 +32,26 @@ async fn ticket_is_bound_to_first_device() {
     // Device 2 (a different device) is denied — it cannot even preview.
     let denied = r2.inspect(ticket.clone()).await;
     assert!(
-        denied.is_err(),
-        "a second device must be denied the same ticket (one-to-one)"
+        matches!(denied, Err(CoreError::AlreadyClaimed)),
+        "a second device must be told the code was already used (one-to-one), got {denied:?}"
+    );
+
+    // Receiving is refused the same way, and says so.
+    let (_rid2, mut rs2) = r2
+        .receive(ticket.clone(), work.path().join("out2"))
+        .await
+        .unwrap();
+    let (code, message) = loop {
+        match rs2.next().await.expect("stream ended before an error") {
+            Progress::Error { code, message, .. } => break (code, message),
+            Progress::Done { .. } => panic!("a second device must not receive the content"),
+            _ => {}
+        }
+    };
+    assert_eq!(code, ErrorCode::AlreadyClaimed);
+    assert!(
+        message.contains("already used by another device"),
+        "{message}"
     );
 
     // Device 1 can still complete its download (same device as the binding).
