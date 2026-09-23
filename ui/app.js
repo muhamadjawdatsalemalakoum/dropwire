@@ -239,6 +239,13 @@ function toast({ title, sub, kind, action }) {
   // A toast with an action waits longer: it is asking for something.
   setTimeout(close, action ? 12000 : 6000);
 }
+/* Show a folder in the file manager. One that was moved or deleted says so
+   instead of silently doing nothing. */
+function revealFolder(path) {
+  if (!path) return;
+  invoke('reveal_path', { path })
+    .catch((e) => toast({ title: 'Could not open the folder', sub: String(e), kind: 'error' }));
+}
 /** One of the three allowed events. `action` stays reachable via the toast. */
 async function notify({ title, sub, kind, action, always }) {
   toast({ title, sub, kind, action });
@@ -532,7 +539,7 @@ async function beginReceive(ticket, dest, selected, label) {
     if (id) await invoke('cancel_transfer', { id }).catch(() => {});
     liveDrop(id); removeCard(card);
   });
-  els.open.addEventListener('click', async () => { if (myDest) await invoke('reveal_path', { path: myDest }).catch(() => {}); });
+  els.open.addEventListener('click', () => revealFolder(myDest));
   els.another.addEventListener('click', () => { liveDrop(id); removeCard(card); });
   try {
     const ch = makeChannel(); ch.onmessage = (m) => onRecvMsg(m, els, card, () => id);
@@ -584,7 +591,7 @@ function onRecvMsg(m, els, card, getId) {
       notify({
         title: 'Received ' + (cardLabel.get(card) || 'files'),
         sub: `${fmtBytes(m.stats && m.stats.bytes)} · saved to ${myDestOf(card) || 'your downloads'}`,
-        action: myDestOf(card) ? { label: 'Open folder', onClick: () => invoke('reveal_path', { path: myDestOf(card) }).catch(() => {}) } : null,
+        action: myDestOf(card) ? { label: 'Open folder', onClick: () => revealFolder(myDestOf(card)) } : null,
       });
       setStatus('received', 'up');
       break;
@@ -783,7 +790,7 @@ async function loadHistory() {
         label: failedish ? 'Retry' : 'Resend', cls: 'btn-ghost',
         onClick: () => { showPanel('send'); startSend(t.source); },
       });
-      if (t.status === 'done' && t.dest) actions.push({ label: 'Reveal', onClick: () => invoke('reveal_path', { path: t.dest }).catch(() => {}) });
+      if (t.status === 'done' && t.dest) actions.push({ label: 'Reveal', onClick: () => revealFolder(t.dest) });
       const row = actRow({
         dir: dir === 'send' ? 'send' : 'recv',
         name: t.name || 'transfer',

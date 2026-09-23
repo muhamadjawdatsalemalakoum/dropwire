@@ -576,30 +576,136 @@ async fn cancel_transfer(id: String, state: State<'_, AppState>) -> Result<(), S
     Ok(())
 }
 
-/// Open a path in the OS file manager.
-#[tauri::command]
-fn reveal_path(path: String) {
-    #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("explorer").arg(&path).spawn();
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(&path).spawn();
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+/// What [`reveal_path`] shows: a folder opened, or a file selected in its folder.
+#[derive(Debug, PartialEq)]
+enum Reveal {
+    Folder(PathBuf),
+    File(PathBuf),
 }
 
-/// Open a web link in the user's default browser. Only http(s)/mailto are allowed;
-/// the URLs come from the app's own UI (credits, source, profile).
-#[tauri::command]
-fn open_external(url: String) {
-    if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
-        return;
+const REVEAL_GONE: &str = "That folder is no longer there. It may have been moved or deleted.";
+
+/// Check a path to reveal. It must be absolute and exist; a missing folder is
+/// an error rather than letting the file manager open somewhere else instead
+/// (Explorer falls back to Documents).
+fn reveal_target(path: &str) -> Result<Reveal, String> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err(REVEAL_GONE.into());
     }
+    // Normalized (on Windows: backslashes, no `..`) without the `\\?\` prefix
+    // that canonicalize adds, which Explorer does not understand.
+    let p = std::path::absolute(p).map_err(|_| REVEAL_GONE.to_string())?;
+    match std::fs::metadata(&p) {
+        Ok(m) if m.is_dir() => Ok(Reveal::Folder(p)),
+        Ok(m) if m.is_file() => Ok(Reveal::File(p)),
+        _ => Err(REVEAL_GONE.into()),
+    }
+}
+
+/// Show a folder in the system file manager, or select a file in its folder.
+/// It never opens a file: explorer, open and xdg-open all launch a file they
+/// are handed, so a file is only ever selected, never passed on its own.
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let target = reveal_target(&path)?;
+    spawn_reveal(&target).map_err(|e| format!("Could not open the folder: {e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_reveal(target: &Reveal) -> std::io::Result<()> {
+    use std::ffi::OsString;
+    use std::os::windows::process::CommandExt;
+    // Quoted by hand: Explorer splits an unquoted argument at commas.
+    // Windows paths cannot contain a quote, so this cannot be broken out of.
+    let (lead, p) = match target {
+        Reveal::Folder(p) => ("\"", p),
+        Reveal::File(p) => ("/select,\"", p),
+    };
+    let mut arg = OsString::from(lead);
+    arg.push(p.as_os_str());
+    arg.push("\"");
+    std::process::Command::new("explorer")
+        .raw_arg(arg)
+        .spawn()
+        .map(drop)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_reveal(target: &Reveal) -> std::io::Result<()> {
+    let mut cmd = std::process::Command::new("open");
+    match target {
+        // A folder with an extension may be a bundle (Some.app), which
+        // `open` would launch, so those are selected in Finder instead.
+        Reveal::Folder(p) if p.extension().is_none() => cmd.arg(p),
+        Reveal::Folder(p) | Reveal::File(p) => cmd.arg("-R").arg(p),
+    };
+    cmd.spawn().map(drop)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn spawn_reveal(target: &Reveal) -> std::io::Result<()> {
+    // There is no portable "select this file"; open its folder instead.
+    let folder = match target {
+        Reveal::Folder(p) => p.as_path(),
+        Reveal::File(p) => p.parent().unwrap_or(p.as_path()),
+    };
+    std::process::Command::new("xdg-open")
+        .arg(folder)
+        .spawn()
+        .map(drop)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn spawn_reveal(_target: &Reveal) -> std::io::Result<()> {
+    Err(std::io::Error::other("not supported on this system"))
+}
+
+/// A link [`open_external`] may hand to the system: a well-formed https URL
+/// to a named host, with no credentials and nothing Explorer's command line
+/// could misread (it splits at commas and quotes).
+fn checked_https_url(raw: &str) -> Option<String> {
+    // Spelled out in full: the parser would also accept "https:host" and
+    // repair other malformed input.
+    let spelled_out = raw
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("https://"));
+    if !spelled_out || raw.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let url = tauri::Url::parse(raw).ok()?;
+    if url.scheme() != "https"
+        || url.domain().is_none_or(|d| !d.contains('.'))
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    let s = url.as_str();
+    if s.contains([',', '"', '\'', '\\', '<', '>', '`']) {
+        return None;
+    }
+    Some(s.to_string())
+}
+
+/// Open a web link in the user's default browser. Only well-formed https
+/// links: the app's own UI passes its source and profile links, and nothing
+/// else should reach the system's link handler.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let url = checked_https_url(&url).ok_or_else(|| "That link cannot be opened.".to_string())?;
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("explorer").arg(&url).spawn();
+    let spawned = std::process::Command::new("explorer").arg(&url).spawn();
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(&url).spawn();
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    #[cfg(not(any(unix, windows)))]
+    let spawned: std::io::Result<std::process::Child> =
+        Err(std::io::Error::other("not supported on this system"));
+    spawned
+        .map(drop)
+        .map_err(|e| format!("Could not open the link: {e}"))
 }
 
 /// The app version (from the crate/workspace version, kept in sync with tauri.conf).
@@ -1288,6 +1394,55 @@ mod tests {
             let got = dest_or_default(Some("./Dropwire".into())).expect("resolved");
             assert!(got.is_absolute(), "{got:?}");
             assert_eq!(got, home.join("Dropwire"));
+        }
+    }
+
+    /// A folder is opened, a file is only ever selected, and anything missing
+    /// or relative is an error instead of the file manager's fallback folder.
+    #[test]
+    fn reveal_opens_folders_selects_files_and_refuses_the_rest() {
+        let dir = scratch_dir("reveal");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let file = dir.join("setup.exe");
+        std::fs::write(&file, b"not really").expect("file");
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+
+        assert_eq!(reveal_target(&s(&dir)), Ok(Reveal::Folder(dir.clone())));
+        assert_eq!(reveal_target(&s(&file)), Ok(Reveal::File(file.clone())));
+        assert_eq!(
+            reveal_target(&s(&dir.join("moved away"))),
+            Err(REVEAL_GONE.to_string())
+        );
+        assert_eq!(reveal_target("Dropwire"), Err(REVEAL_GONE.to_string()));
+        assert_eq!(reveal_target(""), Err(REVEAL_GONE.to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_plain_https_links_are_opened() {
+        for ok in [
+            "https://github.com/muhamadjawdatsalemalakoum/dropwire",
+            "https://www.linkedin.com/in/akoum/",
+            "HTTPS://github.com/x?y=1#z",
+        ] {
+            assert!(checked_https_url(ok).is_some(), "{ok}");
+        }
+        for bad in [
+            "http://github.com/",
+            "mailto:someone@example.com",
+            "javascript:alert(1)",
+            "file:///C:/Windows/System32/calc.exe",
+            "C:\\Windows\\System32\\calc.exe",
+            "https://github.com/a,b",
+            "https://github.com/a b",
+            " https://github.com/",
+            "https://user:pass@github.com/",
+            "https://127.0.0.1/",
+            "https://localhost/",
+            "https:github.com",
+            "",
+        ] {
+            assert!(checked_https_url(bad).is_none(), "{bad}");
         }
     }
 
