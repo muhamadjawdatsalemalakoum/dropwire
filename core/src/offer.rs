@@ -15,6 +15,18 @@
 //! handler echoes the frame back), so no dial-back address is ever needed. The
 //! ticket inside the offer commits to the manifest (names/sizes/hashes) via
 //! BLAKE3, so what the receiver confirms is exactly what arrives.
+//!
+//! Sender rules: the caller names the send; a send already going to another
+//! device is never offered; one offer per send at a time. An offer that is not
+//! taken (declined, withdrawn, unreachable) leaves the send and its code
+//! running and only releases the binding it made; a device that may hold the
+//! code from the offer is refused by the gate from then on. Ending the send,
+//! or [`Core::cancel_offer`], takes the offer back and closes its connection.
+//!
+//! Receiver rules: an offer is shown only while Nearby is on, from a device
+//! seen on the local network, whose code names that same device; one waiting
+//! offer per device, a few in all. One that ends unanswered (taken back,
+//! expired, replaced) is reported on [`Core::subscribe_offer_withdrawals`].
 
 use std::collections::HashMap;
 use std::str::FromStr;
