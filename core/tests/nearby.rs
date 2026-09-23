@@ -15,7 +15,7 @@ use iroh::{Endpoint, EndpointAddr};
 use iroh_blobs::ticket::BlobTicket;
 use iroh_blobs::BlobFormat;
 use irohcore::{
-    CoreError, CtrlMsg, IncomingOffer, OfferUpdate, OfferWithdrawn, Progress, TransferId,
+    Core, CoreError, CtrlMsg, IncomingOffer, OfferUpdate, OfferWithdrawn, Progress, TransferId,
     WithdrawReason,
 };
 use tokio::sync::broadcast;
@@ -72,8 +72,6 @@ async fn raw_offer(
     offer_id: String,
     ticket: String,
 ) -> Option<String> {
-    let conn = from.connect(to, b"dropwire/ctrl/1").await.ok()?;
-    let (mut send, mut recv) = conn.open_bi().await.ok()?;
     let frame = serde_json::json!({
         "kind": "offer",
         "offer_id": offer_id,
@@ -83,6 +81,14 @@ async fn raw_offer(
         "file_count": 1,
         "total_bytes": 1024,
     });
+    raw_frame(from, to, frame).await
+}
+
+/// Send one control frame from a bare endpoint and return the kind of the
+/// answer, or None if the connection ended without one.
+async fn raw_frame(from: Endpoint, to: EndpointAddr, frame: serde_json::Value) -> Option<String> {
+    let conn = from.connect(to, b"dropwire/ctrl/1").await.ok()?;
+    let (mut send, mut recv) = conn.open_bi().await.ok()?;
     send.write_all(&serde_json::to_vec(&frame).unwrap())
         .await
         .ok()?;
@@ -90,6 +96,37 @@ async fn raw_offer(
     let answer = recv.read_to_end(64 * 1024).await.ok()?;
     let answer: serde_json::Value = serde_json::from_slice(&answer).ok()?;
     answer["kind"].as_str().map(str::to_string)
+}
+
+/// A bare endpoint the receiver sees on its network, so its offers pass the
+/// visibility gate.
+async fn seen_peer(receiver: &Core) -> Endpoint {
+    let ep = raw_endpoint().await;
+    receiver.test_see_nearby_peer(&ep.id().to_string());
+    ep
+}
+
+/// Offer from `from` (a code of its own) in the background; the handle
+/// resolves to the answer that comes back.
+fn offer_from(
+    from: &Endpoint,
+    receiver: &Core,
+    offer_id: &str,
+) -> tokio::task::JoinHandle<Option<String>> {
+    tokio::spawn(raw_offer(
+        from.clone(),
+        receiver.test_dial_addr(),
+        offer_id.to_string(),
+        code_naming(from.id()),
+    ))
+}
+
+/// The answer an offer got, within a few seconds.
+async fn answer_of(pending: tokio::task::JoinHandle<Option<String>>) -> Option<String> {
+    tokio::time::timeout(Duration::from_secs(10), pending)
+        .await
+        .expect("no prompt answer")
+        .unwrap()
 }
 
 /// A code naming `eid`, for content that does not need to exist.
@@ -793,6 +830,144 @@ async fn offer_from_a_device_not_seen_nearby_is_declined_unseen() {
         std::fs::read(dest.join("far.txt")).unwrap(),
         make_payload(16 * 1024)
     );
+}
+
+/// A device has one offer waiting here at a time: a newer one replaces the
+/// older, whose dialog is told to close and whose sender hears "no".
+#[tokio::test]
+async fn a_newer_offer_from_the_same_device_replaces_the_older() {
+    let r_dir = tempdir::dir();
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+    let mut withdrawals = receiver.subscribe_offer_withdrawals();
+    let x = seen_peer(&receiver).await;
+
+    let first = offer_from(&x, &receiver, "first");
+    assert_eq!(next_offer(&mut offers).await.offer_id, "first");
+    let second = offer_from(&x, &receiver, "second");
+
+    assert_eq!(answer_of(first).await.as_deref(), Some("offerDecline"));
+    let gone = tokio::time::timeout(Duration::from_secs(10), withdrawals.recv())
+        .await
+        .expect("the replaced offer was not withdrawn")
+        .unwrap();
+    assert_eq!(
+        gone,
+        OfferWithdrawn {
+            offer_id: "first".into(),
+            reason: WithdrawReason::Replaced,
+        }
+    );
+    assert_eq!(next_offer(&mut offers).await.offer_id, "second");
+    assert!(receiver.respond_offer("first".into(), true).await.is_err());
+    receiver
+        .respond_offer("second".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(answer_of(second).await.as_deref(), Some("offerDecline"));
+}
+
+/// Only a few offers wait here at once, from all devices together. One more
+/// is declined unseen; once one is answered, there is room again.
+#[tokio::test]
+async fn offers_waiting_here_are_capped() {
+    let r_dir = tempdir::dir();
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+
+    let mut peers = Vec::new();
+    for _ in 0..5 {
+        peers.push(seen_peer(&receiver).await);
+    }
+    let mut waiting = Vec::new();
+    for (i, peer) in peers.iter().take(4).enumerate() {
+        let id = format!("offer-{i}");
+        let pending = offer_from(peer, &receiver, &id);
+        assert_eq!(next_offer(&mut offers).await.offer_id, id);
+        waiting.push(pending);
+    }
+
+    let fifth = offer_from(&peers[4], &receiver, "offer-4");
+    assert_eq!(answer_of(fifth).await.as_deref(), Some("offerDecline"));
+    let surfaced = tokio::time::timeout(Duration::from_millis(300), offers.recv()).await;
+    assert!(surfaced.is_err(), "a fifth offer must not be shown");
+
+    receiver
+        .respond_offer("offer-0".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        answer_of(waiting.remove(0)).await.as_deref(),
+        Some("offerDecline")
+    );
+    let again = offer_from(&peers[4], &receiver, "offer-5");
+    assert_eq!(next_offer(&mut offers).await.offer_id, "offer-5");
+    receiver
+        .respond_offer("offer-5".into(), false)
+        .await
+        .unwrap();
+    assert_eq!(answer_of(again).await.as_deref(), Some("offerDecline"));
+}
+
+/// An offer id that is already waiting is refused, and the waiting offer is
+/// left alone.
+#[tokio::test]
+async fn a_repeated_offer_id_is_refused() {
+    let r_dir = tempdir::dir();
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+    let x = seen_peer(&receiver).await;
+    let y = seen_peer(&receiver).await;
+
+    let first = offer_from(&x, &receiver, "same-id");
+    assert_eq!(next_offer(&mut offers).await.offer_id, "same-id");
+    let copy = offer_from(&y, &receiver, "same-id");
+    assert_eq!(answer_of(copy).await.as_deref(), Some("offerDecline"));
+    let surfaced = tokio::time::timeout(Duration::from_millis(300), offers.recv()).await;
+    assert!(surfaced.is_err(), "the copy must not be shown");
+
+    receiver
+        .respond_offer("same-id".into(), true)
+        .await
+        .expect("the first offer is still open");
+    assert_eq!(answer_of(first).await.as_deref(), Some("offerAccept"));
+}
+
+/// The name and title a sender writes are shown without control characters
+/// and cut to a sane length.
+#[tokio::test]
+async fn offer_labels_are_cleaned_up() {
+    let r_dir = tempdir::dir();
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    let mut offers = receiver.subscribe_offers();
+    let x = seen_peer(&receiver).await;
+
+    let frame = serde_json::json!({
+        "kind": "offer",
+        "offer_id": "labels",
+        "ticket": code_naming(x.id()),
+        "device_name": format!("  Mom\u{7}'s\r\nphone{}", "!".repeat(500)),
+        "title": format!("report\u{0}.pdf{}", "x".repeat(1000)),
+        "file_count": 1,
+        "total_bytes": 1,
+    });
+    let pending = tokio::spawn(raw_frame(x.clone(), receiver.test_dial_addr(), frame));
+    let offer = next_offer(&mut offers).await;
+    assert!(
+        offer.device_name.starts_with("Mom's"),
+        "{}",
+        offer.device_name
+    );
+    assert!(!offer.device_name.chars().any(char::is_control));
+    assert!(offer.device_name.chars().count() <= 64);
+    assert!(offer.title.starts_with("report.pdf"), "{}", offer.title);
+    assert!(offer.title.chars().count() <= 200);
+    receiver.respond_offer(offer.offer_id, false).await.unwrap();
+    assert_eq!(answer_of(pending).await.as_deref(), Some("offerDecline"));
 }
 
 /// A peer that connects and never sends a frame is dropped after a short

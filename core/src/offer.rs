@@ -42,6 +42,14 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
 /// Connect timeout for both sides of the consent handshake.
 const CONSENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Offers waiting for an answer here, at most, from all devices together.
+/// Each device has at most one (a newer one replaces it). More are declined
+/// unseen, so no one can stack up dialogs.
+const MAX_PENDING_OFFERS: usize = 4;
+/// Longest sender-written labels shown in the dialog, in characters.
+const MAX_DEVICE_NAME: usize = 64;
+const MAX_TITLE: usize = 200;
+
 /// Why an offer was refused before it went out. Shown to the sender as-is.
 const SEND_ENDED: &str = "This send has ended. Start a new one to offer it.";
 const SEND_TAKEN: &str =
@@ -192,6 +200,8 @@ pub enum WithdrawReason {
     Cancelled,
     /// Nobody answered in time.
     Expired,
+    /// The same device sent a newer offer, which takes its place.
+    Replaced,
 }
 
 /// An offer this device sent that has no answer yet.
@@ -231,12 +241,26 @@ pub(crate) struct ConsentCtx {
 }
 
 impl ConsentCtx {
-    /// Park `tx` as the answer channel for `offer_id` (replaces any waiter).
-    pub(crate) fn add_verdict_waiter(&self, offer_id: &str, tx: mpsc::UnboundedSender<Frame>) {
-        self.verdict_waiters
+    /// Park `tx` as the answer channel for `offer_id`. False, and nothing
+    /// changes, if that id is already waiting.
+    pub(crate) fn add_verdict_waiter(
+        &self,
+        offer_id: &str,
+        tx: mpsc::UnboundedSender<Frame>,
+    ) -> bool {
+        use std::collections::hash_map::Entry;
+        match self
+            .verdict_waiters
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(offer_id.to_string(), tx);
+            .entry(offer_id.to_string())
+        {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(slot) => {
+                slot.insert(tx);
+                true
+            }
+        }
     }
 
     /// Deliver the local user's verdict to the parked connection, if any.
@@ -764,21 +788,65 @@ pub(crate) fn route_offer(
         reply_transport: via,
         offer_id,
         from_endpoint_id: remote.to_string(),
-        device_name,
+        device_name: label(&device_name, MAX_DEVICE_NAME),
         // Derive the pairing fingerprint from the TLS-AUTHENTICATED remote id,
         // never from a sender-supplied field: an impostor cannot then present a
         // victim's pairing code. This is the value the user compares aloud.
         fingerprint: NearbyDevice::fingerprint_for(&remote.to_string()),
         ticket: parsed.to_string(),
-        title,
+        title: label(&title, MAX_TITLE),
         file_count,
         total_bytes,
     };
-    ctx.incoming_offers
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(offer.offer_id.clone(), offer.clone());
+
+    // One waiting offer per device: a newer one replaces the older (from a
+    // sender that restarted, say). And a few at most in all. Checked and
+    // stored under one lock.
+    let (replaced, room) = {
+        let mut pending = ctx
+            .incoming_offers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let replaced: Vec<String> = pending
+            .values()
+            .filter(|o| o.from_endpoint_id == offer.from_endpoint_id)
+            .map(|o| o.offer_id.clone())
+            .collect();
+        for id in &replaced {
+            pending.remove(id);
+        }
+        let room = pending.len() < MAX_PENDING_OFFERS;
+        if room {
+            pending.insert(offer.offer_id.clone(), offer.clone());
+        }
+        (replaced, room)
+    };
+    for offer_id in replaced {
+        let frame = Frame::OfferDecline {
+            offer_id: offer_id.clone(),
+        };
+        ctx.resolve_verdict(&offer_id, frame);
+        let _ = ctx.withdrawn_tx.send(OfferWithdrawn {
+            offer_id,
+            reason: WithdrawReason::Replaced,
+        });
+    }
+    if !room {
+        tracing::debug!(%remote, "too many offers waiting; declining");
+        let frame = Frame::OfferDecline {
+            offer_id: offer.offer_id,
+        };
+        ctx.resolve_verdict(&frame.offer_id_str(), frame);
+        return;
+    }
     let _ = ctx.offer_tx.send(offer);
+}
+
+/// A sender-written label for the dialog: no control characters, trimmed, and
+/// at most `max` characters.
+fn label(s: &str, max: usize) -> String {
+    let clean: String = s.chars().filter(|c| !c.is_control()).collect();
+    clean.trim().chars().take(max).collect()
 }
 
 /// Route any other inbound control frame (presence/chat) to the broadcast bus.

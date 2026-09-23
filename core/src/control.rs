@@ -99,7 +99,13 @@ impl ProtocolHandler for Ctrl {
                 // Register the answer channel BEFORE surfacing the offer, so a
                 // fast accept can never race the wait below.
                 let (verdict_tx, mut verdict_rx) = mpsc::unbounded_channel();
-                self.core_ctx.add_verdict_waiter(&offer_id, verdict_tx);
+                // An offer id that is already waiting (sent twice, or not
+                // theirs to use) is refused, leaving the first one alone.
+                if !self.core_ctx.add_verdict_waiter(&offer_id, verdict_tx) {
+                    let decline = offer::Frame::OfferDecline { offer_id };
+                    reply(&connection, &mut send, serde_json::to_vec(&decline).ok()).await;
+                    return Ok(());
+                }
                 offer::route_offer(&self.core_ctx, remote, via, &bytes);
                 // Park this connection until the local user answers, the
                 // sender goes away, or the wait times out (an unanswered offer
