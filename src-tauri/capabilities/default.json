@@ -1,14 +1,44 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the Dropwire main window.",
+  "description": "The Dropwire main window: core, dialogs, notifications and every app command it uses. The tray panel has its own, smaller capability (tray.json).",
   "windows": [
-    "main",
-    "tray"
+    "main"
   ],
   "permissions": [
     "core:default",
     "dialog:default",
-    "notification:default"
+    "notification:default",
+    "allow-app-version",
+    "allow-cancel-transfer",
+    "allow-clear-transfers",
+    "allow-default-dest-dir",
+    "allow-device-name",
+    "allow-get-settings",
+    "allow-inspect-ticket",
+    "allow-list-transfers",
+    "allow-my-endpoint-id",
+    "allow-my-fingerprint",
+    "allow-nearby-list",
+    "allow-nearby-offer",
+    "allow-nearby-respond",
+    "allow-nearby-start",
+    "allow-nearby-stop",
+    "allow-open-external",
+    "allow-pick-dest-dir",
+    "allow-pick-paths",
+    "allow-qr-svg",
+    "allow-reveal-path",
+    "allow-send-control",
+    "allow-set-device-name",
+    "allow-set-pref",
+    "allow-set-tray-state",
+    "allow-show-main",
+    "allow-start-receive",
+    "allow-start-receive-selected",
+    "allow-start-send",
+    "allow-trust-forget",
+    "allow-trust-remember",
+    "allow-write-text-file"
   ]
 }

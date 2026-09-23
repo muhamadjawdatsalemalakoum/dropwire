@@ -1397,6 +1397,71 @@ mod tests {
         }
     }
 
+    /// Names listed between `open` and the next `close` after it, unquoted.
+    fn listed(text: &str, open: &str, close: &str) -> Vec<String> {
+        let start = text.find(open).expect("list start") + open.len();
+        let len = text[start..].find(close).expect("list end");
+        let mut names: Vec<String> = text[start..start + len]
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// App commands granted by a capability file, as command names.
+    fn granted(capability: &str) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(capability).expect("capability json");
+        let mut names: Vec<String> = v["permissions"]
+            .as_array()
+            .expect("permissions")
+            .iter()
+            .filter_map(|p| p.as_str()?.strip_prefix("allow-"))
+            .map(|c| c.replace('-', "_"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// With an app manifest, a command runs only where a capability grants
+    /// it. One added to the handler but not to build.rs and a capability
+    /// would fail as "not allowed" at runtime, so check that they agree, and
+    /// that the tray panel gets no more than the few commands it uses.
+    #[test]
+    fn every_command_is_declared_and_granted() {
+        let handler = listed(
+            include_str!("lib.rs"),
+            concat!(".invoke_handler(tauri::", "generate_handler!["),
+            "]",
+        );
+        assert!(handler.iter().any(|c| c == "start_send"), "{handler:?}");
+        let declared = listed(include_str!("../build.rs"), "&[&str] = &[", "];");
+        assert_eq!(
+            handler, declared,
+            "build.rs COMMANDS must match the handler"
+        );
+
+        let main = granted(include_str!("../capabilities/default.json"));
+        let tray = granted(include_str!("../capabilities/tray.json"));
+        for cmd in &handler {
+            assert!(
+                main.contains(cmd) || tray.contains(cmd),
+                "{cmd} is granted to no window"
+            );
+        }
+        assert_eq!(
+            tray,
+            [
+                "hide_tray_window",
+                "list_transfers",
+                "my_endpoint_id",
+                "show_main"
+            ],
+            "the tray panel's commands"
+        );
+    }
+
     /// A folder is opened, a file is only ever selected, and anything missing
     /// or relative is an error instead of the file manager's fallback folder.
     #[test]
