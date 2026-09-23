@@ -351,16 +351,17 @@ fn qr_svg(text: String) -> Result<String, String> {
         .build())
 }
 
-/// Start sending a file or folder. Streams `Progress` over the channel; returns the transfer id.
+/// Start sending one or more files and folders under one code. Streams
+/// `Progress` over the channel; returns the transfer id.
 #[tauri::command]
 async fn start_send(
-    path: String,
+    paths: Vec<String>,
     on_event: Channel<Progress>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let (id, mut stream) = state
         .core
-        .send(PathBuf::from(path))
+        .send_many(paths.into_iter().map(PathBuf::from).collect())
         .await
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn(async move {
