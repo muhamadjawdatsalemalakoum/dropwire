@@ -115,6 +115,11 @@ pub enum Progress {
     Error { id: TransferId, message: String },
     /// Transfer was cancelled by the user.
     Cancelled { id: TransferId },
+    /// Sender: the receiver went away (it cancelled, or its connection
+    /// dropped) with nothing else in flight. The send stays live and the code
+    /// still works for that same device, so it can come back and resume; a
+    /// later `peerJoined` means it has.
+    PeerLeft { id: TransferId },
 }
 
 impl Progress {
@@ -127,7 +132,8 @@ impl Progress {
             | Progress::Transferring { id, .. }
             | Progress::Done { id, .. }
             | Progress::Error { id, .. }
-            | Progress::Cancelled { id, .. } => *id,
+            | Progress::Cancelled { id, .. }
+            | Progress::PeerLeft { id, .. } => *id,
         }
     }
 }

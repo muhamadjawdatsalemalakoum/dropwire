@@ -83,3 +83,18 @@ pub async fn drain_until_terminal(stream: &mut ProgressStream) {
         }
     }
 }
+
+/// A bare loopback endpoint that speaks the blobs protocol directly, for tests
+/// that need to drive a request by hand (pause it, drop it, or send one the
+/// app never would). Dial a core with `Core::test_dial_addr`.
+#[cfg(feature = "test-utils")]
+pub async fn raw_endpoint() -> iroh::Endpoint {
+    iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::endpoint::RelayMode::Disabled)
+        .clear_ip_transports()
+        .bind_addr("127.0.0.1:0")
+        .unwrap()
+        .bind()
+        .await
+        .unwrap()
+}

@@ -176,11 +176,15 @@ async fn run_send(
     // 6. Serve, surfacing sender-side progress from provider events, until the user
     //    cancels. Holding `tags` + `collection_tag` keeps the content alive.
     let mut completed = false;
+    // Requests being served right now. Every request that joins ends with
+    // exactly one Done or Aborted.
+    let mut in_flight = 0usize;
     loop {
         tokio::select! {
             _ = token.cancelled() => break,
             ev = ev_rx.recv() => match ev {
                 Some(ProviderEvent::PeerJoined) => {
+                    in_flight += 1;
                     let _ = tx.send(Progress::PeerJoined { id }).await;
                 }
                 Some(ProviderEvent::Progress { offset, total: t }) => {
@@ -190,13 +194,22 @@ async fn run_send(
                         .await;
                 }
                 Some(ProviderEvent::Done { bytes, seconds }) => {
+                    in_flight = in_flight.saturating_sub(1);
                     completed = true;
                     delivered.store(true, Ordering::Release);
                     core.inner.catalog.lock().await.set_status(id, Status::Done, Some(bytes));
                     let _ = tx.send(Progress::Done { id, stats: TransferStats { bytes, seconds } }).await;
                     // keep serving — another receiver may still fetch — until cancelled.
                 }
-                Some(ProviderEvent::Aborted) => { /* a receiver aborted; keep serving */ }
+                Some(ProviderEvent::Aborted) => {
+                    in_flight = in_flight.saturating_sub(1);
+                    // The receiver cancelled or dropped, and nothing else is
+                    // being served: say so rather than sit on "Sending...".
+                    // Keep serving so the same device can come back and resume.
+                    if in_flight == 0 {
+                        let _ = tx.send(Progress::PeerLeft { id }).await;
+                    }
+                }
                 None => break,
             }
         }
@@ -327,6 +340,7 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                 let mut stream = m.rx; // irpc receiver of per-request RequestUpdate
                 tokio::spawn(async move {
                     let mut total = 0u64;
+                    let mut completed = false;
                     // Throttle UI progress to ~12/s (provider progress is per-chunk).
                     let mut last =
                         std::time::Instant::now() - std::time::Duration::from_millis(200);
@@ -352,17 +366,20 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                                 }
                             }
                             RequestUpdate::Completed(c) => {
+                                completed = true;
                                 let _ = tx.send(ProviderEvent::Done {
                                     bytes: c.stats.payload_bytes_sent,
                                     seconds: c.stats.duration.as_secs_f64(),
                                 });
                                 break;
                             }
-                            RequestUpdate::Aborted(_) => {
-                                let _ = tx.send(ProviderEvent::Aborted);
-                                break;
-                            }
+                            RequestUpdate::Aborted(_) => break,
                         }
+                    }
+                    // Anything short of completion counts as the receiver
+                    // leaving, including an update stream that just closed.
+                    if !completed {
+                        let _ = tx.send(ProviderEvent::Aborted);
                     }
                 });
             }

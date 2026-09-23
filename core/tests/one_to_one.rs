@@ -187,6 +187,7 @@ async fn code_is_refused_after_a_delivered_send_ends() {
 #[cfg(feature = "test-utils")]
 mod addressed {
     use super::*;
+    use common::raw_endpoint;
     use iroh_blobs::protocol::{ChunkRanges, GetManyRequest, GetRequest};
     use iroh_blobs::store::mem::MemStore;
     use iroh_blobs::ticket::BlobTicket;
@@ -198,18 +199,6 @@ mod addressed {
 
     fn hash_of(ticket: &str) -> Hash {
         ticket.parse::<BlobTicket>().unwrap().hash()
-    }
-
-    /// A bare loopback endpoint that speaks the blobs protocol directly.
-    async fn raw_endpoint() -> iroh::Endpoint {
-        iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
-            .relay_mode(iroh::endpoint::RelayMode::Disabled)
-            .clear_ip_transports()
-            .bind_addr("127.0.0.1:0")
-            .unwrap()
-            .bind()
-            .await
-            .unwrap()
     }
 
     /// Nothing is re-served after a restart. The sender presses Resend, which

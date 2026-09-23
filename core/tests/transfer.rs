@@ -198,3 +198,92 @@ async fn sender_sees_progress() {
     assert!(peer, "sender should see PeerJoined");
     assert!(done, "sender should see Done");
 }
+
+/// When the receiver goes away mid-file (it cancels, or its connection drops),
+/// the sender is told with `PeerLeft` instead of sitting on "Sending..." for
+/// good. The send stays live, so the same device can come back and finish.
+///
+/// Driven by hand so it is deterministic: the client reads a little and then
+/// stops, which QUIC flow control turns into a sender stuck mid-file, and then
+/// it drops the request.
+#[cfg(feature = "test-utils")]
+#[tokio::test(flavor = "multi_thread")]
+async fn sender_is_told_when_the_receiver_leaves() {
+    use iroh_blobs::api::remote::GetProgressItem;
+    use iroh_blobs::protocol::GetRequest;
+    use iroh_blobs::store::mem::MemStore;
+    use iroh_blobs::ticket::BlobTicket;
+
+    /// Read the send stream until `want` matches, skipping everything else.
+    async fn wait_for(
+        stream: &mut irohcore::ProgressStream,
+        what: &str,
+        want: impl Fn(&Progress) -> bool,
+    ) {
+        let fut = async {
+            while let Some(ev) = stream.next().await {
+                if want(&ev) {
+                    return;
+                }
+            }
+            panic!("send stream ended before {what}");
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), fut)
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {what}"));
+    }
+
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("movie.bin");
+    let payload = make_payload(16 * 1024 * 1024);
+    std::fs::write(&src, &payload).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+    let root = ticket.parse::<BlobTicket>().unwrap().hash();
+
+    let raw = common::raw_endpoint().await;
+    let store = MemStore::new();
+    {
+        let conn = raw
+            .connect(sender.test_dial_addr(), iroh_blobs::ALPN)
+            .await
+            .unwrap();
+        let mut get = store
+            .remote()
+            .execute_get(conn, GetRequest::all(root))
+            .stream();
+        loop {
+            match get.next().await {
+                Some(GetProgressItem::Progress(n)) if n > 0 => break,
+                Some(GetProgressItem::Progress(_)) => {}
+                other => panic!("the download must be under way first, got {other:?}"),
+            }
+        }
+        // The receiver goes away here, part way through the file.
+    }
+    wait_for(&mut ss, "PeerLeft", |ev| {
+        matches!(ev, Progress::PeerLeft { .. })
+    })
+    .await;
+
+    // The same device comes back and finishes; the sender sees it return.
+    let conn = raw
+        .connect(sender.test_dial_addr(), iroh_blobs::ALPN)
+        .await
+        .unwrap();
+    store
+        .remote()
+        .execute_get(conn, GetRequest::all(root))
+        .await
+        .expect("the same device can come back after leaving");
+    assert!(store.has(iroh_blobs::Hash::new(&payload)).await.unwrap());
+    wait_for(&mut ss, "the receiver to rejoin", |ev| {
+        matches!(ev, Progress::PeerJoined { .. })
+    })
+    .await;
+    wait_for(&mut ss, "Done", |ev| matches!(ev, Progress::Done { .. })).await;
+}
