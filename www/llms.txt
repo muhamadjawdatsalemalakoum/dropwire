@@ -23,7 +23,7 @@ Dropwire is a free, open-source, peer-to-peer file transfer app for Windows, mac
 - Resumable transfers; multiple transfers at once; take only the files you want
 - History stays on your device only, with a detail view per transfer: peer, code, route, timing, per-file breakdown, verified file list
 - A desktop app, not a web page in a window: one fixed frame that draws its own title bar on all three platforms, nothing scrolls out of view, nothing needs resizing
-- Tray: closing the window keeps Dropwire reachable; the tray icon reports state and its panel takes a dropped file or a pasted code
+- Tray: closing the window keeps Dropwire reachable; the tray icon reports state and its panel takes a dropped file or a pasted code, then opens the main window on it
 - Trusted devices: a device is remembered after a transfer with it completes and can optionally skip the consent step; trust grants nothing on its own, since they still confirm on their side and you still see the file list before anything is saved
 - Send text: send a snippet or the clipboard as a transfer, over the same encrypted path
 - Notifications for three events only: a transfer finished, an offer arrived while you were away, and a failure that needs a decision. Progress never notifies
