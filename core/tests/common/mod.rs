@@ -81,16 +81,53 @@ pub async fn drain_for(stream: &mut ProgressStream, window: Duration) -> Vec<Pro
     seen
 }
 
-/// Drain a stream until any terminal event (Done / Error / Cancelled).
-pub async fn drain_until_terminal(stream: &mut ProgressStream) {
+/// Drain a stream until any terminal event (Done / Error / Cancelled), and
+/// return it (None if the stream ended without one).
+pub async fn drain_until_terminal(stream: &mut ProgressStream) -> Option<Progress> {
     while let Some(ev) = stream.next().await {
         if matches!(
             ev,
             Progress::Done { .. } | Progress::Error { .. } | Progress::Cancelled { .. }
         ) {
-            break;
+            return Some(ev);
         }
     }
+    None
+}
+
+/// Read a SEND stream up to and including its first Done, then a short quiet
+/// window more, and return everything it said. The sender's Done can land
+/// just after the receiver's, and the extra window catches a second one.
+pub async fn send_events_through_done(stream: &mut ProgressStream) -> Vec<Progress> {
+    let mut seen = Vec::new();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(ev) = stream.next().await {
+            if let Progress::Error { message, .. } = &ev {
+                panic!("sender error: {message}");
+            }
+            let done = matches!(ev, Progress::Done { .. });
+            seen.push(ev);
+            if done {
+                return;
+            }
+        }
+        panic!("send stream ended before Done: {seen:?}");
+    })
+    .await
+    .expect("timed out waiting for the sender's Done");
+    seen.extend(drain_for(stream, Duration::from_millis(500)).await);
+    seen
+}
+
+/// The bytes each Done on a send stream reports, in order: what went over the
+/// wire for that one download.
+pub fn done_bytes(seen: &[Progress]) -> Vec<u64> {
+    seen.iter()
+        .filter_map(|e| match e {
+            Progress::Done { stats, .. } => Some(stats.bytes),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A bare loopback endpoint that speaks the blobs protocol directly, for tests

@@ -9,7 +9,10 @@ use irohcore::{Core, CoreConfig, Progress, Status};
 use tokio_stream::StreamExt;
 
 mod common;
-use common::{drain_for, drain_until_terminal, local_core, make_payload, wait_done, wait_ready};
+use common::{
+    dir_size, done_bytes, drain_for, drain_until_terminal, local_core, make_payload,
+    send_events_through_done, wait_done, wait_ready,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn roundtrip_single_file() {
@@ -66,13 +69,14 @@ async fn roundtrip_folder() {
     );
 }
 
-/// Resume across an interruption — the critical correctness test (ARCHITECTURE.md §12).
+/// Resume across an interruption, the critical correctness test (ARCHITECTURE.md §12).
 ///
 /// Determinism: instead of guessing a wall-clock cancel delay, we drive the first
-/// receive until a `Transferring` event reports a real byte `offset > 0`, then
-/// cancel. That leaves a partial in the receiver's `FsStore`; the second receive
-/// must finish and the final bytes must be perfect regardless of how far the first
-/// attempt got. This guards the #1 regression risk across iroh-blobs version bumps.
+/// receive until a `Transferring` event reports real bytes (but not all of them),
+/// then cancel. That leaves a partial in the receiver's `FsStore`. The second
+/// receive must fetch only what is missing (the sender's Done for it counts the
+/// bytes that went over the wire), and the final bytes must be perfect. This
+/// guards the #1 regression risk across iroh-blobs version bumps.
 #[tokio::test(flavor = "multi_thread")]
 async fn resume_after_interrupt() {
     let work = tempfile::tempdir().unwrap();
@@ -89,27 +93,58 @@ async fn resume_after_interrupt() {
     let (_sid, mut ss) = sender.send(src).await.unwrap();
     let ticket = wait_ready(&mut ss).await;
 
-    // First attempt: cancel deterministically once real bytes have landed.
+    // First attempt: cancel deterministically once real file bytes have landed.
+    const MIB: u64 = 1024 * 1024;
     let out = work.path().join("out");
     let (rid, mut rs) = receiver.receive(ticket.clone(), out.clone()).await.unwrap();
     let mut interrupted_at = 0u64;
     while let Some(ev) = rs.next().await {
         match ev {
-            Progress::Transferring { offset, .. } if offset > 0 => {
+            // Past the collection's own list (the first few dozen bytes), so
+            // part of the file itself is in the store.
+            Progress::Transferring { offset, total, .. } if offset > MIB && offset < total => {
                 interrupted_at = offset;
                 receiver.cancel(rid).await;
                 break;
             }
-            Progress::Done { .. } => break, // raced to completion; still correct
+            Progress::Done { .. } => {
+                panic!("the first attempt finished before the interrupt; resume not exercised")
+            }
             Progress::Error { message, .. } => panic!("first attempt error: {message}"),
             _ => {}
         }
     }
-    drain_until_terminal(&mut rs).await;
+    let ended = drain_until_terminal(&mut rs).await;
+    assert!(
+        matches!(ended, Some(Progress::Cancelled { .. })),
+        "the first attempt must end cancelled, got {ended:?}"
+    );
 
-    // Second attempt: must finish, reusing whatever partial is already in the store.
+    // The store must hold partial, but not complete, data to resume from.
+    let partial = dir_size(&recv_data.path().join("blobs"));
+    assert!(
+        partial > 0 && partial < payload.len() as u64,
+        "store should hold partial data after interruption (got {partial} of {})",
+        payload.len()
+    );
+
+    // Second attempt: must finish, reusing the partial already in the store.
     let (_rid2, mut rs2) = receiver.receive(ticket, out.clone()).await.unwrap();
     wait_done(&mut rs2).await;
+
+    // The first attempt was cut short, so the only delivery the sender saw is
+    // the second one, and it sent only what was missing. Starting over would
+    // send the whole payload (and a little more for the collection's list).
+    let seen = send_events_through_done(&mut ss).await;
+    let dones = done_bytes(&seen);
+    assert_eq!(dones.len(), 1, "one delivery: {seen:?}");
+    assert!(
+        dones[0] > 0 && dones[0] < payload.len() as u64,
+        "the resumed download must fetch only the missing part (sent {} of {}, first \
+         attempt reached {interrupted_at})",
+        dones[0],
+        payload.len()
+    );
 
     let got = std::fs::read(out.join("big.bin")).unwrap();
     assert_eq!(
@@ -153,40 +188,6 @@ async fn roundtrip_serverless() {
     wait_done(&mut rs).await;
 
     assert_eq!(std::fs::read(out.join("hello.bin")).unwrap(), payload);
-}
-
-/// Read a SEND stream up to and including its first Done, then a short quiet
-/// window more, and return everything it said. The sender's Done can land
-/// just after the receiver's, and the extra window catches a second one.
-async fn send_events_through_done(stream: &mut irohcore::ProgressStream) -> Vec<Progress> {
-    let mut seen = Vec::new();
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while let Some(ev) = stream.next().await {
-            if let Progress::Error { message, .. } = &ev {
-                panic!("sender error: {message}");
-            }
-            let done = matches!(ev, Progress::Done { .. });
-            seen.push(ev);
-            if done {
-                return;
-            }
-        }
-        panic!("send stream ended before Done: {seen:?}");
-    })
-    .await
-    .expect("timed out waiting for the sender's Done");
-    seen.extend(drain_for(stream, Duration::from_millis(500)).await);
-    seen
-}
-
-/// The bytes each Done on a send stream reports, in order.
-fn done_bytes(seen: &[Progress]) -> Vec<u64> {
-    seen.iter()
-        .filter_map(|e| match e {
-            Progress::Done { stats, .. } => Some(stats.bytes),
-            _ => None,
-        })
-        .collect()
 }
 
 /// The SENDER sees live progress (via iroh-blobs provider events): when a
