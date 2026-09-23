@@ -9,7 +9,8 @@ mod settings;
 use std::path::PathBuf;
 
 use irohcore::{
-    Core, CoreConfig, CtrlMsg, NearbyDevice, Progress, TransferId, TransferPreview, TransferRecord,
+    Core, CoreConfig, CoreError, CtrlMsg, NearbyDevice, Progress, TransferId, TransferPreview,
+    TransferRecord,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -549,23 +550,80 @@ fn panic_log_path() -> Option<PathBuf> {
 fn install_panic_logger() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        if let Some(path) = panic_log_path() {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
-                use std::io::Write;
-                let thread = std::thread::current();
-                let name = thread.name().unwrap_or("<unnamed>");
-                let _ = writeln!(f, "[panic] thread '{name}': {info}");
-            }
-        }
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<unnamed>");
+        append_breadcrumb(&format!("[panic] thread '{name}': {info}"));
         default(info);
     }));
+}
+
+/// Append one line to the breadcrumb log (see `panic_log_path`). Best effort:
+/// failing to write it must never stop anything else.
+fn append_breadcrumb(line: &str) {
+    let Some(path) = panic_log_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// True when the engine failed to start only because another copy of Dropwire
+/// still holds this data folder's blob store (its database lock).
+fn is_store_locked(err: &CoreError) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = cur {
+        if e.to_string().contains("already open") {
+            return true;
+        }
+        cur = e.source();
+    }
+    format!("{err:?}").contains("already open")
+}
+
+/// Start the engine. If the blob store is still locked, the likely cause is a
+/// copy of Dropwire that is shutting down (it was just quit, and this is the
+/// relaunch), so wait a few seconds for it to let go before giving up.
+fn start_engine(config: impl Fn() -> CoreConfig) -> Result<Core, CoreError> {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        match tauri::async_runtime::block_on(Core::start(config())) {
+            Err(e) if is_store_locked(&e) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(750));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// The engine could not start. Without this, the setup error becomes a panic
+/// that nobody sees (release builds have no console) and the app just never
+/// appears. Say what happened in a native dialog, then exit.
+fn report_start_failure(app: &AppHandle, err: &CoreError) {
+    use tauri_plugin_dialog::MessageDialogKind;
+    append_breadcrumb(&format!("[start] engine failed to start: {err:#}"));
+    let body = if is_store_locked(err) {
+        "Dropwire is already running on this computer. Look for its icon in the \
+         system tray or menu bar. If you just quit it, wait a moment and open it again."
+            .to_string()
+    } else {
+        format!("Dropwire could not start.\n\n{err:#}")
+    };
+    let handle = app.clone();
+    app.dialog()
+        .message(body)
+        .title("Dropwire")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
 }
 
 /// Swap the tray icon for the given state name. The tray is the only surface
@@ -614,6 +672,10 @@ fn toggle_tray_window(app: &AppHandle, at: tauri::PhysicalPosition<f64>) {
     let _ = win.show();
     let _ = win.set_focus();
 }
+
+/// Set once the tray icon exists. Hiding the window on close is only safe when
+/// there is a tray icon to bring it back from.
+static TRAY_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Build the tray icon and its menu.
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -712,8 +774,15 @@ pub fn run() {
             // DHT discovery + n0 free relay fallback.
             let store = settings::Store::load(&data_dir);
             let prefs = store.get();
-            let core =
-                tauri::async_runtime::block_on(Core::start(CoreConfig::serverless(data_dir)))?;
+            let core = match start_engine(|| CoreConfig::serverless(data_dir.clone())) {
+                Ok(core) => core,
+                Err(e) => {
+                    // No engine, no app: nothing is managed and no tray is
+                    // built. The dialog's callback exits.
+                    report_start_failure(app.handle(), &e);
+                    return Ok(());
+                }
+            };
             // A name chosen during setup outlives the hostname it was derived from.
             if let Some(name) = prefs.device_name.clone() {
                 let c = core.clone();
@@ -724,7 +793,12 @@ pub fn run() {
                 settings: store,
             });
 
-            build_tray(app.handle())?;
+            // A missing tray is not worth refusing to start over, but without
+            // one, closing the window must quit rather than hide it for good.
+            match build_tray(app.handle()) {
+                Ok(()) => TRAY_READY.store(true, std::sync::atomic::Ordering::Relaxed),
+                Err(e) => append_breadcrumb(&format!("[start] tray icon unavailable: {e}")),
+            }
 
             // First run opens on the setup screens; afterwards the window is
             // only shown if the user did not ask us to start hidden in the tray.
@@ -739,11 +813,12 @@ pub fn run() {
             // nearby devices can only reach you while the app is running.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    let keep = window
-                        .app_handle()
-                        .try_state::<AppState>()
-                        .map(|s| s.settings.get().tray_on_close)
-                        .unwrap_or(false);
+                    let keep = TRAY_READY.load(std::sync::atomic::Ordering::Relaxed)
+                        && window
+                            .app_handle()
+                            .try_state::<AppState>()
+                            .map(|s| s.settings.get().tray_on_close)
+                            .unwrap_or(false);
                     api.prevent_close();
                     if keep {
                         let _ = window.hide();
@@ -820,4 +895,53 @@ pub fn run() {
             tauri::RunEvent::Reopen { .. } => show_main(app.clone()),
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dropwire-shell-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// A second engine on the same data folder fails on the store lock, and
+    /// that failure is recognized, so the relaunch waits instead of dying.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_held_store_lock_is_recognized() {
+        let dir = scratch_dir("lock");
+        let first = Core::start(CoreConfig::local_only(&dir))
+            .await
+            .expect("first start");
+        let err = Core::start(CoreConfig::local_only(&dir))
+            .await
+            .err()
+            .expect("a second engine on the same folder must not start");
+        assert!(is_store_locked(&err), "not recognized as a lock: {err:?}");
+        first.shutdown().await.expect("shutdown");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Any other start failure is reported as it is, not as "already running".
+    #[tokio::test(flavor = "multi_thread")]
+    async fn other_start_failures_are_not_mistaken_for_a_lock() {
+        let dir = scratch_dir("notadir");
+        std::fs::create_dir_all(dir.parent().expect("parent")).expect("temp dir");
+        std::fs::write(&dir, b"a file where the data folder should be").expect("write");
+        let err = Core::start(CoreConfig::local_only(&dir))
+            .await
+            .err()
+            .expect("a data folder that is a file must fail");
+        assert!(!is_store_locked(&err), "mistaken for a lock: {err:?}");
+        let _ = std::fs::remove_file(&dir);
+    }
 }
