@@ -159,6 +159,32 @@ pub(crate) fn join_under(dest: &Path, segs: &[String]) -> Option<PathBuf> {
     out.starts_with(dest).then_some(out)
 }
 
+/// How many failed files a receive error names before summarising the rest.
+const FAILURES_NAMED: usize = 3;
+
+/// The message a receive ends with when some files could not be written:
+/// which ones (the first few, by the name they were sent with) and why.
+pub(crate) fn describe_failures(failed: &[(String, String)], attempted: usize) -> String {
+    let mut list = failed
+        .iter()
+        .take(FAILURES_NAMED)
+        .map(|(name, why)| format!("{name} ({why})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = failed.len().saturating_sub(FAILURES_NAMED);
+    if more > 0 {
+        list.push_str(&format!(", and {more} more"));
+    }
+    if attempted <= 1 {
+        format!("could not save {list}")
+    } else {
+        format!(
+            "{} of {attempted} files could not be saved: {list}",
+            failed.len()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +340,23 @@ mod tests {
         assert_eq!(split_ext(".bashrc"), (".bashrc", ""));
         assert_eq!(split_ext("noext"), ("noext", ""));
         assert_eq!(split_ext("v1.2.final.pdf"), ("v1.2.final", ".pdf"));
+    }
+
+    #[test]
+    fn failures_are_named_and_counted() {
+        let one = vec![("a.txt".to_string(), "denied".to_string())];
+        assert_eq!(describe_failures(&one, 1), "could not save a.txt (denied)");
+        assert_eq!(
+            describe_failures(&one, 4),
+            "1 of 4 files could not be saved: a.txt (denied)"
+        );
+        let many: Vec<_> = (0..5)
+            .map(|i| (format!("f{i}"), "disk full".to_string()))
+            .collect();
+        assert_eq!(
+            describe_failures(&many, 9),
+            "5 of 9 files could not be saved: f0 (disk full), f1 (disk full), \
+             f2 (disk full), and 2 more"
+        );
     }
 }

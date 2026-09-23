@@ -388,25 +388,41 @@ async fn run_receive(
         .await
         .context("load collection")?;
     std::fs::create_dir_all(&dest)?;
+    // One file that cannot be written (a permission problem, a full disk, a path
+    // too long for this system) must not cost the receiver every file after it:
+    // save what can be saved, then report exactly what could not.
+    let mut attempted = 0usize;
+    let mut failed: Vec<(String, String)> = Vec::new();
     for (i, (name, child_hash)) in collection.iter().enumerate() {
         if !is_wanted(i) {
             continue;
         }
-        let target = export::join_under(&dest, &export::sanitize_segments(name))
-            .ok_or_else(|| anyhow!("unsafe file name in transfer: {name}"))?;
+        attempted += 1;
+        let Some(target) = export::join_under(&dest, &export::sanitize_segments(name)) else {
+            failed.push((name.clone(), "unsafe file name".to_string()));
+            continue;
+        };
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                failed.push((name.clone(), e.to_string()));
+                continue;
+            }
         }
         // VERIFY (ARCHITECTURE.md §13): ExportProgress completion — `.await` vs
         // draining `.stream()` of ExportProgressItem on 0.103.
-        store
+        if let Err(e) = store
             .export_with_opts(ExportOptions {
                 hash: *child_hash,
                 target,
                 mode: ExportMode::Copy,
             })
             .await
-            .with_context(|| format!("export {name}"))?;
+        {
+            failed.push((name.clone(), e.to_string()));
+        }
+    }
+    if !failed.is_empty() {
+        return Err(anyhow!(export::describe_failures(&failed, attempted)));
     }
 
     let stats = TransferStats {
