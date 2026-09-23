@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use iroh::protocol::Router;
 use iroh_blobs::provider::events::{
-    ConnectMode, EventMask, EventSender, ProviderMessage, RequestMode,
+    ConnectMode, EventMask, EventSender, ObserveMode, ProviderMessage, RequestMode,
 };
 use iroh_blobs::store::fs::FsStore;
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -65,14 +65,16 @@ pub(crate) struct Inner {
     pub(crate) config: CoreConfig,
     pub(crate) catalog: Mutex<Catalog>,
     pub(crate) active: Mutex<HashMap<TransferId, CancellationToken>>,
-    /// In-flight sends, keyed by content hash (hex), so provider events can be
-    /// routed to the right transfer's progress stream.
+    /// Live sends, keyed by content hash (hex). This is the allow-list of the
+    /// one-to-one gate: only these roots are served. Also routes provider
+    /// events to the right transfer's progress stream.
     pub(crate) serving: Mutex<HashMap<String, mpsc::UnboundedSender<send::ProviderEvent>>>,
     /// Live connections: `connection_id` → the peer's `EndpointId`. Populated from
     /// provider connect events so a get request can be attributed to a device.
     pub(crate) conns: Mutex<HashMap<u64, iroh::EndpointId>>,
     /// One-to-one binding: content hash (hex) → the first approved receiver's
     /// `EndpointId`. The ticket is served to that one device; others are denied.
+    /// Lock order: `serving` before `bound` wherever both are held.
     pub(crate) bound: Mutex<HashMap<String, iroh::EndpointId>>,
     /// Broadcast of control messages received from peers (see [`control`]).
     pub(crate) ctrl_tx: broadcast::Sender<control::CtrlMsg>,
@@ -94,9 +96,10 @@ impl Core {
         let endpoint = endpoint::build(secret, &config.infra).await?;
         let store = store::open(&config.data_dir.join("blobs")).await?;
 
-        // One always-on blobs server with provider events: any blob in the store is
-        // served by hash, and the global event stream lets us surface sender-side
-        // progress (peer connected → bytes sent → done) per transfer.
+        // One always-on blobs server with provider events. Every request passes
+        // through the one-to-one gate in `send::consume_provider_events`, which
+        // serves only the root of a live send to its bound device; the global
+        // event stream also surfaces sender-side progress per transfer.
         let (ev_tx, ev_rx) = mpsc::channel::<ProviderMessage>(64);
         let events = EventSender::new(
             ev_tx,
@@ -105,6 +108,12 @@ impl Core {
                 // InterceptLog = we can allow/deny each request before bytes flow
                 // (one-to-one enforcement) AND still get per-request progress.
                 get: RequestMode::InterceptLog,
+                // Never used by Dropwire. iroh-blobs 0.103 routes these through
+                // the `get` mode above (and the gate refuses them); these
+                // settings keep them shut if a later version honors them.
+                get_many: RequestMode::Disabled,
+                push: RequestMode::Disabled,
+                observe: ObserveMode::Intercept,
                 ..EventMask::DEFAULT
             },
         );
