@@ -254,7 +254,7 @@ fn keep_title_bar_on_screen(w: &tauri::WebviewWindow) {
     }
 }
 
-/// Hide the tray panel (it closes on blur and after an action).
+/// Hide the tray panel (it closes shortly after losing focus, and after an action).
 #[tauri::command]
 fn hide_tray_window(app: AppHandle) {
     if let Some(t) = app.get_webview_window("tray") {
@@ -818,6 +818,82 @@ fn position_tray_panel(
     }
 }
 
+/// The tray panel's transient state. The panel closes a moment after it loses
+/// focus rather than at once: taking a file to "Drop to send" means clicking
+/// into a file manager first, and a panel that vanished on that click could
+/// never receive the drop. Focus coming back or a drag over the panel cancels
+/// the pending close.
+struct TrayPanel {
+    /// Bumped whenever the panel is shown, refocused or dragged over, so a
+    /// pending delayed close can tell it has been overtaken.
+    generation: std::sync::atomic::AtomicU64,
+    /// A drag is over the panel right now.
+    dragging: std::sync::atomic::AtomicBool,
+    /// When the delayed close last hid the panel.
+    auto_hidden_at: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+static TRAY_PANEL: TrayPanel = TrayPanel {
+    generation: std::sync::atomic::AtomicU64::new(0),
+    dragging: std::sync::atomic::AtomicBool::new(false),
+    auto_hidden_at: std::sync::Mutex::new(None),
+};
+
+/// How long the panel stays up after losing focus.
+const TRAY_BLUR_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Cancel any pending delayed close. Returns the new generation.
+fn tray_cancel_close() -> u64 {
+    TRAY_PANEL
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1
+}
+
+/// Close the panel after the grace period, unless something overtakes it.
+fn tray_close_later(win: &tauri::Window) {
+    use std::sync::atomic::Ordering;
+    let generation = tray_cancel_close();
+    let win = win.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(TRAY_BLUR_GRACE).await;
+        if TRAY_PANEL.generation.load(Ordering::SeqCst) == generation
+            && !TRAY_PANEL.dragging.load(Ordering::SeqCst)
+        {
+            *TRAY_PANEL
+                .auto_hidden_at
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+            let _ = win.hide();
+        }
+    });
+}
+
+/// Keep the tray panel's delayed close in step with focus and drags.
+fn on_tray_panel_event(win: &tauri::Window, event: &tauri::WindowEvent) {
+    use std::sync::atomic::Ordering;
+    use tauri::{DragDropEvent, WindowEvent};
+    match event {
+        WindowEvent::Focused(false) => tray_close_later(win),
+        WindowEvent::Focused(true) => {
+            tray_cancel_close();
+        }
+        WindowEvent::DragDrop(DragDropEvent::Enter { .. } | DragDropEvent::Over { .. }) => {
+            TRAY_PANEL.dragging.store(true, Ordering::SeqCst);
+            tray_cancel_close();
+        }
+        // The drag left, or was dropped (a drop with files opens the main
+        // window, which closes the panel): back to closing on blur.
+        WindowEvent::DragDrop(DragDropEvent::Leave | DragDropEvent::Drop { .. }) => {
+            TRAY_PANEL.dragging.store(false, Ordering::SeqCst);
+            if !win.is_focused().unwrap_or(false) {
+                tray_close_later(win);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Toggle the tray panel: hide it if it is open, otherwise open it next to the
 /// tray icon.
 fn toggle_tray_window(app: &AppHandle, at: tauri::PhysicalPosition<f64>) {
@@ -825,9 +901,26 @@ fn toggle_tray_window(app: &AppHandle, at: tauri::PhysicalPosition<f64>) {
         return;
     };
     if win.is_visible().unwrap_or(false) {
+        tray_cancel_close();
         let _ = win.hide();
         return;
     }
+    // Pressing the icon takes focus from the panel. If the delayed close
+    // happened to fire just before this click, the click was meant to close
+    // the panel, not to open it again.
+    let just_closed = TRAY_PANEL
+        .auto_hidden_at
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400));
+    if just_closed {
+        return;
+    }
+    tray_cancel_close();
+    TRAY_PANEL
+        .dragging
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     position_tray_panel(app, &win, at);
     let _ = win.show();
     let _ = win.set_focus();
@@ -1022,11 +1115,10 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
-            // The tray panel is transient: it closes as soon as it loses focus.
-            if let tauri::WindowEvent::Focused(false) = event {
-                if window.label() == "tray" {
-                    let _ = window.hide();
-                }
+            // The tray panel is transient: it closes shortly after it loses
+            // focus, unless a drag is on its way to it.
+            if window.label() == "tray" {
+                on_tray_panel_event(window, event);
             }
         })
         .invoke_handler(tauri::generate_handler![
