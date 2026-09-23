@@ -8,6 +8,50 @@ use common::{drain_until_terminal, local_core, make_payload, wait_done, wait_rea
 use irohcore::Progress;
 use tokio_stream::StreamExt;
 
+/// Choosing one small file out of many never shows more bytes than were
+/// chosen: the transfer's list of hashes and names is not counted.
+#[tokio::test(flavor = "multi_thread")]
+async fn selective_progress_never_passes_the_chosen_total() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let dir = work.path().join("many");
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..400 {
+        std::fs::write(dir.join(format!("f{i:04}.txt")), make_payload(100)).unwrap();
+    }
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (_sid, mut ss) = sender.send(dir).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver
+        .receive_selected(ticket, out.clone(), vec![0])
+        .await
+        .unwrap();
+    let mut offsets = Vec::new();
+    while let Some(ev) = rs.next().await {
+        match ev {
+            Progress::Transferring { offset, total, .. } => {
+                assert_eq!(total, 100);
+                offsets.push(offset);
+            }
+            Progress::Done { stats, .. } => {
+                assert_eq!(stats.bytes, 100);
+                break;
+            }
+            Progress::Error { message, .. } => panic!("receive error: {message}"),
+            _ => {}
+        }
+    }
+    assert!(offsets.iter().all(|&o| o <= 100), "{offsets:?}");
+    assert_eq!(offsets.last(), Some(&100));
+    assert!(out.join("many").join("f0000.txt").exists());
+}
+
 /// A selective receive that stopped part way picks up where it stopped: asking
 /// for the same files again fetches only what is still missing.
 ///

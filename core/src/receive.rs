@@ -374,6 +374,19 @@ async fn run_receive(
         .local_for_request(needed)
         .await
         .context("inspect local store")?;
+    // Progress counts the chosen files' bytes, out of `total`. The download
+    // reports how many bytes this request has read so far, starting with the
+    // parts of the hash list and names it still needs, so: what is already
+    // stored counts as done, and those structure bytes do not count at all.
+    let structure = 32 * sizes.len() as u64 + sizes[0];
+    let already = local.local_bytes();
+    let shown = |read: u64| {
+        already
+            .saturating_add(read)
+            .saturating_sub(structure)
+            .min(total)
+    };
+    let route_now = || u8_route(route_state.load(std::sync::atomic::Ordering::Relaxed));
     if !local.is_complete() {
         let get = store.remote().execute_get(conn, local.missing());
         let mut stream = get.stream();
@@ -383,11 +396,11 @@ async fn run_receive(
             tokio::select! {
                 _ = token.cancelled() => return finish_cancelled(&core, id, &tx).await,
                 item = stream.next() => match item {
-                    Some(GetProgressItem::Progress(offset)) => {
+                    Some(GetProgressItem::Progress(read)) => {
                         if last_emit.elapsed() >= Duration::from_millis(80) {
                             last_emit = Instant::now();
-                            let route = u8_route(route_state.load(std::sync::atomic::Ordering::Relaxed));
-                            let _ = tx.send(Progress::Transferring { id, offset, total, route }).await;
+                            let offset = shown(read);
+                            let _ = tx.send(Progress::Transferring { id, offset, total, route: route_now() }).await;
                         }
                     }
                     Some(GetProgressItem::Done(_stats)) => break,
@@ -397,6 +410,16 @@ async fn run_receive(
             }
         }
     }
+    // Everything is here. Say so before saving, which the throttle above
+    // could otherwise hide.
+    let _ = tx
+        .send(Progress::Transferring {
+            id,
+            offset: total,
+            total,
+            route: route_now(),
+        })
+        .await;
 
     // Export the collection tree to `dest`.
     let collection = Collection::load(hash, store.as_ref())

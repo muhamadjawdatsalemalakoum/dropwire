@@ -122,6 +122,69 @@ async fn resume_after_interrupt() {
     );
 }
 
+/// Resumed progress starts from what is already stored, instead of counting
+/// up from zero and snapping to "received" at the end, and it never passes
+/// the total.
+#[tokio::test(flavor = "multi_thread")]
+async fn resumed_progress_starts_from_what_is_already_there() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("big.bin");
+    let payload = make_payload(64 * 1024 * 1024);
+    std::fs::write(&src, &payload).unwrap();
+    let total = payload.len() as u64;
+
+    let sender = local_core(send_data.path()).await;
+    let (_sid, mut ss) = sender.send(src).await.unwrap();
+    let ticket = wait_ready(&mut ss).await;
+
+    // First attempt: the receiving app closes part way.
+    let receiver = local_core(recv_data.path()).await;
+    let out = work.path().join("out");
+    let (_rid, mut rs) = receiver.receive(ticket.clone(), out.clone()).await.unwrap();
+    let mut reached = 0;
+    while let Some(ev) = rs.next().await {
+        match ev {
+            Progress::Transferring { offset, .. } if offset >= total / 2 => {
+                reached = offset;
+                break;
+            }
+            Progress::Done { .. } => panic!("finished before it could be interrupted"),
+            Progress::Error { message, .. } => panic!("first attempt error: {message}"),
+            _ => {}
+        }
+    }
+    receiver.shutdown().await.unwrap();
+    drain_until_terminal(&mut rs).await;
+
+    let receiver = local_core(recv_data.path()).await;
+    let (_rid, mut rs) = receiver.receive(ticket, out.clone()).await.unwrap();
+    let mut offsets = Vec::new();
+    while let Some(ev) = rs.next().await {
+        match ev {
+            Progress::Transferring {
+                offset, total: t, ..
+            } => {
+                assert_eq!(t, total);
+                offsets.push(offset);
+            }
+            Progress::Done { .. } => break,
+            Progress::Error { message, .. } => panic!("resume error: {message}"),
+            _ => {}
+        }
+    }
+    assert!(
+        offsets[0] >= reached / 2,
+        "resumed progress must start near {reached}, started at {}",
+        offsets[0]
+    );
+    assert!(offsets.iter().all(|&o| o <= total), "{offsets:?}");
+    assert_eq!(offsets.last(), Some(&total));
+    assert!(std::fs::read(out.join("big.bin")).unwrap() == payload);
+}
+
 /// The finished receive reports what was previewed (the files' bytes, not the
 /// list of names that travels with them) and how long the whole receive took,
 /// not just the final save to disk.
