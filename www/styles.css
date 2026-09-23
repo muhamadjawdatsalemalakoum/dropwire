@@ -842,7 +842,8 @@ img.frameless-img { display: block; width: 100%; height: auto; }
   line-height: 1.45;
   color: var(--ink-soft);
 }
-.install-note { margin: 1.3rem 0 0; font-size: 0.9rem; color: var(--ink-soft); }
+.install-note { margin: 1.3rem auto 0; max-width: 64ch; font-size: 0.9rem; color: var(--ink-soft); }
+.install-note + .install-note { margin-top: 0.5rem; }
 .install-note code { font-family: var(--font-mono); font-size: 0.85em; }
 .platforms {
   margin: 1.1rem 0 0;
