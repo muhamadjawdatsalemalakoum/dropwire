@@ -73,12 +73,53 @@ async fn set_device_name(
     Ok(state.settings.update(|s| s.device_name = Some(name)))
 }
 
+/// Passed by the "Start at login" entry, so a login launch can start in the
+/// tray instead of opening the window.
+const LOGIN_LAUNCH_ARG: &str = "--autostart";
+
+/// Add or remove Dropwire from the system's startup list (the Run key on
+/// Windows, a LaunchAgent on macOS, an XDG autostart entry on Linux).
+#[cfg(desktop)]
+fn set_start_at_login(app: &AppHandle, on: bool) -> Result<(), String> {
+    let Some(al) = app.try_state::<tauri_plugin_autostart::AutoLaunchManager>() else {
+        return Err("start at login is not available on this system".into());
+    };
+    let result = if on { al.enable() } else { al.disable() };
+    match result {
+        Ok(()) => Ok(()),
+        // Turning it off when the entry is already gone (removed outside the
+        // app) is already done.
+        Err(_) if !on && al.is_enabled().ok() == Some(false) => Ok(()),
+        Err(e) => Err(format!("could not change start at login: {e}")),
+    }
+}
+
+#[cfg(not(desktop))]
+fn set_start_at_login(_app: &AppHandle, _on: bool) -> Result<(), String> {
+    Err("start at login is not available on this system".into())
+}
+
+/// Whether Dropwire is registered (and not disabled) in the system's startup
+/// list, or `None` if that cannot be read.
+#[cfg(desktop)]
+fn start_at_login_registered(app: &AppHandle) -> Option<bool> {
+    app.try_state::<tauri_plugin_autostart::AutoLaunchManager>()?
+        .is_enabled()
+        .ok()
+}
+
+#[cfg(not(desktop))]
+fn start_at_login_registered(_app: &AppHandle) -> Option<bool> {
+    None
+}
+
 /// Persist one of the simple preferences. Unknown keys are rejected rather than
 /// silently ignored, so a typo in the UI shows up immediately.
 #[tauri::command]
 fn set_pref(
     key: String,
     value: serde_json::Value,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<settings::Settings, String> {
     let as_bool = || {
@@ -108,6 +149,9 @@ fn set_pref(
         }
         "startAtLogin" => {
             let v = as_bool()?;
+            // Register first: the switch must never read On while nothing
+            // would actually start at login.
+            set_start_at_login(&app, v)?;
             state.settings.update(|s| s.start_at_login = v)
         }
         "theme" => {
@@ -751,9 +795,22 @@ pub fn run() {
     // testing the nearby flow.
     #[cfg(desktop)]
     if std::env::var_os("DROPWIRE_DATA_DIR").is_none_or(|d| d.is_empty()) {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main(app.clone());
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A login launch that finds Dropwire already running has nothing
+            // to add; anything else is someone opening the app.
+            if !argv.iter().any(|a| a == LOGIN_LAUNCH_ARG) {
+                show_main(app.clone());
+            }
         }));
+    }
+    // "Start at login": the login entry launches with LOGIN_LAUNCH_ARG so the
+    // app can tell a login launch from someone opening it.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![LOGIN_LAUNCH_ARG]),
+        ));
     }
     builder
         .plugin(tauri_plugin_dialog::init())
@@ -788,6 +845,14 @@ pub fn run() {
                 let c = core.clone();
                 tauri::async_runtime::block_on(async move { c.set_device_name(name).await }).ok();
             }
+            // The system's startup list is the truth for "Start at login": the
+            // entry may have been removed or disabled outside the app (Task
+            // Manager, Login Items), so the switch follows what is registered.
+            if let Some(on) = start_at_login_registered(app.handle()) {
+                if on != prefs.start_at_login {
+                    store.update(|s| s.start_at_login = on);
+                }
+            }
             app.manage(AppState {
                 core,
                 settings: store,
@@ -800,11 +865,18 @@ pub fn run() {
                 Err(e) => append_breadcrumb(&format!("[start] tray icon unavailable: {e}")),
             }
 
-            // First run opens on the setup screens; afterwards the window is
-            // only shown if the user did not ask us to start hidden in the tray.
+            // A login launch starts quietly in the tray. The window still opens
+            // when setup has not been finished yet (the setup screens need it)
+            // and when there is no tray icon to open it from later.
+            let login_launch = std::env::args().any(|a| a == LOGIN_LAUNCH_ARG);
+            let start_in_tray = login_launch
+                && prefs.onboarded
+                && TRAY_READY.load(std::sync::atomic::Ordering::Relaxed);
             if let Some(w) = app.get_webview_window("main") {
                 keep_title_bar_on_screen(&w);
-                let _ = w.show();
+                if !start_in_tray {
+                    let _ = w.show();
+                }
             }
             Ok(())
         })

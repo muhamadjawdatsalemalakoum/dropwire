@@ -54,6 +54,8 @@ pub struct Settings {
     pub skip_code_for_trusted: bool,
     /// Keep running in the tray when the window is closed.
     pub tray_on_close: bool,
+    /// Mirrors the system's startup list: set only after the entry was added
+    /// or removed, and corrected at launch if it was changed outside the app.
     pub start_at_login: bool,
 }
 

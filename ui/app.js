@@ -171,7 +171,10 @@ function syncSettingSwitches() {
   .forEach(([sel, key]) => {
     const el = $(sel);
     if (el) el.addEventListener('click', async () => {
-      await setPref(key, !PREFS[key]);
+      // A switch that did not change must say so; "Start at login" can fail
+      // when the system refuses the startup entry.
+      try { PREFS = await invoke('set_pref', { key, value: !PREFS[key] }); }
+      catch (e) { toast({ title: 'That setting did not change', sub: String(e), kind: 'error' }); }
       syncSettingSwitches();
     });
   });

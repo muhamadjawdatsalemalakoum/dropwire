@@ -29,7 +29,9 @@ anyhow = { workspace = true }
 qrcode = "0.14"
 dirs = "5"
 
-# Desktop only: one running copy per data dir. A second launch hands off to the
-# running app instead of fighting it for the blob store.
+# Desktop only: one running copy per data dir (a second launch hands off to the
+# running app instead of fighting it for the blob store), and the login item
+# behind "Start at login".
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
