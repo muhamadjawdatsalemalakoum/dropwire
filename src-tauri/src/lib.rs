@@ -443,6 +443,7 @@ async fn start_receive_selected(
 }
 
 /// Send a one-shot control message to the sender (e.g. an instant decline).
+/// A decline names the code, so the sender can release it for someone else.
 #[tauri::command]
 async fn send_control(
     ticket: String,
@@ -450,7 +451,7 @@ async fn send_control(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let msg = match kind.as_str() {
-        "decline" => CtrlMsg::Decline,
+        "decline" => return state.core.decline(ticket).await.map_err(|e| e.to_string()),
         "ack" => CtrlMsg::Ack,
         "hello" => CtrlMsg::Hello,
         other => return Err(format!("unknown control kind: {other}")),
