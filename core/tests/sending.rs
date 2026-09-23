@@ -336,3 +336,57 @@ async fn several_empty_folders_are_refused() {
         "nothing chosen is an error straight away"
     );
 }
+
+/// A shared file edited before the receiver fetches it no longer matches its
+/// code (large files are sent from where they sit on disk). The sender stops
+/// sharing and says why, instead of sending bytes the receiver would reject,
+/// and the code is refused from then on.
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_a_shared_file_ends_the_send() {
+    let work = tempfile::tempdir().unwrap();
+    let send_data = tempfile::tempdir().unwrap();
+    let recv_data = tempfile::tempdir().unwrap();
+
+    let src = work.path().join("report.bin");
+    std::fs::write(&src, make_payload(256 * 1024)).unwrap();
+
+    let sender = local_core(send_data.path()).await;
+    let receiver = local_core(recv_data.path()).await;
+    let (sid, mut ss) = sender.send(src.clone()).await.unwrap();
+    let (ticket, _) = outcome(&mut ss).await.expect("the file is shared");
+
+    // Edited in place: same size, different bytes, a later time.
+    let shared_at = std::fs::metadata(&src).unwrap().modified().unwrap();
+    std::fs::write(&src, vec![7u8; 256 * 1024]).unwrap();
+    let f = std::fs::OpenOptions::new().write(true).open(&src).unwrap();
+    f.set_modified(shared_at + Duration::from_secs(2)).unwrap();
+    drop(f);
+
+    assert!(
+        receiver.inspect(ticket.clone()).await.is_err(),
+        "the code no longer matches the file, so it is refused"
+    );
+    let seen = read_until(&mut ss, "the send to stop", |ev| {
+        matches!(ev, Progress::Error { .. } | Progress::Cancelled { .. })
+    })
+    .await;
+    match seen.last() {
+        Some(Progress::Error { message, .. }) => assert_eq!(
+            message,
+            "report.bin was changed after it was shared, so this code no longer works. \
+             Share it again to send it as it is now."
+        ),
+        other => panic!("the send must stop with a reason, got {other:?}"),
+    }
+    let rec = sender
+        .transfers()
+        .await
+        .into_iter()
+        .find(|r| r.id == sid)
+        .expect("the send is on record");
+    assert_eq!(rec.status, irohcore::Status::Error);
+    assert!(
+        receiver.inspect(ticket).await.is_err(),
+        "and it stays refused"
+    );
+}

@@ -93,20 +93,28 @@ async fn run_send(
     // 2. Import each file, holding the TempTags so nothing is GC'd while serving.
     let mut tags: Vec<TempTag> = Vec::with_capacity(files.len());
     let mut entries: Vec<(String, Hash)> = Vec::with_capacity(files.len());
-    // Each file's size, in collection order, so a request can be sized.
-    let mut sizes: Vec<u64> = Vec::with_capacity(files.len());
+    // Each file as it was when shared, in collection order: to size requests,
+    // and to notice a file that is edited while its code is out.
+    let mut sent: Vec<SentFile> = Vec::with_capacity(files.len());
     let mut imported = 0u64;
     // Numbers on the card from the start, not a bare "Preparing...".
     let _ = tx.send(Progress::Importing { id, done: 0, total }).await;
     for (name, p) in files {
+        // Taken before hashing, so an edit made while hashing shows up too.
+        let modified = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
         let Some((tt, len)) = import_file(store, &p, &token, &tx, id, imported, total).await?
         else {
             let _ = tx.send(Progress::Cancelled { id }).await;
             return Ok(());
         };
-        entries.push((name, tt.hash()));
+        entries.push((name.clone(), tt.hash()));
         tags.push(tt);
-        sizes.push(len);
+        sent.push(SentFile {
+            name,
+            path: p,
+            size: len,
+            modified,
+        });
         imported += len;
         let _ = tx
             .send(Progress::Importing {
@@ -172,7 +180,7 @@ async fn run_send(
                 events: ev_tx,
                 token: token.clone(),
                 delivered: delivered.clone(),
-                sizes: sizes.into(),
+                files: sent.into(),
             },
         );
         // A new share starts unbound: the first device to use it takes it.
@@ -221,12 +229,19 @@ async fn run_send(
     // Whether "previewing" is what the card says now, so the two requests of
     // a preview (or a download's size check) report it once.
     let mut previewing = false;
+    // Set when a file was edited or removed after it was shared: the send
+    // stops, since its code can no longer be honoured.
+    let mut changed: Option<String> = None;
     loop {
         tokio::select! {
             // Once cancelled, report nothing more but the Cancelled below.
             biased;
             _ = token.cancelled() => break,
             ev = ev_rx.recv() => match ev {
+                Some(ProviderEvent::Changed { name }) => {
+                    changed = Some(name);
+                    break;
+                }
                 Some(ProviderEvent::Previewing) => {
                     // A size check while content is already moving is no news.
                     if in_flight == 0 && !previewing {
@@ -280,6 +295,12 @@ async fn run_send(
         }
     }
 
+    // A changed file ends the send like a cancel does, downloads in flight
+    // included: what they would send no longer matches the code.
+    if changed.is_some() {
+        token.cancel();
+    }
+
     // Stop serving, but only if this send still owns the hash: a newer send
     // of the same content may have taken it over, binding and all.
     {
@@ -291,6 +312,26 @@ async fn run_send(
     }
     drop(collection_tag);
     drop(tags);
+    if let Some(name) = changed {
+        // A delivered send stays "done" in history; only its code stopped.
+        if !completed {
+            core.inner
+                .catalog
+                .lock()
+                .await
+                .set_status(id, Status::Error, None);
+        }
+        let _ = tx
+            .send(Progress::Error {
+                id,
+                message: format!(
+                    "{name} was changed after it was shared, so this code no longer works. \
+                     Share it again to send it as it is now."
+                ),
+            })
+            .await;
+        return Ok(());
+    }
     if !completed {
         core.inner
             .catalog
@@ -562,9 +603,35 @@ pub(crate) struct Serving {
     /// Set once a download of the send's content finished (a preview never
     /// counts).
     pub(crate) delivered: Arc<AtomicBool>,
-    /// Each file's size, in collection order (file `i` is request offset
-    /// `i + 2`). Tells a download from a preview, and sizes a download.
-    pub(crate) sizes: Arc<[u64]>,
+    /// The send's files as they were when shared, in collection order (file
+    /// `i` is request offset `i + 2`). Tells a download from a preview, sizes
+    /// a download, and shows whether a file was edited since.
+    pub(crate) files: Arc<[SentFile]>,
+}
+
+/// One file of a live send, as it was when it was shared.
+pub(crate) struct SentFile {
+    /// Its name in the transfer (for messages).
+    pub(crate) name: String,
+    /// Where it is on disk. Files over 16 KiB are sent straight from here
+    /// (they are shared by reference, not copied into the store).
+    pub(crate) path: PathBuf,
+    pub(crate) size: u64,
+    /// Its modification time when shared, where the platform has one.
+    pub(crate) modified: Option<std::time::SystemTime>,
+}
+
+impl SentFile {
+    /// Whether the file on disk is no longer the one that was shared: edited,
+    /// replaced or removed. Its bytes would no longer match the code, so the
+    /// receiver's check would fail on them (or worse, on a file changed back
+    /// and forth, pass on some and not others).
+    fn changed(&self) -> bool {
+        match std::fs::metadata(&self.path) {
+            Ok(m) => m.len() != self.size || m.modified().ok() != self.modified,
+            Err(_) => true,
+        }
+    }
 }
 
 /// Sender-side events distilled from iroh-blobs provider events, routed per hash.
@@ -587,28 +654,44 @@ pub(crate) enum ProviderEvent {
     Aborted,
     /// The bound device declined from the preview (see [`consume_declines`]).
     Declined,
+    /// A file (by its name in the transfer) was edited or removed since it was
+    /// shared, and a request for it was refused.
+    Changed {
+        name: String,
+    },
 }
 
-/// How many bytes of file content a request asks for, or `None` if it asks
-/// for none. A collection's hash sequence is `[names, file0, file1, ...]`, so
-/// request offset 0 is the root, 1 the names blob, and `i + 2` file `i`.
-///
-/// The receiver's preview asks for the root and the names only, and its size
-/// check adds each file's last chunk (the proof of the file's size). Neither
-/// is a delivery. Anything more of a file is: the whole of it, or the ranges a
-/// resumed download is still missing. The sum is of the requested files' full
-/// sizes.
-fn requested_body(ranges: &ChunkRangesSeq, sizes: &[u64]) -> Option<u64> {
+/// What one request asks of a send's files. A collection's hash sequence is
+/// `[names, file0, file1, ...]`, so request offset 0 is the root, 1 the names
+/// blob, and `i + 2` file `i`.
+struct Asked {
+    /// The files it reads anything of, even just the last chunk.
+    touched: Vec<usize>,
+    /// How many bytes of file content it asks for, or `None` if it asks for
+    /// none. The receiver's preview asks for the root and the names only, and
+    /// its size check adds each file's last chunk (the proof of the file's
+    /// size). Neither is a delivery. Anything more of a file is: the whole of
+    /// it, or the ranges a resumed download is still missing. The sum is of the
+    /// requested files' full sizes.
+    body: Option<u64>,
+}
+
+fn asked(ranges: &ChunkRangesSeq, files: &[SentFile]) -> Asked {
     let size_only = ChunkRanges::last_chunk();
+    let mut touched = Vec::new();
     let mut body = None;
-    // Zipped with `sizes` to stay bounded: a size check's ranges repeat
+    // Zipped with `files` to stay bounded: a size check's ranges repeat
     // forever, and only real files count.
-    for (r, size) in ranges.iter_infinite().skip(2).zip(sizes) {
-        if !r.is_empty() && *r != size_only {
-            *body.get_or_insert(0) += size;
+    for (i, (r, file)) in ranges.iter_infinite().skip(2).zip(files).enumerate() {
+        if r.is_empty() {
+            continue;
+        }
+        touched.push(i);
+        if *r != size_only {
+            *body.get_or_insert(0) += file.size;
         }
     }
-    body
+    Asked { touched, body }
 }
 
 /// Consume the global provider-event stream from the blobs server and route each
@@ -640,10 +723,30 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                     let _ = m.tx.send(Err(AbortReason::Permission)).await;
                     continue;
                 };
+                let Asked { touched, body } = asked(&m.request.ranges, &route.files);
+
+                // Files over 16 KiB are served from where they sit on disk. One
+                // edited since it was shared would go out as bytes that do not
+                // match the code: refuse, and end the send with a reason.
+                let files = route.files.clone();
+                let changed = tokio::task::spawn_blocking(move || {
+                    touched
+                        .into_iter()
+                        .find(|&i| files[i].changed())
+                        .map(|i| files[i].name.clone())
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(name) = changed {
+                    let _ = m.tx.send(Err(AbortReason::Permission)).await;
+                    let _ = route.events.send(ProviderEvent::Changed { name });
+                    continue;
+                }
+
                 // Only a download of file content is a delivery: it alone
                 // joins, reports progress, and ends in Done or Aborted. A
                 // preview or size check says "previewing" and nothing else.
-                let body = requested_body(&m.request.ranges, &route.sizes);
                 let _ = m.tx.send(Ok(())).await;
 
                 let Serving {
