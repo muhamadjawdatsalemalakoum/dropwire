@@ -1017,6 +1017,39 @@ async fn offer_labels_are_cleaned_up() {
     assert_eq!(answer_of(pending).await.as_deref(), Some("offerDecline"));
 }
 
+/// An offer nobody has answered yet stays open while both devices are up,
+/// longer than QUIC's idle limit: the receiver retires an offer when its
+/// connection closes, so a quiet connection must not close by itself.
+#[tokio::test]
+async fn an_unanswered_offer_stays_open_while_both_are_up() {
+    let dir = tempdir::dir();
+    let r_dir = tempdir::dir();
+    let sender = local_core(dir.path()).await;
+    let receiver = local_core(r_dir.path()).await;
+    receiver.test_set_nearby_running(true);
+    receiver.test_see_nearby_peer(&sender.endpoint_id());
+    let mut offers = receiver.subscribe_offers();
+    let mut withdrawals = receiver.subscribe_offer_withdrawals();
+
+    let src = dir.path().join("later.txt");
+    std::fs::write(&src, make_payload(8 * 1024)).unwrap();
+    let (id, mut send_stream) = sender.send(src).await.unwrap();
+    wait_ready(&mut send_stream).await;
+    let (_oid, mut updates) = sender
+        .offer_nearby_dial(receiver.endpoint_id(), id, Some(receiver.test_dial_addr()))
+        .await
+        .expect("offer");
+    let offer = next_offer(&mut offers).await;
+
+    let quiet = tokio::time::timeout(Duration::from_secs(35), withdrawals.recv()).await;
+    assert!(quiet.is_err(), "the offer closed by itself: {quiet:?}");
+    receiver
+        .respond_offer(offer.offer_id, true)
+        .await
+        .expect("still open");
+    assert_eq!(next_verdict(&mut updates).await, OfferUpdate::Accepted);
+}
+
 /// A peer that connects and never sends a frame is dropped after a short
 /// wait, instead of holding the connection open.
 #[tokio::test]
