@@ -11,19 +11,22 @@ use common::{local_core, make_payload, wait_done, wait_ready};
 use irohcore::{CoreError, Progress, ProgressStream};
 use tokio_stream::StreamExt;
 
-/// Drive a SEND stream until the send has fully torn down.
-async fn wait_cancelled(stream: &mut ProgressStream) {
+/// Drive a SEND stream until the send has fully torn down, returning what it
+/// reported on the way.
+async fn wait_cancelled(stream: &mut ProgressStream) -> Vec<Progress> {
     let fut = async {
+        let mut seen = Vec::new();
         while let Some(ev) = stream.next().await {
             if let Progress::Cancelled { .. } = ev {
-                return;
+                return seen;
             }
+            seen.push(ev);
         }
         panic!("send stream ended before Cancelled");
     };
     tokio::time::timeout(Duration::from_secs(30), fut)
         .await
-        .expect("timed out waiting for the send to stop");
+        .expect("timed out waiting for the send to stop")
 }
 
 /// Whether an error chain is the gate's refusal: iroh-blobs resets a refused
@@ -375,7 +378,12 @@ mod addressed {
         started.await.expect("no bytes arrived");
 
         sender.cancel(sid).await;
-        wait_cancelled(&mut ss).await;
+        let seen = wait_cancelled(&mut ss).await;
+        // The sender stopped it; the receiver did not leave.
+        assert!(
+            !seen.iter().any(|e| matches!(e, Progress::PeerLeft { .. })),
+            "a cancelled send reports nothing but Cancelled: {seen:?}"
+        );
 
         let outcome = tokio::time::timeout(Duration::from_secs(30), async {
             loop {

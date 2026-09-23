@@ -123,6 +123,13 @@ async fn run_send(
     let ticket = BlobTicket::new(addr, hash, BlobFormat::HashSeq);
     let ticket_str = ticket.to_string();
 
+    // Cancelled while importing or waiting for the relay: stop before minting a
+    // live code, and before taking over another send of the same content.
+    if token.is_cancelled() {
+        let _ = tx.send(Progress::Cancelled { id }).await;
+        return Ok(());
+    }
+
     // 5. Register for provider events on this hash, record, and announce.
     //    The same files always make the same hash, so this content may already
     //    be live under another send. Check and claim under one lock.
@@ -181,6 +188,8 @@ async fn run_send(
     let mut in_flight = 0usize;
     loop {
         tokio::select! {
+            // Once cancelled, report nothing more but the Cancelled below.
+            biased;
             _ = token.cancelled() => break,
             ev = ev_rx.recv() => match ev {
                 Some(ProviderEvent::PeerJoined) => {
@@ -389,7 +398,8 @@ pub(crate) async fn consume_provider_events(core: Core, mut rx: mpsc::Receiver<P
                     }
                     // Anything short of completion counts as the receiver
                     // leaving, including an update stream that just closed.
-                    if !completed {
+                    // (Not when the send itself ended: that is no news.)
+                    if !completed && !token.is_cancelled() {
                         let _ = tx.send(ProviderEvent::Aborted);
                     }
                 });
