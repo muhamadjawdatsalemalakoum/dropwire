@@ -353,15 +353,10 @@ async fn run_receive(
     // until it is saved (or the receive is cancelled or cleared from history).
     store::hold_receive(store, id, hash).await?;
 
-    // Resume: for a full download, request only what's missing; for a selective
-    // download, request the chosen files (plus the collection structure: root + meta).
-    let local = store
-        .remote()
-        .local(hf)
-        .await
-        .context("inspect local store")?;
-    let request = match &wanted {
-        None => local.missing(),
+    // What this receive needs: everything, or the collection's structure (its
+    // hash list and names) plus the chosen files.
+    let needed = match &wanted {
+        None => GetRequest::from(hf),
         Some(_) => {
             let mut b = GetRequest::builder()
                 .root(ChunkRanges::all())
@@ -372,8 +367,15 @@ async fn run_receive(
             b.build(hash)
         }
     };
-    if wanted.is_some() || !local.is_complete() {
-        let get = store.remote().execute_get(conn, request);
+    // Resume: ask only for the parts not stored yet, for a selection as much as
+    // for a whole transfer. When everything needed is here, nothing is fetched.
+    let local = store
+        .remote()
+        .local_for_request(needed)
+        .await
+        .context("inspect local store")?;
+    if !local.is_complete() {
+        let get = store.remote().execute_get(conn, local.missing());
         let mut stream = get.stream();
         // Throttle UI progress to ~12/s: blob progress can fire per-chunk.
         let mut last_emit = Instant::now() - Duration::from_millis(200);
