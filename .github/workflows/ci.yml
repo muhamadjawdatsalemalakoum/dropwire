@@ -95,3 +95,34 @@ jobs:
 
       - name: Test
         run: cargo test -p dropwire --locked
+
+  # The rust-version in Cargo.toml is a promise to anyone packaging Dropwire.
+  # Check the engine on exactly that toolchain, so the promise breaks CI the
+  # day a dependency bump needs a newer rustc. Linux only, engine only: the
+  # shell's Linux build needs the WebKitGTK stack, and on stable clippy
+  # already holds the shell's std usage to the same rust-version.
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the declared rust-version
+        id: msrv
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Check the engine on the minimum supported Rust
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+$MSRV" check -p irohcore --all-targets --features test-utils --locked
