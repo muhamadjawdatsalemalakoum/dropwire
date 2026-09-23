@@ -5,8 +5,10 @@
 //! appear here — only `irohcore`'s stable API.
 
 mod settings;
+mod snippets;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use irohcore::{
     Core, CoreConfig, CoreError, CtrlMsg, NearbyDevice, Progress, TransferId, TransferPreview,
@@ -21,6 +23,8 @@ use tokio_stream::StreamExt;
 struct AppState {
     core: Core,
     settings: settings::Store,
+    /// Text sent with "Send text", kept in the data folder while in use.
+    snippets: Arc<snippets::Snippets>,
 }
 
 fn fp_to_string(fp: tauri_plugin_dialog::FilePath) -> Option<String> {
@@ -189,26 +193,16 @@ fn trust_forget(
 
 /* ------------------------------ send text ------------------------------ */
 
-/// Write a snippet to a temp file so it can travel the ordinary transfer path.
-/// Returns the path for `start_send` — text is not a second protocol, it is
-/// just a small file (see the design's G2 sheet).
+/// Write a snippet to a small file so it can travel the ordinary transfer
+/// path. Returns the path for `start_send`: text is not a second protocol, it
+/// is just a small file (see the design's G2 sheet). The file lives in the
+/// data folder only while something uses it (see `snippets`).
 #[tauri::command]
-fn write_text_file(text: String, app: AppHandle) -> Result<String, String> {
+fn write_text_file(text: String, state: State<'_, AppState>) -> Result<String, String> {
     if text.trim().is_empty() {
         return Err("nothing to send".into());
     }
-    let dir = app
-        .path()
-        .app_cache_dir()
-        .unwrap_or_else(|_| std::env::temp_dir())
-        .join("dropwire-text");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("shared-text-{stamp}.txt"));
-    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    let path = state.snippets.write(&text)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -364,10 +358,15 @@ async fn list_transfers(state: State<'_, AppState>) -> Result<Vec<TransferRecord
 }
 
 /// Forget finished history. It only ever existed on this device, so this is the
-/// whole delete: nothing has to be revoked anywhere else.
+/// whole delete: nothing has to be revoked anywhere else. Sent text goes with
+/// it, except text a send is still serving, which goes when that send ends.
 #[tauri::command]
 async fn clear_transfers(state: State<'_, AppState>) -> Result<(), String> {
     state.core.clear_transfers().await;
+    let left = state.core.transfers().await;
+    state
+        .snippets
+        .sweep(left.iter().filter_map(|r| r.source.as_deref()));
     Ok(())
 }
 
@@ -430,15 +429,30 @@ async fn start_send(
     on_event: Channel<Progress>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let (id, mut stream) = state
-        .core
-        .send(PathBuf::from(path))
-        .await
-        .map_err(|e| e.to_string())?;
+    let path = PathBuf::from(path);
+    // Sent text must outlive the send: a large snippet is served straight
+    // from its file. The stream ends when the send does.
+    let held = state.snippets.hold_for_send(&path);
+    let started = state.core.send(path).await;
+    let (snippets, core) = (state.snippets.clone(), state.core.clone());
+    let release = move |held: Option<PathBuf>| async move {
+        if let Some(p) = held {
+            let records = core.transfers().await;
+            snippets.release(&p, records.iter().filter_map(|r| r.source.as_deref()));
+        }
+    };
+    let (id, mut stream) = match started {
+        Ok(started) => started,
+        Err(e) => {
+            release(held).await;
+            return Err(e.to_string());
+        }
+    };
     tauri::async_runtime::spawn(async move {
         while let Some(p) = stream.next().await {
             let _ = on_event.send(p);
         }
+        release(held).await;
     });
     Ok(id.to_string())
 }
@@ -1069,6 +1083,21 @@ pub fn run() {
                     return Ok(());
                 }
             };
+            // Sent text lives beside the history that can resend it. Delete
+            // what no record uses (left by a crash, or by a send that was
+            // still serving when history was cleared), and the folder older
+            // versions wrote to the cache folder and never cleaned up.
+            let snippets = Arc::new(snippets::Snippets::new(data_dir.join("sent-text")));
+            let records = tauri::async_runtime::block_on(core.transfers());
+            snippets.sweep(records.iter().filter_map(|r| r.source.as_deref()));
+            // The old folder belongs to the regular install; a copy started
+            // with its own --data-dir leaves it alone.
+            if std::env::var_os("DROPWIRE_DATA_DIR").is_none_or(|d| d.is_empty()) {
+                if let Ok(cache) = app.path().app_cache_dir() {
+                    let _ = std::fs::remove_dir_all(cache.join("dropwire-text"));
+                }
+                let _ = std::fs::remove_dir_all(std::env::temp_dir().join("dropwire-text"));
+            }
             // A name chosen during setup outlives the hostname it was derived from.
             if let Some(name) = prefs.device_name.clone() {
                 let c = core.clone();
@@ -1085,6 +1114,7 @@ pub fn run() {
             app.manage(AppState {
                 core,
                 settings: store,
+                snippets,
             });
 
             // A missing tray is not worth refusing to start over, but without
