@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer"><meta name="robots" content="noindex">
+  <title>Dropwire · encrypted file transfer</title>
+  <link rel="stylesheet" href="/dropwire/transfer/style.css">
+  <script type="module" src="/dropwire/transfer/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to transfer</a>
+  <header><a class="wordmark" href="/dropwire">dropwire<span>↗</span></a><a href="/dropwire#downloads">Get the desktop app ↗</a></header>
+  <main id="main">
+    <div class="eyebrow"><span class="dot"></span> BROWSER PREVIEW · END-TO-END ENCRYPTED</div>
+    <h1>Your files.<br><span>Just between you.</span></h1>
+    <p class="intro">A live connection between two devices. No account. No uploaded copy.</p>
+    <nav aria-label="Transfer mode"><a id="send-tab" href="/dropwire/send">Send files</a><a id="receive-tab" href="/dropwire/receive">Receive files</a></nav>
+    <section class="transfer" aria-label="File transfer">
+      <div id="send-panel">
+        <label id="dropzone" class="dropzone" for="files"><span class="plus">+</span><strong>Drop files here</strong><span>or choose files from your device</span><input id="files" type="file" multiple aria-label="Choose files"></label>
+        <ul id="chosen" class="file-list" aria-label="Chosen files"></ul>
+        <button id="share" class="primary" disabled>Create a transfer link <span>↗</span></button>
+        <div id="sharing" hidden><p class="label">ONE RECIPIENT · KEEP THIS TAB OPEN</p><div id="qr" aria-label="Transfer QR code"></div><label for="share-link">Private transfer link</label><textarea id="share-link" readonly rows="3" spellcheck="false" class="secret"></textarea><div class="actions"><button id="copy-link" class="primary">Copy link</button><button id="copy-code">Copy desktop code</button></div><p class="muted">The recipient opens the link in a browser, or pastes the desktop code into Dropwire.</p></div>
+      </div>
+      <div id="receive-panel" hidden>
+        <label for="ticket">Transfer code or link</label><textarea id="ticket" rows="4" placeholder="Paste a Dropwire transfer code or private link" spellcheck="false" autocomplete="off" class="secret"></textarea>
+        <button id="preview" class="primary">Connect &amp; preview <span>↗</span></button>
+        <div id="manifest" hidden><h2>Choose what to receive</h2><p class="muted">Names and sizes are verified against the transfer code. Saving starts after you accept.</p><ul id="incoming" class="file-list"></ul><div class="actions"><button id="accept" class="primary">Accept selected files</button><button id="reject">Decline</button></div></div>
+        <div id="saved" hidden><h2>Verified. Ready to save.</h2><p class="muted">Choose Save for each file. Your browser may ask where to put it.</p><ul id="downloads" class="file-list"></ul></div>
+      </div>
+      <div class="feedback"><p id="status" role="status" aria-live="polite">Ready when you are.</p><span id="route" hidden>Encrypted relay</span><progress id="progress" max="100" value="0" hidden aria-label="Transfer progress"></progress><button id="cancel" hidden>Stop transfer &amp; clear</button><button id="retry" hidden>Retry</button></div>
+    </section>
+    <aside class="limits"><div><span>01</span><p><strong>No fixed file-size cap.</strong> Files stream through local disk storage. Available browser storage and disk space determine what fits. Use the desktop app for persistent resume.</p></div><div><span>02</span><p><strong>Keep both tabs or apps open.</strong> Reloading, closing, or a suspended tab ends this session. There is no resume after reload.</p></div><div><span>03</span><p><strong>Encrypted relay connections.</strong> Browser nearby discovery and direct LAN transfers are not available. Relay operators see connection metadata, not plaintext files.</p></div></aside>
+    <footer><a href="/dropwire#guide">Installation guide</a><a href="https://github.com/muhamadjawdatsalemalakoum/dropwire" rel="noreferrer">Source ↗</a><span>No analytics on this transfer page.</span></footer>
+  </main>
+</body></html>
