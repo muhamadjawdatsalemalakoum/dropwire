@@ -106,3 +106,12 @@ additional copy in Downloads.
    partial chunks, transfer metadata, and cleanup/recovery semantics.
 5. Evaluate an opt-in, authenticated local adapter or demonstrated browser
    transport for LAN transfers. Preserve peer binding and explicit acceptance.
+
+## Existing desktop dependency advisory
+
+The native root lockfile retains glib 0.18.5 and the repository has an open
+medium advisory, [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html),
+for the VariantStrIter iterator implementation. The isolated browser lockfile
+does not include glib. Resolve and validate the desktop dependency chain before
+claiming that the native release has no known advisories; published installers
+were not rebuilt or executed in this browser integration.
