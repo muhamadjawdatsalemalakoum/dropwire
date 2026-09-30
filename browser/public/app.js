@@ -50,7 +50,7 @@ async function getNode(run) {
     const response = await fetch("/dropwire/transfer/config.json", { cache: "no-store", credentials: "same-origin" });
     if (!response.ok) throw new Error("Browser relay configuration is unavailable. Use the desktop app.");
     const config = await response.json();
-    if (!config.enabled) throw new Error("Browser transfers are available on the staging preview while production relay setup is completed. Download the desktop app above.");
+    if (!config.enabled) throw new Error(config.status === "parked" ? "Dropwire web is parked. Download the desktop app above." : "Browser transfers are unavailable. Download the desktop app above.");
     status("Starting an encrypted endpoint…");
     const created = await BrowserNode.spawn(JSON.stringify(config.relays));
     if (run !== session) { await created.close(); created.free(); throw new Error("Transfer stopped."); }

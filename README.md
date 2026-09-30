@@ -38,6 +38,11 @@ resumable, and open source.
 > frame rather than a page in a window. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
 > design and [`CHANGELOG.md`](CHANGELOG.md) for what landed when.
 
+> **Browser/web edition: PARKED (30 September 2026).** The prototype and its
+> verification evidence are retained on `feature/browser-transfer`; browser
+> launch work is paused. Desktop Dropwire remains available. See
+> [browser status and build notes](browser/README.md).
+
 ## Why Dropwire
 
 Most "easy" file-transfer tools make you pick a poison: LocalSend only works on the same

@@ -6,6 +6,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Parked
+- Browser/web transfer prototype and website integration, by owner decision on
+  30 September 2026. Source, generated runtime, and interoperability evidence
+  are retained on their feature branches. No browser production release or new
+  desktop installer release was made.
+
 ## [0.3.0-beta.6] - 2026-09-04
 
 Two ways to get stuck, both found on real hardware.

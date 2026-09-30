@@ -1,4 +1,11 @@
-# Dropwire browser preview
+# Dropwire browser prototype — PARKED
+
+**Parked by owner decision on 30 September 2026.** This is retained work, not an
+active release. PR #18 is closed without merging; `feature/browser-transfer`
+keeps the source, generated runtime, fixture, and verification evidence. The
+website counterpart is parked on `feature/dropwire-staging` in akoum-me.
+Desktop Dropwire is unaffected. Resume only after an explicit decision to
+revisit the browser transport, capacity, and operating-cost tradeoffs.
 
 The browser adapter uses the same `BlobTicket` collection format, blob ALPN,
 BLAKE3 proofs, and authenticated iroh endpoint identities as the native engine.
@@ -44,16 +51,20 @@ rewrites mount the app at `/dropwire/send` and `/dropwire/receive`. Serve over
 HTTPS, or loopback HTTP for local development. Do not open the app as a local
 file. The website prebuild generates `config.json`; no credentials belong there.
 
-## Production configuration
+## Archived deployment configuration
 
-Preview and local builds use public n0 relays for testing. Production builds
-disable browser transfers unless `DROPWIRE_RELAY_URLS` contains a comma-separated
-list of HTTPS relay origins. The build rejects credentials, query strings,
-non-HTTPS URLs, and public n0 relay hosts in production configuration. CSP allows
-the configured HTTPS and WSS origins. Desktop downloads and the guide remain
-available when browser transfers are disabled.
+While parked, the retained website disables browser transfer startup in local,
+preview, and production builds. Relay environment variables cannot activate it.
+The static prototype configuration is also disabled. Old immutable previews
+remain historical test artifacts; they are not a current launch.
 
-Provision and test dedicated production relays before enabling browser traffic.
+The earlier production gate was a conservative release policy, not an iroh
+technical requirement. Both native and browser clients can use public n0 relays.
+The browser prototype sends every transfer through a relay, while native
+clients can connect directly. Public relays are rate-limited and recommended
+for development/testing; dedicated infrastructure is a capacity and reliability
+choice, with possible hosting and bandwidth costs. Before resuming, choose and
+validate the intended relay strategy.
 Their operators can observe endpoint identifiers, network addresses, timing,
 and volume, but not plaintext files. Published native builds use their existing
 relay configuration; native-to-browser transfers also require the native

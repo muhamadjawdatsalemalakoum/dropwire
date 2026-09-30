@@ -1,6 +1,8 @@
 # Browser transfer decision and verification
 
-Checked 30 September 2026. The implementation remains a staged browser preview.
+**Status: PARKED by owner decision on 30 September 2026.** The results below
+are a historical verification snapshot. Source and evidence are retained on
+`feature/browser-transfer`; there is no active browser production launch.
 
 ## Decision and references
 
@@ -95,9 +97,10 @@ additional copy in Downloads.
 
 ## Before broad production browser availability
 
-1. Provision production relay capacity, TLS, access policy, monitoring, and
-   regional redundancy; configure the website and native senders and repeat
-   both-direction interoperability tests. Public n0 relays remain test-only.
+1. Revisit the relay strategy and operating costs. Public n0 relays are
+   rate-limited and recommended for testing; dedicated capacity is an
+   infrastructure recommendation, not an iroh protocol requirement. Configure
+   the chosen strategy on both clients and repeat interoperability tests.
 2. Run standalone browser/version and mobile device checks. Keep the browser
    preview label and desktop fallback until each environment is verified.
 3. Exercise multi-GB payloads, disk-full behavior,
