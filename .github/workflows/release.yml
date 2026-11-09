@@ -1,19 +1,34 @@
-# Dropwire — cross-platform release builds in the cloud (GitHub Actions).
+# Dropwire: cross-platform release builds in the cloud (GitHub Actions).
 #
-# Builds Windows, macOS, and Linux installers from ONE machine you don't own —
-# push a tag like `v0.1.0` (or run manually) and it produces a draft GitHub
-# Release with all installers attached.
+# Push a tag like `v1.0.0` and this builds the Windows, macOS, and Linux
+# installers on GitHub's runners. Publishing is all or nothing:
+#   1. create-release makes a DRAFT release for the tag, or reuses the release
+#      that tag already has (a re-run, or notes written by hand beforehand).
+#   2. Each platform leg builds its installers and uploads them into that draft.
+#   3. publish-release publishes it only once every leg has succeeded and every
+#      platform's installer for this version is attached. It also writes
+#      SHA256SUMS and a signed build-provenance attestation for every file.
+#      A tag with a SemVer prerelease part (v1.1.0-beta.1, -rc.1, ...) goes out
+#      as a prerelease; any other tag becomes the Latest release.
+# The tag must match the version in Cargo.toml (v1.0.0 <-> 1.0.0), or nothing
+# is built: the installers are named after that version.
+# Release notes written by hand beforehand must be saved as a DRAFT for the
+# tag; a release that is already published is never rebuilt in place.
+# If a leg fails, the release stays a draft that only maintainers can see.
+# Re-run the failed jobs; the publish job runs again once they pass.
 #
-# COST: free + unlimited on a PUBLIC repo. On a PRIVATE repo it bills Actions
+# MANUAL RUNS: to rebuild an existing tag's installers, use "Run workflow" and
+# pick that v* tag (not a branch) under "Use workflow from". A run started from
+# a branch does nothing, rather than minting a tag and a release named after it.
+#
+# COST: free and unlimited on a PUBLIC repo. On a PRIVATE repo it bills Actions
 # minutes against your monthly allotment with multipliers Linux x1 / Windows x2 /
-# macOS x10 — so run this on TAGS only (not every push) while private.
+# macOS x10, so run this on TAGS only (not every push) while private.
 #
 # SIGNING: unsigned by default (fine for testing; users see Gatekeeper/SmartScreen
-# warnings). To ship trusted builds, add the secrets noted in the `env:` block —
+# warnings). To ship trusted builds, add the secrets noted in the `env:` block:
 # Apple Developer ID ($99/yr) for macOS notarization, a code-signing cert for
 # Windows. No secrets are required for the build itself to succeed.
-#
-# This file does nothing until the repo is on GitHub and a tag is pushed.
 
 name: Release
 
@@ -22,24 +37,118 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
-permissions:
-  contents: write
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+# Two runs for the same tag would race to create its draft; queue them instead.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Any SemVer prerelease (a '-' after the version: -beta.1, -rc.1, ...) is a
+  # prerelease, so it does not become the "Latest release" people land on
+  # from the repo front page.
+  PRERELEASE: ${{ contains(github.ref_name, '-') }}
 
 jobs:
+  create-release:
+    name: create draft release
+    # Only for v* tags. The other jobs need this one, so they skip with it.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The tag must match the app version
+        run: |
+          want=${TAG#v}
+          have=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          conf=$(jq -r '.version // empty' src-tauri/tauri.conf.json)
+          if [ "$have" != "$want" ]; then
+            echo "::error::Cargo.toml says $have but the tag is $TAG. Bump the version first."
+            exit 1
+          fi
+          if [ -n "$conf" ] && [ "$conf" != "$want" ]; then
+            echo "::error::tauri.conf.json says $conf but the tag is $TAG."
+            exit 1
+          fi
+
+      - name: Create the draft (or reuse this tag's draft)
+        id: draft
+        run: |
+          # The API's by-tag lookup skips drafts, so search the list instead.
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | .id')
+          id=${existing%%$'\n'*}
+          if [ -n "$id" ]; then
+            # Rebuilding a published release would swap its files under
+            # people who are downloading them, and stale its checksums.
+            draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .draft)
+            if [ "$draft" != "true" ]; then
+              echo "::error::$TAG is already published. Tag a new version instead of rebuilding it."
+              exit 1
+            fi
+            echo "Reusing draft release $id for $TAG."
+          else
+            notes=$(cat <<'EOF'
+          **Dropwire @TAG@**: free, private, peer-to-peer file transfer.
+
+          Send any file straight from one device to another: end-to-end encrypted, resumable,
+          no account, no server holding your data. Built on iroh.
+
+          ### Downloads
+          - **Windows**: `_x64-setup.exe`
+          - **macOS**: `_universal.dmg` (Apple Silicon + Intel)
+          - **Linux**: `.AppImage`, `.deb`, or `.rpm`
+
+          > Builds are currently **unsigned**, so the OS may warn about an unverified developer.
+          > On Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
+          > Security → "Open Anyway".
+
+          Verify a download with `sha256sum -c SHA256SUMS --ignore-missing`, or check where it was
+          built with `gh attestation verify <file> --repo @REPO@`.
+
+          What changed: see [CHANGELOG.md](https://github.com/@REPO@/blob/@TAG@/CHANGELOG.md).
+          EOF
+            )
+            notes=${notes//@TAG@/$TAG}
+            notes=${notes//@REPO@/$GITHUB_REPOSITORY}
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG" -f name="Dropwire $TAG" -f body="$notes" \
+              -F draft=true -F prerelease="$PRERELEASE" --jq .id)
+            echo "Created draft release $id for $TAG."
+          fi
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
   release:
+    name: build (${{ matrix.platform }})
+    needs: create-release
+    permissions:
+      contents: write # upload installers into the draft
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest        # Apple Silicon runner; builds a universal (arm64 + Intel) app
             args: "--target universal-apple-darwin"
-          - platform: ubuntu-latest
+          # The oldest supported Ubuntu, not the newest: the .deb and AppImage
+          # need the glibc they were built against, so building on 22.04 keeps
+          # them running on Ubuntu 22.04+, Debian 12 and their relatives.
+          - platform: ubuntu-22.04
             args: ""
           - platform: windows-latest
             args: "--bundles nsis"   # branded NSIS .exe only (skip the dated WiX .msi)
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -47,18 +156,24 @@ jobs:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Cache cargo
+        # The default workspace (". -> target") is the real one: src-tauri is a
+        # member of the root workspace, so everything builds into ./target and
+        # the key follows the root Cargo.lock. A tag run can only restore a cache
+        # saved under the same tag, so this pays off when a failed leg is re-run;
+        # cache-on-failure keeps a leg that compiled and then failed while
+        # bundling from compiling everything again on the re-run.
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: "src-tauri -> target"
+          cache-on-failure: true
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-latest'
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Build + bundle + draft release
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+      - name: Build + bundle + upload to the draft release
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # ---- Code signing (uncomment + add repo secrets to enable; unsigned otherwise) ----
@@ -76,25 +191,84 @@ jobs:
           # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # Upload into the draft create-release made; with releaseId set the
+          # action never creates or publishes a release itself. tagName only
+          # feeds the updater JSON's download links, should that be enabled.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
-          releaseName: "Dropwire ${{ github.ref_name }}"
-          releaseBody: |
-            **Dropwire ${{ github.ref_name }}** — free, private, peer-to-peer file transfer.
-
-            Send any file straight from one device to another: end-to-end encrypted, resumable,
-            no account, no server holding your data. Built on iroh.
-
-            ### Downloads
-            - **Windows** — `_x64-setup.exe`
-            - **macOS** — `_universal.dmg` (Apple Silicon + Intel)
-            - **Linux** — `.AppImage`, `.deb`, or `.rpm`
-
-            > Builds are currently **unsigned**, so the OS may warn about an unverified developer —
-            > on Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
-            > Security → "Open Anyway".
-          # Publish the release automatically on tag (set true to review as a draft first).
-          releaseDraft: false
-          # A -beta / -alpha / -rc tag is a prerelease, so it does not become the
-          # "Latest release" people land on from the repo front page.
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    name: publish release
+    # Runs only when create-release and every build leg succeeded.
+    needs: [create-release, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach SHA256SUMS and publish
+      id-token: write # sign the provenance attestation
+      attestations: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+    steps:
+      - name: Check every platform's installer is attached
+        run: |
+          assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[].name')
+          printf '%s\n' "$assets"
+          # Named after this version, so a stale file from another build can
+          # never stand in for one that failed to upload.
+          v=${GITHUB_REF_NAME#v}
+          missing=0
+          for want in "_${v}_x64-setup.exe" "_${v}_universal.dmg" "_${v}_amd64.AppImage" "_${v}_amd64.deb" "-${v}-1.x86_64.rpm"; do
+            if ! printf '%s\n' "$assets" | grep -qF -- "$want"; then
+              echo "::error::No *$want installer on the draft; leaving it unpublished."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Download the installers and write SHA256SUMS
+        run: |
+          mkdir dist
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | select(.name != "SHA256SUMS") | "\(.id)\t\(.name)"' |
+          while IFS=$'\t' read -r id name; do
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "dist/$name"
+          done
+          (cd dist && sha256sum -- * > ../SHA256SUMS)
+          cat SHA256SUMS
+
+      - name: Attest where the installers were built
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+
+      - name: Attach SHA256SUMS
+        run: |
+          # A re-run replaces the file rather than failing on the name.
+          old=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | select(.name == "SHA256SUMS") | .id')
+          if [ -n "$old" ]; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"
+          fi
+          gh api -X POST -H 'Content-Type: text/plain' \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=SHA256SUMS" \
+            --input SHA256SUMS --silent
+
+      - name: Publish
+        run: |
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq .draft)
+          if [ "$draft" != "true" ]; then
+            echo "This tag's release is already published; leaving it as it is."
+            exit 0
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -F draft=false -F prerelease=true --silent
+          else
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -F draft=false -F prerelease=false -f make_latest=true --silent
+          fi
+          echo "Published release $RELEASE_ID."

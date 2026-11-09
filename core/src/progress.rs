@@ -58,10 +58,30 @@ pub enum Route {
 }
 
 /// Final statistics for a completed transfer.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransferStats {
     pub bytes: u64,
     pub seconds: f64,
+    /// Receive only: files and top-level folders saved under a different name
+    /// than the one they were sent with, because the name was already taken in
+    /// the destination (nothing on disk is ever replaced), collided with another
+    /// name in the same transfer, or is not allowed on Windows. A renamed
+    /// top-level folder is listed once, not per file inside it. Empty for sends
+    /// and when nothing was renamed; lists at most 1000 entries.
+    #[serde(default)]
+    pub renamed: Vec<RenamedFile>,
+}
+
+/// One entry of [`TransferStats::renamed`]. Both paths are relative to the
+/// destination folder and use forward slashes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenamedFile {
+    /// The name as the sender sent it.
+    pub name: String,
+    /// The name it was saved under.
+    pub saved_as: String,
 }
 
 /// One file in a [`TransferPreview`]: its name and byte size. Both are committed
@@ -85,6 +105,50 @@ pub struct TransferPreview {
     pub route: Route,
 }
 
+/// What kind of failure ended a transfer (see [`Progress::Error`]), so the app
+/// can decide what to offer without reading the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorCode {
+    /// The sender could not be reached: offline, or the code has expired.
+    Unreachable,
+    /// The sender refused this device: another device already used the code,
+    /// or the sender stopped sharing it.
+    AlreadyClaimed,
+    /// The connection dropped part way through a receive. What arrived is
+    /// kept, the history entry is Interrupted, and trying again picks up where
+    /// it stopped.
+    Interrupted,
+    /// A file or folder is no longer there.
+    NotFound,
+    /// The system refused access to a file or folder, or the drive is
+    /// read-only.
+    PermissionDenied,
+    /// The disk is full.
+    DiskFull,
+    /// A file is open in another app.
+    FileInUse,
+    /// Anything else. The message says what happened.
+    #[default]
+    Other,
+}
+
+impl ErrorCode {
+    /// The name this code is serialized as.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::Unreachable => "unreachable",
+            ErrorCode::AlreadyClaimed => "alreadyClaimed",
+            ErrorCode::Interrupted => "interrupted",
+            ErrorCode::NotFound => "notFound",
+            ErrorCode::PermissionDenied => "permissionDenied",
+            ErrorCode::DiskFull => "diskFull",
+            ErrorCode::FileInUse => "fileInUse",
+            ErrorCode::Other => "other",
+        }
+    }
+}
+
 /// Progress events emitted on a transfer's [`ProgressStream`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -96,8 +160,15 @@ pub enum Progress {
         total: u64,
     },
     /// Sender: content imported, ticket minted, now serving.
-    Ready { id: TransferId, ticket: String },
-    /// Sender: a receiver connected.
+    Ready {
+        id: TransferId,
+        ticket: String,
+        /// Links in a chosen folder that were left out because they point
+        /// outside it (or to a folder, or to nothing). Usually 0.
+        #[serde(default)]
+        skipped: usize,
+    },
+    /// Sender: a receiver started downloading file content.
     PeerJoined { id: TransferId },
     /// Receiver (and, later, sender): bytes are moving.
     Transferring {
@@ -106,15 +177,35 @@ pub enum Progress {
         total: u64,
         route: Route,
     },
-    /// Transfer completed successfully.
+    /// Transfer completed successfully. On a send: a receiver finished
+    /// downloading the file content it asked for (a preview never counts).
     Done {
         id: TransferId,
         stats: TransferStats,
     },
-    /// Transfer failed.
-    Error { id: TransferId, message: String },
+    /// Transfer failed. `message` is a plain sentence meant for the screen;
+    /// `code` says what kind of failure it was, for choosing what to offer next.
+    Error {
+        id: TransferId,
+        #[serde(default)]
+        code: ErrorCode,
+        message: String,
+    },
     /// Transfer was cancelled by the user.
     Cancelled { id: TransferId },
+    /// Sender: the receiver went away (it cancelled, or its connection
+    /// dropped) with nothing else in flight. The send stays live and the code
+    /// still works for that same device, so it can come back and resume; a
+    /// later `peerJoined` means it has.
+    PeerLeft { id: TransferId },
+    /// Sender: the device this code was bound to looked at the preview and
+    /// declined. Its binding is released and the send keeps serving, so the
+    /// code now works for the next device that uses it.
+    Declined { id: TransferId },
+    /// Sender: the receiver is looking at the file list (a preview, or the
+    /// size check before its download). No file content has been asked for
+    /// yet; `peerJoined` follows if it starts downloading.
+    Previewing { id: TransferId },
 }
 
 impl Progress {
@@ -127,7 +218,10 @@ impl Progress {
             | Progress::Transferring { id, .. }
             | Progress::Done { id, .. }
             | Progress::Error { id, .. }
-            | Progress::Cancelled { id, .. } => *id,
+            | Progress::Cancelled { id, .. }
+            | Progress::PeerLeft { id, .. }
+            | Progress::Declined { id, .. }
+            | Progress::Previewing { id, .. } => *id,
         }
     }
 }
@@ -136,3 +230,35 @@ impl Progress {
 /// [`futures_lite::Stream`] (and `tokio_stream::Stream`), so the shell can
 /// `.next().await` it.
 pub type ProgressStream = tokio_stream::wrappers::ReceiverStream<Progress>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_code_names_match_their_serialized_form() {
+        for code in [
+            ErrorCode::Unreachable,
+            ErrorCode::AlreadyClaimed,
+            ErrorCode::Interrupted,
+            ErrorCode::NotFound,
+            ErrorCode::PermissionDenied,
+            ErrorCode::DiskFull,
+            ErrorCode::FileInUse,
+            ErrorCode::Other,
+        ] {
+            let json = serde_json::to_value(code).unwrap();
+            assert_eq!(json, serde_json::Value::String(code.as_str().into()));
+        }
+    }
+
+    #[test]
+    fn an_error_without_a_code_still_reads() {
+        let id = TransferId::new();
+        let json = serde_json::json!({ "kind": "error", "id": id, "message": "x" });
+        let Progress::Error { code, .. } = serde_json::from_value(json).unwrap() else {
+            panic!("expected an error event");
+        };
+        assert_eq!(code, ErrorCode::Other);
+    }
+}

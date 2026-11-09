@@ -58,7 +58,8 @@ docker compose logs -f
 
 ## 5. Point the app at your infra
 
-In the desktop app's config (built into the release — see `src-tauri`), use:
+The released app starts the engine with `CoreConfig::serverless` (in `src-tauri/src/lib.rs`), so a
+self-hosted setup needs your own build. In it, replace that config's `infra` with:
 
 ```rust
 Infra::SelfHosted {
@@ -69,9 +70,9 @@ Infra::SelfHosted {
 }
 ```
 
-> The token ships embedded in the build. It is app-level access control, not user auth — rotate it
-> by adding a second value to the relay's `access.shared_token` list and shipping an app update,
-> then removing the old one.
+> The token ships embedded in your build. It is app-level access control, not user auth. Rotate it
+> by adding a second value to the relay's `access.shared_token` list and shipping an update of your
+> build, then removing the old one.
 
 ## 6. Verify
 

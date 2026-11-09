@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-panel",
+  "description": "The tray panel only lists recent transfers, hands drops and pasted codes to the main window through events, and shows or hides windows. It gets nothing else: no dialogs, no notifications, no settings, no transfers of its own.",
+  "windows": [
+    "tray"
+  ],
+  "permissions": [
+    "core:event:default",
+    "allow-list-transfers",
+    "allow-my-endpoint-id",
+    "allow-show-main",
+    "allow-hide-tray-window"
+  ]
+}

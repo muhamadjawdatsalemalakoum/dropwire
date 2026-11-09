@@ -35,8 +35,9 @@ function row(dir, name, meta, state, stateClass) {
   return el;
 }
 
-/* The main window owns transfer state; the panel mirrors it. Refreshed on every
-   open, which is the only time it is visible. */
+/* The main window owns transfer state; the panel mirrors it. The panel's page
+   lives for the whole app run and is only shown and hidden, so the recent list
+   is refreshed each time it is opened (focused or made visible). */
 async function refresh() {
   // In flight comes from the main window via a shared event; history is durable.
   let recent = [];
@@ -102,8 +103,9 @@ if (HAS_TAURI && TAURI.webview && TAURI.webview.getCurrentWebview) {
       const p = event.payload.paths || [];
       if (!p.length) return;
       // The main window holds the send pipeline and the code the user needs.
+      // Everything dropped goes under one code.
       invoke('show_main')
-        .then(() => TAURI.event && TAURI.event.emit && TAURI.event.emit('tray-send', p[0]))
+        .then(() => TAURI.event && TAURI.event.emit && TAURI.event.emit('tray-send', p))
         .catch(() => {});
     }
   }).catch(() => {});
@@ -125,3 +127,12 @@ document.addEventListener('keydown', (e) => {
   }
   refresh();
 })();
+
+let refreshQueued = false;
+function refreshSoon() {
+  if (refreshQueued) return;
+  refreshQueued = true;
+  setTimeout(() => { refreshQueued = false; refresh(); }, 50);
+}
+window.addEventListener('focus', refreshSoon);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshSoon(); });

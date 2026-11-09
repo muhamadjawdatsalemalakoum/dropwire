@@ -72,6 +72,8 @@ a{color:var(--wire); text-underline-offset:2px; text-decoration:none}
 a:hover{text-decoration:underline}
 :focus-visible{outline:none; box-shadow:var(--glow-focus)}
 .hidden,[hidden]{display:none !important}
+/* Shared SVG defs: takes no room, but must render for url(#wireGlow) to resolve. */
+.svg-defs{position:absolute}
 .grow{flex:1 1 auto; min-width:0}
 .mono{font-family:var(--font-mono)}
 .label{font-size:12px; font-weight:600; letter-spacing:.7px; text-transform:uppercase; color:var(--text-muted); margin:0}
@@ -328,8 +330,9 @@ a:hover{text-decoration:underline}
 .device:not(:first-child) .btn.js-send{background:transparent; border:1px solid var(--hairline);
   color:var(--text); box-shadow:none}
 .device:not(:first-child) .btn.js-send:hover{background:var(--surface-3); border-color:var(--hairline-strong)}
-.device.busy .js-send{opacity:.55; pointer-events:none}
-.device-list.offering .js-send{opacity:.55; pointer-events:none}
+/* While an offer waits, other devices are dimmed; the one being asked keeps
+   its button, which now takes the offer back. */
+.device-list.offering .device:not(.busy) .js-send{opacity:.55; pointer-events:none}
 .device-empty{padding:16px 20px; border-top:1px solid var(--hairline-soft); color:var(--text-faint); font-size:13px}
 .nearby-foot{flex:none; padding:10px 20px 11px; border-top:1px solid var(--hairline-soft); font-size:12px}
 
@@ -641,3 +644,6 @@ a:hover{text-decoration:underline}
   transition:opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out)}
 [data-tip]:hover::after,[data-tip]:focus-visible::after{opacity:1; transform:translateX(-50%) translateY(0)}
 [data-tip-below]::after{bottom:auto; top:calc(100% + 7px)}
+
+/* Inline rename in Settings (replaces a native prompt). */
+.rename-field{width:220px; flex:0 1 220px}

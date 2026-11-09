@@ -7,12 +7,12 @@
 
 <br /><br />
 
-<img src="branding/promo.png" alt="Dropwire — send any file to anyone, directly. No accounts, no limits, end-to-end encrypted, free forever. Peer-to-peer, built on iroh." width="880" />
+<img src="branding/promo.png" alt="Dropwire: send any file to anyone, directly. No accounts, no limits, end-to-end encrypted, free forever. Peer-to-peer, built on iroh." width="880" />
 
 <br /><br />
 
 A peer-to-peer file-transfer app built on [iroh](https://iroh.computer): no accounts,
-no file-size limits, no server in the middle holding your data — end-to-end encrypted,
+no file-size limits, no server in the middle holding your data. End-to-end encrypted,
 resumable, and open source.
 
 <br />
@@ -20,7 +20,7 @@ resumable, and open source.
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3DA35D)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-2C333D)
 ![Built with iroh](https://img.shields.io/badge/built%20with-iroh-D2FF3A?labelColor=0E1116)
-![Status](https://img.shields.io/badge/status-alpha-E0A93A)
+![Latest release](https://img.shields.io/github/v/release/muhamadjawdatsalemalakoum/dropwire?label=release&color=3DA35D)
 
 [**Download**](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases) ·
 [Architecture](ARCHITECTURE.md) ·
@@ -31,12 +31,56 @@ resumable, and open source.
 
 ---
 
-> **Status:** beta. The transfer engine and desktop app work end to end on Windows,
-> macOS, and Linux: send a file or folder, send straight to a nearby device with no code,
-> preview before accepting, download only the files you want, resume an interrupted
-> transfer, and run several at once. The interface was rebuilt in 0.3.0 as a fixed native
-> frame rather than a page in a window. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
-> design and [`CHANGELOG.md`](CHANGELOG.md) for what landed when.
+> **Dropwire 1.0 is here.** The first stable release: send files and folders between
+> Windows, macOS and Linux, straight from one device to the other, end-to-end encrypted.
+> [**Download 1.0**](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases/latest) ·
+> [What's new](#whats-new-in-10) · [Full changelog](CHANGELOG.md)
+
+## What's new in 1.0
+
+1.0 is the result of an end-to-end audit of every path a file takes: sending, receiving,
+nearby devices, the desktop shell and the release pipeline. Highlights:
+
+- **Many files, one code.** Pick or drop several files and folders and they all go under a
+  single code. Up to 100,000 files per transfer.
+- **Resume that really resumes.** A dropped connection keeps the receive resumable, Resume in
+  Activity downloads only what is missing, and it keeps the files you picked in the preview.
+- **Saving is safe by construction.** An existing file is never overwritten, one file that
+  cannot be written does not stop the rest, the folder is checked before anything downloads,
+  and received files no longer leave a second copy in the app's data folder.
+- **Errors in plain words.** A used code, a code cut off in a chat, an offline sender and a
+  full disk are told apart and explained, instead of one generic failure.
+- **Nearby, hardened.** Offers only from devices seen on your network, the device you tap is
+  the one asked, an offer can be taken back, and turning Nearby off stops browsing too.
+- **Security.** Received files carry the "downloaded from the internet" mark, file names are
+  cleaned of reserved names and hidden direction-override characters, both windows run under
+  a content security policy, and each code serves only its live send to its one device.
+- **A desktop app that behaves.** Start at login works, a second launch brings the running
+  window forward, the tray opens on the display you clicked, and quitting shuts down cleanly.
+- **Verifiable downloads.** Every installer ships with `SHA256SUMS` and a signed
+  build-provenance attestation.
+
+Everything, item by item, is in the [changelog](CHANGELOG.md#100---2026-11-09).
+
+## Install
+
+Grab the installer for your system from the
+[latest release](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases/latest):
+
+| System | File | Notes |
+| ------ | ---- | ----- |
+| Windows 10 / 11 | `Dropwire_<version>_x64-setup.exe` | Installs for your user account |
+| macOS 10.15+ | `Dropwire_<version>_universal.dmg` | One app for Apple Silicon and Intel |
+| Linux | `.AppImage`, `.deb` or `.rpm` | Ubuntu 22.04+, Debian 12+, Fedora and relatives |
+
+The installers are not code-signed yet, so the first launch shows a warning. On Windows
+choose **More info → Run anyway**; on macOS open **System Settings → Privacy & Security** and
+choose **Open Anyway**. To check a download is the one this repository built:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify Dropwire_<version>_x64-setup.exe --repo muhamadjawdatsalemalakoum/dropwire
+```
 
 ## Why Dropwire
 
@@ -46,9 +90,9 @@ your files through their servers with size caps and ads. Dropwire is the missing
 
 - **Free forever.** No limits, no subscriptions, no ads.
 - **Truly private.** End-to-end encrypted. No account, no sign-in, no tracking. We never
-  see your files — and neither does anyone else.
-- **See it before you accept.** The receiver previews exactly what's coming — file names, sizes,
-  and count — and approves before a single byte downloads. Both sides see, live, when the other
+  see your files, and neither does anyone else.
+- **See it before you accept.** The receiver previews exactly what's coming (file names, sizes,
+  and count) and approves before a single byte downloads. Both sides see, live, when the other
   device connects.
 - **Nearby devices, no code needed.** Dropwire apps on the same network find each other
   automatically and appear as one-tap targets. Tap a device, they confirm, and it sends.
@@ -58,13 +102,14 @@ your files through their servers with size caps and ads. Dropwire is the missing
 - **Direct, peer-to-peer.** Your file goes straight from your device to theirs. When a
   direct connection isn't possible, it falls back to an encrypted relay that still can't
   read a single byte.
-- **Works across the internet** — not just your local network.
-- **Resumable.** A dropped connection picks up where it left off — only the missing
+- **Works across the internet**, not just your local network.
+- **Resumable.** A dropped connection picks up where it left off. Only the missing
   pieces are re-sent, verified end to end as they arrive.
-- **Take only what you want.** Receiving a folder? Untick the files you don't need —
+- **Take only what you want.** Receiving a folder? Untick the files you don't need;
   only what you choose is transferred.
 - **One code, one recipient.** A code isn't a public link: it's served to the first
-  device that connects, and others are refused.
+  device that connects, and others are refused. It also stops working once you stop
+  sharing.
 - **Several at once.** Run multiple sends and receives in parallel, each with its own
   live progress and a direct-vs-relayed badge.
 - **A desktop app, not a web page in a window.** One fixed frame that draws its own title
@@ -78,11 +123,11 @@ your files through their servers with size caps and ads. Dropwire is the missing
 
 ## How it works
 
-1. **Pick** a file or folder.
-2. **Share** the one-time transfer code or QR Dropwire gives you — copy it into any chat,
-   or have them scan the QR.
-3. The other person enters the code, **previews exactly what's being sent — names, sizes,
-   and count — and accepts** (or declines, and you're told instantly). Then it runs
+1. **Pick** files or a folder, or drop them on the window.
+2. **Share** the one-time transfer code Dropwire gives you: copy it into any chat, and
+   they paste it into Receive.
+3. The other person enters the code, **previews exactly what's being sent (names, sizes,
+   and count) and accepts** (or declines, and you're told instantly). Then it runs
    **directly, device to device**, with a live direct-vs-relayed badge.
 
 On the same network, you can skip the code entirely: the other device shows up under
@@ -143,7 +188,7 @@ per-file breakdown, and the verified file list.
 ![The first-run welcome screen explaining what Dropwire is, with a single Set up this device button](www/screenshots/app-welcome.png)
 
 Two screens: what Dropwire is, then name this device and choose whether to be visible.
-Nothing touches the network until you finish.
+Nearby devices cannot see you until you finish.
 
 ### Tray
 
@@ -163,20 +208,20 @@ can still reach you.
 ## Repository layout
 
 ```
-core/          # `irohcore` — the transfer engine (the only crate that imports iroh/iroh-blobs)
+core/          # `irohcore`: the transfer engine (the only crate that imports iroh/iroh-blobs)
 src-tauri/     # desktop app shell (Tauri v2)
-ui/            # the desktop app's frontend (plain HTML/CSS/JS — no build step)
+ui/            # the desktop app's frontend (plain HTML/CSS/JS, no build step)
 www/           # static landing page
 docs/          # PRIVACY.md, DEVELOPING.md, and other docs
 branding/      # brand assets (logo, wordmark, icons)
-infra/         # self-hosted relay + DNS server configs and deploy scripts
+infra/         # optional self-hosted relay + DNS configs (the released app does not use them)
 ARCHITECTURE.md
 ```
 
 ## Building (developers)
 
 Requires the [Rust toolchain](https://rustup.rs) and a C toolchain (see
-[`docs/DEVELOPING.md`](docs/DEVELOPING.md) for per-OS prerequisites). No Node/JS build step — the
+[`docs/DEVELOPING.md`](docs/DEVELOPING.md) for per-OS prerequisites). No Node/JS build step: the
 UI is plain HTML/CSS/JS.
 
 ```sh
@@ -202,7 +247,7 @@ Full developer guide: [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Design: [`ARCH
 
 Dropwire collects nothing. There are no accounts, no analytics, and no phone-home. Your
 node identity and transfer history live only on your machine. The only network services
-involved are discovery and the relay fallback — and the relay only ever forwards encrypted
+involved are discovery and the relay fallback, and the relay only ever forwards encrypted
 packets it cannot decrypt. See [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## License

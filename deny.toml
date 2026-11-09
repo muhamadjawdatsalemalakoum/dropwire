@@ -1,0 +1,22 @@
+# cargo-deny configuration, used by the `advisories` job in CI.
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# The platforms Dropwire ships on, so advisories for crates that only build
+# elsewhere (mobile, wasm) do not fail the check.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+
+[advisories]
+# Unmaintained crates are reported for our own direct dependencies only. Deep
+# in Tauri's Linux stack the GTK3 bindings are unmaintained upstream, and that
+# is Tauri's to move, not something this repository can change.
+unmaintained = "workspace"
+yanked = "deny"
+# No exceptions. If one is ever needed, add it here with the advisory id and
+# a reason, e.g. { id = "RUSTSEC-YYYY-NNNN", reason = "..." }.
+ignore = []

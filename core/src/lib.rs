@@ -19,6 +19,8 @@ mod control;
 mod discover;
 mod endpoint;
 mod error;
+mod export;
+mod fail;
 mod identity;
 mod offer;
 mod progress;
@@ -31,7 +33,7 @@ use std::sync::Arc;
 
 use iroh::protocol::Router;
 use iroh_blobs::provider::events::{
-    ConnectMode, EventMask, EventSender, ProviderMessage, RequestMode,
+    ConnectMode, EventMask, EventSender, ObserveMode, ProviderMessage, RequestMode,
 };
 use iroh_blobs::store::fs::FsStore;
 use tokio::sync::{broadcast, mpsc, Mutex};
@@ -42,11 +44,14 @@ pub use config::{CoreConfig, Infra};
 pub use control::CtrlMsg;
 pub use discover::NearbyDevice;
 pub use error::{CoreError, Result};
-pub use offer::{IncomingOffer, OfferUpdate};
+pub use offer::{IncomingOffer, OfferUpdate, OfferWithdrawn, WithdrawReason};
+pub use progress::RenamedFile;
 pub use progress::{
-    Direction, FilePreview, Progress, ProgressStream, Route, TransferId, TransferPreview,
-    TransferStats,
+    Direction, ErrorCode, FilePreview, Progress, ProgressStream, Route, TransferId,
+    TransferPreview, TransferStats,
 };
+#[cfg(feature = "test-utils")]
+pub use store::set_gc_interval_for_tests;
 
 use catalog::Catalog;
 use discover::NearbyState;
@@ -65,14 +70,16 @@ pub(crate) struct Inner {
     pub(crate) config: CoreConfig,
     pub(crate) catalog: Mutex<Catalog>,
     pub(crate) active: Mutex<HashMap<TransferId, CancellationToken>>,
-    /// In-flight sends, keyed by content hash (hex), so provider events can be
-    /// routed to the right transfer's progress stream.
-    pub(crate) serving: Mutex<HashMap<String, mpsc::UnboundedSender<send::ProviderEvent>>>,
+    /// Live sends, keyed by content hash (hex). This is the allow-list of the
+    /// one-to-one gate: only these roots are served. Also routes provider
+    /// events to the right transfer's progress stream.
+    pub(crate) serving: Mutex<HashMap<String, send::Serving>>,
     /// Live connections: `connection_id` → the peer's `EndpointId`. Populated from
     /// provider connect events so a get request can be attributed to a device.
     pub(crate) conns: Mutex<HashMap<u64, iroh::EndpointId>>,
     /// One-to-one binding: content hash (hex) → the first approved receiver's
     /// `EndpointId`. The ticket is served to that one device; others are denied.
+    /// Lock order: `serving` before `bound` wherever both are held.
     pub(crate) bound: Mutex<HashMap<String, iroh::EndpointId>>,
     /// Broadcast of control messages received from peers (see [`control`]).
     pub(crate) ctrl_tx: broadcast::Sender<control::CtrlMsg>,
@@ -82,6 +89,8 @@ pub(crate) struct Inner {
     pub(crate) nearby_port: u16,
     /// Two-sided consent state for nearby transfers (see [`offer`]).
     pub(crate) consent: ConsentCtx,
+    /// Offers this device sent that have no answer yet, by offer id.
+    pub(crate) outgoing_offers: std::sync::Mutex<HashMap<String, offer::OutgoingOffer>>,
 }
 
 impl Core {
@@ -94,9 +103,10 @@ impl Core {
         let endpoint = endpoint::build(secret, &config.infra).await?;
         let store = store::open(&config.data_dir.join("blobs")).await?;
 
-        // One always-on blobs server with provider events: any blob in the store is
-        // served by hash, and the global event stream lets us surface sender-side
-        // progress (peer connected → bytes sent → done) per transfer.
+        // One always-on blobs server with provider events. Every request passes
+        // through the one-to-one gate in `send::consume_provider_events`, which
+        // serves only the root of a live send to its bound device; the global
+        // event stream also surfaces sender-side progress per transfer.
         let (ev_tx, ev_rx) = mpsc::channel::<ProviderMessage>(64);
         let events = EventSender::new(
             ev_tx,
@@ -105,6 +115,12 @@ impl Core {
                 // InterceptLog = we can allow/deny each request before bytes flow
                 // (one-to-one enforcement) AND still get per-request progress.
                 get: RequestMode::InterceptLog,
+                // Never used by Dropwire. iroh-blobs 0.103 routes these through
+                // the `get` mode above (and the gate refuses them); these
+                // settings keep them shut if a later version honors them.
+                get_many: RequestMode::Disabled,
+                push: RequestMode::Disabled,
+                observe: ObserveMode::Intercept,
                 ..EventMask::DEFAULT
             },
         );
@@ -113,6 +129,8 @@ impl Core {
         // Control plane (presence/chat + nearby consent frames).
         let (ctrl_tx, _) = broadcast::channel(64);
         let (offer_tx, _) = broadcast::channel(64);
+        let (withdrawn_tx, _) = broadcast::channel(64);
+        let (decline_tx, decline_rx) = mpsc::unbounded_channel();
 
         // Nearby discovery session. The mDNS SRV record points at this
         // endpoint's real QUIC port so peers can dial straight over the LAN.
@@ -132,7 +150,10 @@ impl Core {
             offer_tx,
             incoming_offers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             nearby_running: nearby.running_flag(),
+            nearby_peers: nearby.peer_table(),
             verdict_waiters: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            decline_tx,
+            withdrawn_tx,
         };
 
         let router = Router::builder(endpoint)
@@ -147,6 +168,7 @@ impl Core {
 
         let mut catalog = Catalog::load(config.data_dir.join("transfers.json"));
         catalog.mark_stale_interrupted();
+        store::reconcile_receive_tags(&store, &catalog.list()).await;
 
         let inner = Arc::new(Inner {
             store,
@@ -161,9 +183,11 @@ impl Core {
             nearby: Mutex::new(nearby),
             nearby_port,
             consent,
+            outgoing_offers: std::sync::Mutex::new(HashMap::new()),
         });
         let core = Core { inner };
         tokio::spawn(send::consume_provider_events(core.clone(), ev_rx));
+        tokio::spawn(send::consume_declines(core.clone(), decline_rx));
         Ok(core)
     }
 
@@ -192,7 +216,10 @@ impl Core {
     /// Clear finished history. Records live only on this device, so this is the
     /// whole delete story: there is nothing on a server to remove as well.
     pub async fn clear_transfers(&self) {
-        self.inner.catalog.lock().await.clear_finished();
+        let removed = self.inner.catalog.lock().await.clear_finished();
+        for id in removed {
+            store::release_receive(&self.inner.store, id).await;
+        }
     }
 
     /// Gracefully shut down the engine.

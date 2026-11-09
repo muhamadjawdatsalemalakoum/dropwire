@@ -1,6 +1,6 @@
 # Contributing to Dropwire
 
-Thanks for your interest! Dropwire is free, open source, and privacy-first — contributions that
+Thanks for your interest! Dropwire is free, open source, and privacy-first, and contributions that
 keep it that way are very welcome.
 
 ## Principles (please respect these)
@@ -21,9 +21,15 @@ See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) for toolchain and build/run instr
 
 ```sh
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test -p irohcore
+cargo clippy -p irohcore --all-targets --features test-utils --locked -- -D warnings
+cargo clippy -p dropwire --all-targets --locked -- -D warnings
+cargo test   -p irohcore --features test-utils --locked
+cargo test   -p dropwire --locked
 ```
+
+These are the checks CI runs on Windows, macOS and Linux. CI also checks the engine on the
+minimum Rust version in `Cargo.toml` and scans `Cargo.lock` against the RustSec advisory database. Keep `--features test-utils`: without it the nearby consent and
+relay suites are compiled out and the test run still reports success.
 
 - Keep changes focused; match the surrounding style.
 - If you touch the transfer/resume path, add or update a test in `core/tests/`.
@@ -37,6 +43,6 @@ licensed under the same terms.
 ## Reporting bugs / security issues
 
 - Regular bugs: open an issue with steps to reproduce.
-- Security vulnerabilities: **do not** open a public issue — report privately via
-  [GitHub Security Advisories](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new)
-  (see [`SECURITY.md`](SECURITY.md)).
+- Security vulnerabilities: **do not** open a public issue. Report privately via
+  [GitHub private vulnerability reporting](https://github.com/muhamadjawdatsalemalakoum/dropwire/security/advisories/new).
+  [`SECURITY.md`](SECURITY.md) covers what to do if that form is not available to you.
