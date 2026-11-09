@@ -18,3 +18,11 @@ updates:
     commit-message:
       prefix: chore(deps)
     open-pull-requests-limit: 5
+    # Crates that release together move together: one PR, one CI run.
+    groups:
+      tauri:
+        patterns: ["tauri*"]
+      iroh:
+        patterns: ["iroh*"]
+      patch-updates:
+        update-types: ["patch"]

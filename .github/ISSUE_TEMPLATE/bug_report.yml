@@ -37,7 +37,7 @@ body:
     id: version
     attributes:
       label: Dropwire version
-      description: Shown in Settings → About, next to Dropwire (for example 0.3.1).
+      description: Shown in Settings → About, next to Dropwire (for example 1.0.0).
     validations:
       required: true
   - type: input
@@ -45,9 +45,9 @@ body:
     attributes:
       label: Release you downloaded
       description: >-
-        The tag from the Releases page, if you know it (for example v0.3.1).
+        The tag from the Releases page, if you know it (for example v1.0.0).
         Every 0.3.0 beta shows 0.3.0 in Settings, so this is how those builds are told apart.
-      placeholder: v0.3.1
+      placeholder: v1.0.0
   - type: dropdown
     id: connection
     attributes:

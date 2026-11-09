@@ -1,13 +1,19 @@
 # Dropwire: cross-platform release builds in the cloud (GitHub Actions).
 #
-# Push a tag like `v0.3.1` and this builds the Windows, macOS, and Linux
+# Push a tag like `v1.0.0` and this builds the Windows, macOS, and Linux
 # installers on GitHub's runners. Publishing is all or nothing:
 #   1. create-release makes a DRAFT release for the tag, or reuses the release
 #      that tag already has (a re-run, or notes written by hand beforehand).
 #   2. Each platform leg builds its installers and uploads them into that draft.
 #   3. publish-release publishes it only once every leg has succeeded and every
-#      platform's installer is attached. A -beta / -alpha / -rc tag goes out as
-#      a prerelease; any other tag becomes the Latest release.
+#      platform's installer for this version is attached. It also writes
+#      SHA256SUMS and a signed build-provenance attestation for every file.
+#      A tag with a SemVer prerelease part (v1.1.0-beta.1, -rc.1, ...) goes out
+#      as a prerelease; any other tag becomes the Latest release.
+# The tag must match the version in Cargo.toml (v1.0.0 <-> 1.0.0), or nothing
+# is built: the installers are named after that version.
+# Release notes written by hand beforehand must be saved as a DRAFT for the
+# tag; a release that is already published is never rebuilt in place.
 # If a leg fails, the release stays a draft that only maintainers can see.
 # Re-run the failed jobs; the publish job runs again once they pass.
 #
@@ -31,8 +37,8 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
-permissions:
-  contents: write
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
 
 # Two runs for the same tag would race to create its draft; queue them instead.
 concurrency:
@@ -40,9 +46,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # A -beta / -alpha / -rc tag is a prerelease, so it does not become the
-  # "Latest release" people land on from the repo front page.
-  PRERELEASE: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
+  # Any SemVer prerelease (a '-' after the version: -beta.1, -rc.1, ...) is a
+  # prerelease, so it does not become the "Latest release" people land on
+  # from the repo front page.
+  PRERELEASE: ${{ contains(github.ref_name, '-') }}
 
 jobs:
   create-release:
@@ -50,13 +57,31 @@ jobs:
     # Only for v* tags. The other jobs need this one, so they skip with it.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       release_id: ${{ steps.draft.outputs.release_id }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
-      - name: Create the draft (or reuse this tag's release)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The tag must match the app version
+        run: |
+          want=${TAG#v}
+          have=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          conf=$(jq -r '.version // empty' src-tauri/tauri.conf.json)
+          if [ "$have" != "$want" ]; then
+            echo "::error::Cargo.toml says $have but the tag is $TAG. Bump the version first."
+            exit 1
+          fi
+          if [ -n "$conf" ] && [ "$conf" != "$want" ]; then
+            echo "::error::tauri.conf.json says $conf but the tag is $TAG."
+            exit 1
+          fi
+
+      - name: Create the draft (or reuse this tag's draft)
         id: draft
         run: |
           # The API's by-tag lookup skips drafts, so search the list instead.
@@ -64,7 +89,14 @@ jobs:
             --jq '.[] | select(.tag_name == env.TAG) | .id')
           id=${existing%%$'\n'*}
           if [ -n "$id" ]; then
-            echo "Reusing release $id for $TAG."
+            # Rebuilding a published release would swap its files under
+            # people who are downloading them, and stale its checksums.
+            draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .draft)
+            if [ "$draft" != "true" ]; then
+              echo "::error::$TAG is already published. Tag a new version instead of rebuilding it."
+              exit 1
+            fi
+            echo "Reusing draft release $id for $TAG."
           else
             notes=$(cat <<'EOF'
           **Dropwire @TAG@**: free, private, peer-to-peer file transfer.
@@ -81,6 +113,9 @@ jobs:
           > On Windows choose "More info → Run anyway"; on macOS use System Settings → Privacy &
           > Security → "Open Anyway".
 
+          Verify a download with `sha256sum -c SHA256SUMS --ignore-missing`, or check where it was
+          built with `gh attestation verify <file> --repo @REPO@`.
+
           What changed: see [CHANGELOG.md](https://github.com/@REPO@/blob/@TAG@/CHANGELOG.md).
           EOF
             )
@@ -96,13 +131,18 @@ jobs:
   release:
     name: build (${{ matrix.platform }})
     needs: create-release
+    permissions:
+      contents: write # upload installers into the draft
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest        # Apple Silicon runner; builds a universal (arm64 + Intel) app
             args: "--target universal-apple-darwin"
-          - platform: ubuntu-latest
+          # The oldest supported Ubuntu, not the newest: the .deb and AppImage
+          # need the glibc they were built against, so building on 22.04 keeps
+          # them running on Ubuntu 22.04+, Debian 12 and their relatives.
+          - platform: ubuntu-22.04
             args: ""
           - platform: windows-latest
             args: "--bundles nsis"   # branded NSIS .exe only (skip the dated WiX .msi)
@@ -127,13 +167,13 @@ jobs:
           cache-on-failure: true
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-latest'
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Build + bundle + upload to the draft release
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # ---- Code signing (uncomment + add repo secrets to enable; unsigned otherwise) ----
@@ -163,6 +203,10 @@ jobs:
     # Runs only when create-release and every build leg succeeded.
     needs: [create-release, release]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach SHA256SUMS and publish
+      id-token: write # sign the provenance attestation
+      attestations: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
@@ -172,14 +216,46 @@ jobs:
           assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
             --jq '.[].name')
           printf '%s\n' "$assets"
+          # Named after this version, so a stale file from another build can
+          # never stand in for one that failed to upload.
+          v=${GITHUB_REF_NAME#v}
           missing=0
-          for suffix in _x64-setup.exe _universal.dmg .AppImage .deb .rpm; do
-            if ! printf '%s\n' "$assets" | grep -qF -- "$suffix"; then
-              echo "::error::No $suffix installer on the draft; leaving it unpublished."
+          for want in "_${v}_x64-setup.exe" "_${v}_universal.dmg" "_${v}_amd64.AppImage" "_${v}_amd64.deb" "-${v}-1.x86_64.rpm"; do
+            if ! printf '%s\n' "$assets" | grep -qF -- "$want"; then
+              echo "::error::No *$want installer on the draft; leaving it unpublished."
               missing=1
             fi
           done
           exit "$missing"
+
+      - name: Download the installers and write SHA256SUMS
+        run: |
+          mkdir dist
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | select(.name != "SHA256SUMS") | "\(.id)\t\(.name)"' |
+          while IFS=$'\t' read -r id name; do
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "dist/$name"
+          done
+          (cd dist && sha256sum -- * > ../SHA256SUMS)
+          cat SHA256SUMS
+
+      - name: Attest where the installers were built
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+
+      - name: Attach SHA256SUMS
+        run: |
+          # A re-run replaces the file rather than failing on the name.
+          old=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | select(.name == "SHA256SUMS") | .id')
+          if [ -n "$old" ]; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"
+          fi
+          gh api -X POST -H 'Content-Type: text/plain' \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=SHA256SUMS" \
+            --input SHA256SUMS --silent
 
       - name: Publish
         run: |
