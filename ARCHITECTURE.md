@@ -7,7 +7,7 @@
 > - **Infra:** serverless by default. Mainline-DHT discovery (this device publishes a signed record
 >   mapping its key to a relay address, never an IP) plus n0's public relay as the fallback. The
 >   self-hosted relay and DNS in §6 are optional, not the default, and Dropwire runs no servers.
-> - **Stack:** iroh 1.0.2, iroh-blobs 0.103.0 (wrapped behind `irohcore`), Tauri 2.
+> - **Stack:** iroh 1.0.2, iroh-blobs 0.103.1 (wrapped behind `irohcore`), Tauri 2.
 > - **Shipped beyond the draft:** the metadata control plane of §5.7 (verified preview, selective
 >   download, one-to-one binding, the `dropwire/ctrl/1` channel with instant decline), nearby
 >   devices over mDNS with two-sided consent, and several files and folders under one code.

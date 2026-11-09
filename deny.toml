@@ -17,9 +17,6 @@ targets = [
 # is Tauri's to move, not something this repository can change.
 unmaintained = "workspace"
 yanked = "deny"
-ignore = [
-    # glib < 0.20: unsound `Iterator` impls on `VariantStrIter`. Reached only
-    # through Tauri's GTK3 webview stack on Linux (gtk 0.18 pins glib 0.18);
-    # Dropwire never calls `VariantStrIter`. Drop this once Tauri moves on.
-    { id = "RUSTSEC-2024-0429", reason = "transitive via Tauri's GTK3 stack; VariantStrIter is not used" },
-]
+# No exceptions. If one is ever needed, add it here with the advisory id and
+# a reason, e.g. { id = "RUSTSEC-YYYY-NNNN", reason = "..." }.
+ignore = []

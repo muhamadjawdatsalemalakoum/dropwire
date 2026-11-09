@@ -125,8 +125,12 @@ Releases page.
   release that is already public, and refuse a tag that does not match the
   app's version. CI now checks dependencies against the RustSec advisory
   database, and private vulnerability reporting is open.
-- Dependencies: iroh 1.0.2, rustls 0.23.46, hickory-resolver 0.26.3,
-  tauri-plugin-dialog 2.7.3 and current patch releases; tauri-action 1.0.
+- Dependencies: every RustSec advisory in the dependency tree is resolved.
+  iroh 1.0.2, iroh-blobs 0.103.1 (0.103.0 was yanked), rustls 0.23.46,
+  hickory-resolver 0.26.3 (DNSSEC and retry-loop fixes), h2 0.4.20, tokio
+  1.54.1, webpki-roots 1.0.11 (distrusted emSign roots removed), quick-xml
+  0.42 via plist 1.10, anyhow 1.0.104, crossbeam-epoch 0.9.21, ctutils 0.4.8,
+  tauri-plugin-dialog 2.7.3, and tauri-action 1.0 for the release build.
 
 ## [0.3.0-beta.6] - 2026-09-04
 

@@ -19,7 +19,7 @@ rust-version = "1.91"
 # wrapped behind the `irohcore` crate so its churn never leaks past one boundary.
 [workspace.dependencies]
 iroh = "=1.0.2"
-iroh-blobs = "=0.103.0"
+iroh-blobs = "=0.103.1"
 # Mainline-DHT (pkarr) discovery lives in its own crate in iroh 1.0 (independently
 # versioned; depends on iroh ^1.0.0). This is our default, serverless discovery.
 iroh-mainline-address-lookup = "0.4.0"
