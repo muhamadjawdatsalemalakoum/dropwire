@@ -1,12 +1,10 @@
 /* Dropwire desktop app — Design v2 ("behaves like hardware, not a web page").
  *
- * Engine contract is UNCHANGED. Every Tauri command and every Progress event
- * kind from v1 survives: my_endpoint_id, my_fingerprint, pick_paths,
- * pick_dest_dir, default_dest_dir, qr_svg, start_send, inspect_ticket,
- * start_receive, start_receive_selected, send_control, cancel_transfer,
- * list_transfers, reveal_path, open_external, app_version, and the nearby set
- * (nearby_start/stop/list/offer/respond). The redesign changes markup and
- * motion, not the engine boundary.
+ * Talks to the shell only through the commands registered in
+ * src-tauri/src/lib.rs (start_send takes a list of paths; nearby_offer names
+ * the transfer it offers; resume_transfer resumes a receive from history) and
+ * the Progress / OfferUpdate events the engine streams back. Receive commands
+ * fail with {kind, message}; the message is written to be shown as it is.
  */
 
 const TAURI = window.__TAURI__;
@@ -123,6 +121,7 @@ function openSettings() {
   $('#settings-close').focus();
 }
 function closeSettings() {
+  endRename();
   $('#sheet-settings').classList.add('hidden');
   if (settingsLastFocus && settingsLastFocus.focus) settingsLastFocus.focus();
 }
@@ -145,7 +144,7 @@ function renderTrusted() {
     const row = document.getElementById('tpl-trusted').content.firstElementChild.cloneNode(true);
     const n = row.querySelector('.js-name'); n.textContent = t.name || 'Device'; n.title = t.name || '';
     const os = (t.os || '').toLowerCase();
-    if (OS_LABEL[os]) {
+    if (Object.prototype.hasOwnProperty.call(OS_LABEL, os)) {
       const b = row.querySelector('.js-os'); b.textContent = OS_LABEL[os]; b.classList.remove('hidden');
       row.querySelector('.js-icon').innerHTML = OS_ICON[os];
     }
@@ -178,16 +177,49 @@ function syncSettingSwitches() {
       syncSettingSwitches();
     });
   });
-$('#rename-device').addEventListener('click', async () => {
-  const current = $('#set-device-name').textContent;
-  const next = prompt('What should nearby devices call this one?', current);
-  if (next == null) return;
+/* Rename in place. Native prompt()/confirm()/alert() are not reliable in every
+   system webview (macOS's answers them with nothing), so the app never uses them. */
+let renameInput = null;
+function endRename() {
+  if (!renameInput) return;
+  renameInput.closest('.code-field').remove();
+  renameInput = null;
+  $('#set-device-name').classList.remove('hidden');
+  $('#rename-device').textContent = 'Rename';
+}
+async function commitRename() {
+  const next = renameInput ? renameInput.value.trim() : '';
+  if (!next) { endRename(); return; }
   try {
     PREFS = await invoke('set_device_name', { name: next });
     const n = PREFS.deviceName || next;
     $('#set-device-name').textContent = n;
     $('#device-name').textContent = n;
-  } catch (e) { alert(String(e)); }
+    endRename();
+  } catch (e) {
+    toast({ title: 'That name was not saved', sub: String((e && e.message) || e), kind: 'error' });
+    if (renameInput) renameInput.focus();
+  }
+}
+$('#rename-device').addEventListener('click', () => {
+  if (renameInput) { commitRename(); return; }
+  const shown = $('#set-device-name');
+  const field = document.createElement('span');
+  field.className = 'code-field sm rename-field';
+  renameInput = document.createElement('input');
+  renameInput.type = 'text'; renameInput.maxLength = 40; renameInput.spellcheck = false;
+  renameInput.autocomplete = 'off';
+  renameInput.setAttribute('aria-label', 'What should nearby devices call this one?');
+  renameInput.value = shown.textContent === '—' ? '' : shown.textContent;
+  renameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endRename(); $('#rename-device').focus(); }
+  });
+  field.appendChild(renameInput);
+  shown.classList.add('hidden');
+  shown.after(field);
+  $('#rename-device').textContent = 'Save';
+  renameInput.focus(); renameInput.select();
 });
 $('#open-settings').addEventListener('click', openSettings);
 $('#settings-close').addEventListener('click', closeSettings);
@@ -332,10 +364,19 @@ function syncLiveState() {
 const live = new Map(); // id -> {dir,name,meta,pct,state,route}
 function liveSet(id, patch) {
   if (!id) return;
-  live.set(id, Object.assign({ dir: 'send', name: 'transfer', meta: '', pct: 0, state: 'connecting', route: '' }, live.get(id) || {}, patch));
-  renderActivityLive();
+  const prev = live.get(id);
+  live.set(id, Object.assign({ dir: 'send', name: 'transfer', meta: '', pct: 0, state: 'connecting', route: '' }, prev || {}, patch));
+  // A new transfer or a change of state shows at once; progress ticks (up to
+  // ~12 a second per transfer) are folded into one render every 250 ms.
+  if (!prev || (patch.state && patch.state !== prev.state)) renderActivityLive();
+  else scheduleLiveRender();
 }
 function liveDrop(id) { if (id && live.delete(id)) renderActivityLive(); }
+let liveRenderTimer = null;
+function scheduleLiveRender() {
+  if (liveRenderTimer) return;
+  liveRenderTimer = setTimeout(() => { liveRenderTimer = null; renderActivityLive(); }, 250);
+}
 /* Both surfaces read one registry: the tray panel mirrors it, and the tray
    icon carries the state so the app says what it is doing while hidden. */
 function broadcastLive() {
@@ -343,21 +384,38 @@ function broadcastLive() {
   if (HAS_TAURI && TAURI.event && TAURI.event.emit) {
     TAURI.event.emit('live-transfers', items).catch(() => {});
   }
-  const anyMoving = items.some((t) => t.state === 'transferring');
-  invoke('set_tray_state', { stateName: anyMoving ? 'active' : 'idle' }).catch(() => {});
+  if (!trayHeld) setTrayState(items.some((t) => t.state === 'transferring') ? 'active' : 'idle');
+}
+/* The tray icon only changes when the state does: no IPC per progress tick. */
+let trayState = null, trayHeld = false, trayHoldTimer = null;
+function setTrayState(stateName) {
+  if (stateName === trayState) return;
+  trayState = stateName;
+  invoke('set_tray_state', { stateName }).catch(() => {});
 }
 function trayFlash(stateName) {
-  invoke('set_tray_state', { stateName }).catch(() => {});
-  setTimeout(() => {
-    const anyMoving = [...live.values()].some((t) => t.state === 'transferring');
-    invoke('set_tray_state', { stateName: anyMoving ? 'active' : 'idle' }).catch(() => {});
+  // Hold a done/attention state for a moment so it is seen, then fall back.
+  trayHeld = true;
+  setTrayState(stateName);
+  if (trayHoldTimer) clearTimeout(trayHoldTimer);
+  trayHoldTimer = setTimeout(() => {
+    trayHeld = false; trayHoldTimer = null;
+    setTrayState([...live.values()].some((t) => t.state === 'transferring') ? 'active' : 'idle');
   }, 4000);
 }
 
 /* ================================= SEND ================================== */
 // The most recent send that reached Ready — the transfer "Send here" offers.
 let liveSend = null;
-async function startSend(path) {
+/** A display name for what is being sent: the one item's name, or "N items". */
+function sendLabel(paths) {
+  if (paths.length === 1) return paths[0].split(/[\\/]/).filter(Boolean).pop() || 'transfer';
+  return `${paths.length} items`;
+}
+/** Send one or more files and folders under one code. Accepts a path or a list. */
+async function startSend(input) {
+  const paths = (Array.isArray(input) ? input : [input]).filter((p) => typeof p === 'string' && p);
+  if (!paths.length) return;
   const card = makeCard('tpl-send', 'send-list');
   const els = {
     code: card.querySelector('.js-code'), len: card.querySelector('.js-len'), qr: card.querySelector('.js-qr'),
@@ -382,14 +440,18 @@ async function startSend(path) {
   });
   els.cancel.addEventListener('click', async () => {
     if (id) await invoke('cancel_transfer', { id }).catch(() => {});
+    if (liveSend && liveSend.card === card) { liveSend = null; setOffering(false); }
     liveDrop(id); removeCard(card);
   });
   try {
     const ch = makeChannel(); ch.onmessage = (m) => onSendMsg(m, els, card, () => id, (t) => { ticket = t; });
-    id = await invoke('start_send', { path, onEvent: ch });
-    liveSet(id, { dir: 'send', name: path.split(/[\\/]/).pop() || 'transfer', state: 'connecting' });
+    id = await invoke('start_send', { paths, onEvent: ch });
+    card.dataset.id = id;
+    liveSet(id, { dir: 'send', name: sendLabel(paths), state: 'connecting', startedAt: new Date().toLocaleString() });
   } catch (e) {
-    els.status.textContent = 'Could not start the transfer. Try again.';
+    els.status.setAttribute('aria-live', 'assertive');
+    els.status.textContent = (e && e.message) || (typeof e === 'string' && e) || 'Could not start the transfer. Try again.';
+    els.cancel.textContent = 'Dismiss';
     console.warn(e);
   }
 }
@@ -403,9 +465,12 @@ function onSendMsg(m, els, card, getId, setTicket) {
       setTicket(m.ticket);
       els.code.textContent = m.ticket;
       els.len.textContent = m.ticket.length + ' chars';
-      els.status.textContent = 'Ready, waiting for someone to enter it. Keep the app open.';
-      liveSend = { card, els, ticket: m.ticket };
-      liveSet(id, { state: 'ready' });
+      els.status.textContent = m.skipped
+        ? `Ready. ${m.skipped} link${m.skipped === 1 ? '' : 's'} pointing outside the folder ${m.skipped === 1 ? 'was' : 'were'} left out. Keep the app open.`
+        : 'Ready, waiting for someone to enter it. Keep the app open.';
+      // The transfer id travels with the live send: a nearby offer names it.
+      liveSend = { card, els, ticket: m.ticket, id: m.id || id };
+      liveSet(id, { state: 'ready', ticket: m.ticket });
       invoke('qr_svg', { text: m.ticket }).then((svg) => {
         els.qr.innerHTML = svg;
         els.qr.setAttribute('role', 'img');
@@ -423,6 +488,10 @@ function onSendMsg(m, els, card, getId, setTicket) {
       // Resuming is derived from a transferring event after an error.
       if (els.svg && els.svg.classList.contains('failed')) {
         els.svg.classList.remove('failed'); els.svg.classList.add('resuming');
+      }
+      // Back from a receiver that left and came back to resume.
+      if (els.svg && els.svg.classList.contains('connecting')) {
+        els.svg.classList.remove('connecting'); els.svg.classList.add('live');
       }
       const p = setBar(els.fill, els.svg, els.pct, m.offset, m.total);
       setRoute(els.route, m.route);
@@ -455,6 +524,20 @@ function onSendMsg(m, els, card, getId, setTicket) {
       notify({ title: 'Send failed', sub: m.message || 'the transfer stopped', kind: 'error',
                action: { label: 'Activity', onClick: () => showPanel('activity') } });
       break;
+    case 'previewing':
+      els.status.textContent = 'Someone is looking at the file list…';
+      break;
+    case 'peerLeft':
+      // The send is still live and the code still works for that device.
+      if (els.svg) { els.svg.classList.remove('live'); els.svg.classList.add('connecting'); }
+      els.status.textContent = 'The receiver left. The code still works for them to pick up where they stopped.';
+      liveSet(id, { state: 'ready' });
+      break;
+    case 'declined':
+      els.status.setAttribute('aria-live', 'assertive');
+      els.status.textContent = 'They declined. The code is free again for someone else.';
+      liveSet(id, { state: 'ready' });
+      break;
     case 'cancelled':
       liveDrop(id);
       removeCard(card);
@@ -464,8 +547,9 @@ function onSendMsg(m, els, card, getId, setTicket) {
   }
 }
 async function pickAndSend(directory) {
-  const p = await invoke('pick_paths', { directory, multiple: false }).catch(() => []);
-  if (p && p.length) startSend(p[0]);
+  // Files can be picked several at a time; they go under one code.
+  const p = await invoke('pick_paths', { directory, multiple: !directory }).catch(() => []);
+  if (p && p.length) startSend(p);
 }
 ['#pick-file', '#pick-file-2'].forEach((s) => $(s).addEventListener('click', () => pickAndSend(false)));
 ['#pick-folder', '#pick-folder-2'].forEach((s) => $(s).addEventListener('click', () => pickAndSend(true)));
@@ -520,7 +604,32 @@ function submitCode() {
 $('#recv-start').addEventListener('click', submitCode);
 $('#recv-start-2').addEventListener('click', submitCode);
 
+/* A receive command's error: `{kind, message}` from the shell (message is
+   written to be shown as it is), or a plain string. Pick the words by kind. */
+function receiveErrorText(e) {
+  const kind = e && e.kind;
+  const msg = (e && e.message) || (typeof e === 'string' ? e : '');
+  switch (kind) {
+    case 'invalidTicket': return 'That code is not valid. Check it and try again.';
+    case 'unreachable': return 'Sender offline, or this code has expired. Ask for a fresh code.';
+    case 'alreadyClaimed': return msg || 'Another device already used this code. Ask for a fresh one.';
+    case 'destination': case 'permissionDenied': case 'diskFull': case 'notFound': case 'fileInUse':
+      return msg || 'That folder cannot be saved to. Choose another in Settings.';
+    default: return msg || 'Could not start the transfer. Try again.';
+  }
+}
 async function beginReceive(ticket, dest, selected, label) {
+  return runReceive({ dest, label, start: (ch, myDest) => ((selected && selected.length)
+    ? invoke('start_receive_selected', { ticket, dest: myDest, selected, onEvent: ch })
+    : invoke('start_receive', { ticket, dest: myDest, onEvent: ch })) });
+}
+/** Resume an interrupted or failed receive from history: same id, same code,
+    folder and chosen files; only what is not stored yet is downloaded. */
+async function resumeReceive(t) {
+  return runReceive({ dest: t.dest, label: t.name, resumeId: t.id,
+    start: (ch) => invoke('resume_transfer', { id: t.id, onEvent: ch }) });
+}
+async function runReceive({ dest, label, start, resumeId }) {
   $('#recv-error').textContent = '';
   showPanel('receive');
   const myDest = dest || DEFAULT_DEST;
@@ -541,15 +650,16 @@ async function beginReceive(ticket, dest, selected, label) {
   });
   els.open.addEventListener('click', () => revealFolder(myDest));
   els.another.addEventListener('click', () => { liveDrop(id); removeCard(card); });
+  if (resumeId) { els.name.textContent = 'Resuming…'; setRoute(els.route, 'resuming'); }
   try {
     const ch = makeChannel(); ch.onmessage = (m) => onRecvMsg(m, els, card, () => id);
-    id = (selected && selected.length)
-      ? await invoke('start_receive_selected', { ticket, dest: myDest, selected, onEvent: ch })
-      : await invoke('start_receive', { ticket, dest: myDest, onEvent: ch });
-    liveSet(id, { dir: 'recv', name: label || 'Incoming transfer', state: 'connecting' });
+    id = await start(ch, myDest);
+    card.dataset.id = id;
+    liveSet(id, { dir: 'recv', name: label || 'Incoming transfer', state: 'connecting', startedAt: new Date().toLocaleString() });
   } catch (e) {
     removeCard(card);
-    $('#recv-error').textContent = 'That code does not look right. Check it and try again.';
+    $('#recv-error').textContent = receiveErrorText(e);
+    if (resumeId) toast({ title: 'Could not resume', sub: receiveErrorText(e), kind: 'error' });
     console.warn(e);
   }
 }
@@ -596,11 +706,14 @@ function onRecvMsg(m, els, card, getId) {
       setStatus('received', 'up');
       break;
     case 'error': {
-      const offline = /reach the sender|offline|link expired|unreachable/i.test(m.message || '');
+      const offline = m.code === 'unreachable';
       if (els.svg) { els.svg.classList.add('failed'); els.svg.classList.remove('connecting', 'live'); }
       els.status.setAttribute('aria-live', 'assertive');
-      els.name.textContent = offline ? 'Sender offline or code expired' : 'Failed';
-      els.status.textContent = offline ? 'Ask for a fresh code and try again.' : (m.message || '');
+      els.name.textContent = offline ? 'Sender offline or code expired'
+        : m.code === 'interrupted' ? 'Interrupted' : 'Failed';
+      els.status.textContent = offline ? 'Ask for a fresh code and try again.'
+        : m.code === 'interrupted' ? `${m.message || 'The connection dropped.'} Resume it from Activity.`
+        : (m.message || '');
       els.cancel.textContent = 'Dismiss';
       liveDrop(id);
       trayFlash('attention');
@@ -676,8 +789,14 @@ async function openPreview(ticket, dest) {
     accept.focus();
   } catch (e) {
     if (previewTicket !== ticket) return;
-    $('#preview-summary').textContent = 'Sender offline, or this code has expired.';
-    $('#preview-note').textContent = 'We could not reach the sender. They need to be online, and the code still valid, for the transfer to start.';
+    const kind = e && e.kind;
+    if (kind === 'unreachable' || !kind) {
+      $('#preview-summary').textContent = 'Sender offline, or this code has expired.';
+      $('#preview-note').textContent = 'We could not reach the sender. They need to be online, and the code still valid, for the transfer to start.';
+    } else {
+      $('#preview-summary').textContent = kind === 'alreadyClaimed' ? 'This code is already in use.' : 'This code cannot be opened.';
+      $('#preview-note').textContent = receiveErrorText(e);
+    }
     accept.classList.add('hidden');
     decline.textContent = 'Close';
   }
@@ -704,7 +823,9 @@ $('#preview-decline').addEventListener('click', () => {
   if (previewTicket && previewLoaded) invoke('send_control', { ticket: previewTicket, kind: 'decline' }).catch(() => {});
   closePreview();
 });
-$('#recv-preview').addEventListener('click', (e) => { if (e.target.id === 'recv-preview') closePreview(); });
+// Dismissing the preview any way at all is a decline: it releases the code on
+// the sender's side so the next device can use it.
+$('#recv-preview').addEventListener('click', (e) => { if (e.target.id === 'recv-preview') $('#preview-decline').click(); });
 
 /* ============================== ACTIVITY ================================= */
 const DIR_GLYPH = {
@@ -735,9 +856,14 @@ function actRow({ dir, name, meta, pct, pill, pillClass, actions, onOpen }) {
   return row;
 }
 function renderActivityLive() {
+  if (liveRenderTimer) { clearTimeout(liveRenderTimer); liveRenderTimer = null; }
   const list = $('#act-live'), section = $('#act-live-section');
   const items = [...live.entries()];
   section.hidden = items.length === 0;
+  // Rebuilding the rows would take keyboard focus away from a focused row:
+  // remember which one had it and give it back.
+  const focusedId = document.activeElement && document.activeElement.closest
+    && document.activeElement.closest('#act-live .act-row') ? document.activeElement.closest('.act-row').dataset.id : null;
   list.innerHTML = '';
   items.forEach(([id, t]) => {
     list.appendChild(actRow({
@@ -753,7 +879,12 @@ function renderActivityLive() {
         facts: [['Peer', t.peer], ['Route', t.route || 'connecting'], ['Started', t.startedAt], ['Verified', 'BLAKE3, per chunk']],
       }),
     }));
+    list.lastElementChild.dataset.id = id;
   });
+  if (focusedId) {
+    const again = [...list.children].find((r) => r.dataset.id === focusedId);
+    if (again) again.focus();
+  }
   $('#act-live-meta').textContent = items.length ? `${items.length} running` : '';
   broadcastLive();
   const badge = $('#activity-badge');
@@ -779,16 +910,19 @@ async function loadHistory() {
   if (items && items.length) {
     items.forEach((t, i) => {
       const dir = (t.direction || '').toLowerCase();
-      const resumable = dir === 'receive' && t.status === 'interrupted' && t.ticket && t.dest;
-      const resendable = dir === 'send' && !!t.source;
+      // The engine resumes an interrupted or failed receive under the same id,
+      // with the files that were chosen; only what is missing is downloaded.
+      const resumable = dir === 'receive' && (t.status === 'interrupted' || t.status === 'error') && t.ticket && t.dest;
+      const sources = (t.sources && t.sources.length) ? t.sources : (t.source ? [t.source] : []);
+      const resendable = dir === 'send' && sources.length > 0;
       const actions = [];
       const failedish = t.status === 'error' || t.status === 'cancelled';
-      if (resumable) actions.push({ label: 'Resume', cls: 'btn-ghost', onClick: () => beginReceive(t.ticket, t.dest) });
+      if (resumable) actions.push({ label: 'Resume', cls: 'btn-ghost', onClick: () => { showPanel('receive'); resumeReceive(t); } });
       else if (resendable) actions.push({
         // "Retry" when it never got through, "Resend" when it did: same call,
         // but the label should say which situation the user is in.
         label: failedish ? 'Retry' : 'Resend', cls: 'btn-ghost',
-        onClick: () => { showPanel('send'); startSend(t.source); },
+        onClick: () => { showPanel('send'); startSend(sources); },
       });
       if (t.status === 'done' && t.dest) actions.push({ label: 'Reveal', onClick: () => revealFolder(t.dest) });
       const row = actRow({
@@ -810,7 +944,7 @@ async function loadHistory() {
             ['Status', STATUS_LABEL[t.status] || t.status],
             ['Size', fmtBytes(t.total_bytes)],
             ['Saved to', t.dest],
-            ['Source', t.source],
+            ['Source', sources.join(', ')],
             ['Started', t.created_at ? new Date(t.created_at * 1000).toLocaleString() : ''],
             ['Verified', 'BLAKE3, per chunk'],
           ],
@@ -935,12 +1069,17 @@ $('#text-send').addEventListener('click', async () => {
     closeTextSheet();
     showPanel('send');
     startSend(path);
-  } catch (e) { alert(String(e)); }
+  } catch (e) { toast({ title: 'Could not send the text', sub: String((e && e.message) || e), kind: 'error' }); }
   btn.disabled = false; btn.textContent = 'Get a code';
 });
 
 $('#clear-history').addEventListener('click', async () => {
-  if (!confirm('Clear the transfer history on this device? Files already received are not deleted.')) return;
+  const question = 'Clear the transfer history on this device? Files already received are not deleted.';
+  const dialog = HAS_TAURI && TAURI.dialog;
+  const yes = dialog && dialog.ask
+    ? await dialog.ask(question, { title: 'Clear history', kind: 'warning', okLabel: 'Clear', cancelLabel: 'Keep' }).catch(() => false)
+    : window.confirm(question);
+  if (!yes) return;
   try { await invoke('clear_transfers'); } catch (e) { console.warn(e); }
   loadHistory();
 });
@@ -980,7 +1119,7 @@ if (HAS_TAURI && TAURI.webview && TAURI.webview.getCurrentWebview) {
       const p = event.payload.paths || [];
       if (p.length) {
         if (curPanel !== 'send') showPanel('send');
-        startSend(p[0]);
+        startSend(p);
       }
     }
   }).catch(() => {});
@@ -997,6 +1136,8 @@ const nearby = {
   offers: new Map(),
   queue: [],
   offering: false,
+  offerRow: null, // the device row being asked, while an offer waits
+  offerId: null, // that offer's id, to take it back
   offerTimer: null,
   countdown: null,
   poll: null,
@@ -1020,7 +1161,7 @@ function deviceRow(d) {
   const name = d.name || 'Dropwire device';
   const n = row.querySelector('.js-name'); n.textContent = name; n.title = name;
   const os = (d.os || '').toLowerCase();
-  if (OS_LABEL[os]) {
+  if (Object.prototype.hasOwnProperty.call(OS_LABEL, os)) {
     const b = row.querySelector('.js-os');
     b.textContent = OS_LABEL[os]; b.classList.remove('hidden');
     row.querySelector('.js-icon').innerHTML = OS_ICON[os];
@@ -1101,43 +1242,68 @@ function offerToDevice(d, row) {
     return;
   }
   if (nearby.offering) {
-    nearbyStatus('Waiting on the last offer, cancel it first to pick another device.');
+    // Tapping the device being asked takes the offer back; any other waits.
+    if (nearby.offerRow === row && nearby.offerId) {
+      invoke('nearby_cancel_offer', { offerId: nearby.offerId }).catch(() => {});
+    } else {
+      nearbyStatus('Waiting on the last offer. Tap that device again to take it back.');
+    }
     return;
   }
-  const card = liveSend.card, els = liveSend.els;
+  const els = liveSend.els;
+  const who = d.name || 'the device';
   setOffering(true);
-  row && row.classList.add('busy');
-  els.status.textContent = 'Asking ' + (d.name || 'device') + '…, waiting for them to accept.';
-  const done = () => { setOffering(false); row && row.classList.remove('busy'); };
+  nearby.offerRow = row; nearby.offerId = null;
+  const sendBtn = row && row.querySelector('.js-send');
+  const sendLabelText = sendBtn ? sendBtn.textContent : '';
+  if (row) row.classList.add('busy');
+  if (sendBtn) sendBtn.textContent = 'Take back';
+  els.status.textContent = `Asking ${who}, waiting for them to accept.`;
+  const done = () => {
+    setOffering(false);
+    nearby.offerRow = null; nearby.offerId = null;
+    if (row) row.classList.remove('busy');
+    if (sendBtn) sendBtn.textContent = sendLabelText;
+  };
   const ch = makeChannel();
   ch.onmessage = (u) => {
     switch (u.kind) {
       case 'waiting': break;
       case 'accepted':
         done();
-        rememberDevice(d);
-        els.status.textContent = (d.name || 'They') + ' accepted, sending…';
+        // Remember them by the name their device sent over the verified
+        // connection, not the one the network announcement carried.
+        rememberDevice(Object.assign({}, d, { name: u.name || d.name }));
+        els.status.textContent = `${u.name || d.name || 'They'} accepted, sending…`;
         if (els.svg && !els.svg.dataset.lit) { els.svg.dataset.lit = '1'; els.svg.classList.remove('connecting'); igniteNode(els.svg, '.w-node.peer'); }
         break;
       case 'declined':
+        // The send keeps going: the code still works for someone else.
         done();
         els.status.setAttribute('aria-live', 'assertive');
-        els.status.textContent = (d.name || 'They') + ' declined.';
-        if (liveSend && liveSend.card === card) liveSend = null;
+        els.status.textContent = u.unseen
+          ? `${who} is not taking offers right now. The code still works.`
+          : `${who} declined. The code still works for someone else.`;
         break;
       case 'failed':
         done();
         els.status.setAttribute('aria-live', 'assertive');
-        els.status.textContent = 'Could not reach ' + (d.name || 'them') + ' — ' + (u.reason || 'try again') + '.';
-        if (liveSend && liveSend.card === card) liveSend = null;
+        els.status.textContent = `${u.reason || 'Could not reach ' + who + '.'} The code still works.`;
+        break;
+      case 'withdrawn':
+        done();
+        els.status.textContent = 'Offer taken back. The code still works.';
         break;
     }
   };
-  invoke('nearby_offer', { endpointId: d.endpointId, onUpdate: ch }).catch((e) => {
-    done();
-    els.status.textContent = 'Could not start the nearby offer.';
-    console.warn(e);
-  });
+  invoke('nearby_offer', { endpointId: d.endpointId, transferId: liveSend.id, onUpdate: ch })
+    .then((offerId) => { if (nearby.offering && nearby.offerRow === row) nearby.offerId = offerId; })
+    .catch((e) => {
+      done();
+      els.status.setAttribute('aria-live', 'assertive');
+      els.status.textContent = (typeof e === 'string' && e) || 'Could not start the nearby offer.';
+      console.warn(e);
+    });
 }
 
 /* ---- incoming: the consent dialog ---- */
@@ -1179,7 +1345,7 @@ function showNextOffer() {
 function showOfferModal(offer) {
   nearby.offers.set(offer.offerId, offer);
   // An offer is the one thing that needs a decision: say so on the tray icon.
-  invoke('set_tray_state', { stateName: 'attention' }).catch(() => {});
+  trayHeld = true; setTrayState('attention');
   // …and notify, but only if the user could not have seen the dialog.
   notify({
     title: (offer.deviceName || 'A nearby device') + ' wants to send you files',
@@ -1220,6 +1386,7 @@ function expireOfferModal(offerId) {
   setTimeout(() => { if (offerState && offerState.offerId === offerId) closeOfferModal(); }, 1600);
 }
 function closeOfferModal(showNext = true) {
+  trayHeld = false;
   broadcastLive();
   if (nearby.offerTimer) { clearTimeout(nearby.offerTimer); nearby.offerTimer = null; }
   if (nearby.countdown) { clearInterval(nearby.countdown); nearby.countdown = null; }
@@ -1249,13 +1416,29 @@ $('#offer-decline').addEventListener('click', async () => {
   try { await invoke('nearby_respond', { offerId: offer.offerId, accept: false }); } catch (_) {}
   closeOfferModal();
 });
-$('#nearby-offer-modal').addEventListener('click', (e) => { if (e.target.id === 'nearby-offer-modal') closeOfferModal(); });
+// As with the preview, dismissing the offer is a decline, so the sender hears
+// at once instead of waiting out the timer.
+$('#nearby-offer-modal').addEventListener('click', (e) => { if (e.target.id === 'nearby-offer-modal') $('#offer-decline').click(); });
+
+/* The sender took an offer back, or it expired, before it was answered here:
+   close its dialog, or drop it from the queue if it was still waiting. */
+function withdrawOffer(offerId) {
+  if (!offerId) return;
+  nearby.queue = nearby.queue.filter((o) => o.offerId !== offerId);
+  nearby.offers.delete(offerId);
+  if (offerState && offerState.offerId === offerId) {
+    $('#offer-note').textContent = 'They took this offer back.';
+    $('#offer-countdown').textContent = '';
+    $('#offer-accept').disabled = true;
+    setTimeout(() => { if (offerState && offerState.offerId === offerId) closeOfferModal(); }, 1600);
+  }
+}
 
 /* Escape closes the topmost overlay and returns focus to its trigger. */
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!$('#nearby-offer-modal').classList.contains('hidden')) return closeOfferModal();
-  if (!$('#recv-preview').classList.contains('hidden')) return closePreview();
+  if (!$('#nearby-offer-modal').classList.contains('hidden')) return $('#offer-decline').click();
+  if (!$('#recv-preview').classList.contains('hidden')) return $('#preview-decline').click();
   if (!$('#sheet-text').classList.contains('hidden')) return closeTextSheet();
   if (!$('#drawer').classList.contains('hidden')) return closeDrawer();
   if (!$('#sheet-settings').classList.contains('hidden')) return closeSettings();
@@ -1264,6 +1447,7 @@ document.addEventListener('keydown', (e) => {
 [$('#nearby-toggle'), $('#nearby-toggle-2')].forEach((t) => { if (t) t.addEventListener('click', toggleNearby); });
 if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
   TAURI.event.listen('nearby-offer', (ev) => enqueueOffer(ev.payload)).catch(() => {});
+  TAURI.event.listen('nearby-offer-withdrawn', (ev) => withdrawOffer(ev.payload && ev.payload.offerId)).catch(() => {});
 }
 
 /* ====================== A1 / A2: first-run setup =========================
@@ -1281,6 +1465,7 @@ function showOnboarding(step) {
 }
 function hideOnboarding() { $('#onboarding').classList.add('hidden'); }
 $('#onboard-start').addEventListener('click', () => showOnboarding(2));
+$('#onboard-name').addEventListener('input', () => $('#onboard-name').closest('.code-field').classList.remove('bad'));
 $('#onboard-back').addEventListener('click', () => showOnboarding(1));
 $('#onboard-nearby').addEventListener('click', (e) => {
   const b = e.currentTarget;
@@ -1295,12 +1480,22 @@ $('#onboard-finish').addEventListener('click', async () => {
   const name = ($('#onboard-name').value || '').trim();
   const on = $('#onboard-nearby').getAttribute('aria-checked') === 'true';
   const dest = $('#onboard-dest').title || $('#onboard-dest').textContent;
-  try {
-    if (name) await invoke('set_device_name', { name });
-    await setPref('nearbyOn', on);
-    if (dest && dest !== 'Downloads') await setPref('destDir', dest);
-    await setPref('onboarded', true);
-  } catch (e) { console.warn(e); }
+  // Each choice is saved on its own, so one refusal cannot skip the others,
+  // and a name the engine refuses keeps setup open to fix it.
+  await setPref('nearbyOn', on);
+  if (dest && dest !== 'Downloads') await setPref('destDir', dest);
+  if (name) {
+    try { await invoke('set_device_name', { name }); }
+    catch (e) {
+      const field = $('#onboard-name').closest('.code-field');
+      field.classList.add('bad', 'shake'); setTimeout(() => field.classList.remove('shake'), 400);
+      toast({ title: 'That name cannot be used', sub: String((e && e.message) || e), kind: 'error' });
+      $('#onboard-name').focus();
+      btn.disabled = false;
+      return;
+    }
+  }
+  await setPref('onboarded', true);
   await loadPrefs();
   hideOnboarding();
   applyPrefsToUi();
@@ -1365,7 +1560,7 @@ function applyPrefsToUi() {
 
   // The tray panel hands work to the window that owns the pipelines.
   if (HAS_TAURI && TAURI.event && TAURI.event.listen) {
-    TAURI.event.listen('tray-send', (ev) => { showPanel('send'); startSend(ev.payload); }).catch(() => {});
+    TAURI.event.listen('tray-send', (ev) => { showPanel('send'); startSend(ev.payload); }).catch(() => {}); // a path or a list
     TAURI.event.listen('tray-code', (ev) => {
       showPanel('receive');
       $('#recv-code-input').value = ev.payload;

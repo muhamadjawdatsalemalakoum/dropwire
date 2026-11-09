@@ -92,6 +92,10 @@
       ; added, and any that Windows created from its own first-run prompt.
       ExecShellWait "runas" "$SYSDIR\netsh.exe" 'advfirewall firewall delete rule name=all program="$INSTDIR\Dropwire.exe"' SW_HIDE
     ${EndIf}
+    ; "Start at login" writes a Run entry for this user. Left behind, Task
+    ; Manager keeps listing a startup app that points at a deleted exe.
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Dropwire"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Dropwire"
   ${EndIf}
   Pop $0
 !macroend

@@ -901,12 +901,19 @@ fn report_start_failure(app: &AppHandle, err: &CoreError) {
 /// that is always visible, so it reports what the app is doing: dim at rest,
 /// lime while transferring, green on completion, amber when a decision is due.
 fn set_tray_icon(app: &AppHandle, state_name: &str) {
-    let bytes: &[u8] = match state_name {
-        "active" => include_bytes!("../icons/tray-active.png"),
-        "done" => include_bytes!("../icons/tray-done.png"),
-        "attention" => include_bytes!("../icons/tray-attention.png"),
-        _ => include_bytes!("../icons/tray-idle.png"),
+    let (code, bytes): (u8, &[u8]) = match state_name {
+        "active" => (1, include_bytes!("../icons/tray-active.png")),
+        "done" => (2, include_bytes!("../icons/tray-done.png")),
+        "attention" => (3, include_bytes!("../icons/tray-attention.png")),
+        _ => (0, include_bytes!("../icons/tray-idle.png")),
     };
+    // The UI reports state on every progress tick. Decoding the PNG and
+    // swapping the icon each time costs CPU and flickers on Windows, so only
+    // a change of state touches the tray.
+    static CURRENT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+    if CURRENT.swap(code, std::sync::atomic::Ordering::Relaxed) == code {
+        return;
+    }
     if let Some(tray) = app.tray_by_id("dropwire") {
         if let Ok(img) = tauri::image::Image::from_bytes(bytes) {
             let _ = tray.set_icon(Some(img));
