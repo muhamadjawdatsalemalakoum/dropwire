@@ -336,6 +336,12 @@ img, svg { max-width: 100%; }
   box-shadow: var(--shadow-sm);
   margin-bottom: 1.5rem;
 }
+.eyebrow a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
 .eyebrow .dot {
   width: 8px;
   height: 8px;

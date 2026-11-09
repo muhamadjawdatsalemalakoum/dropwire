@@ -1,5 +1,7 @@
 # Dropwire — Metadata Control-Plane Implementation Plan
 
+> Historical record: every milestone in this plan shipped by 0.2.0 and is part of 1.0.
+>
 > Status: **implementation plan**, 2026-06-17. Companion to `ARCHITECTURE.md` (§5.7 is the design seed for this
 > document) and `docs/DESIGN.md` (the motion/a11y/trust-visual contract). This plan turns §5.7's "designed, not
 > yet implemented" capability into a sequenced, test-first build. **Build it in milestone order; every feature is

@@ -21,12 +21,14 @@ See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) for toolchain and build/run instr
 
 ```sh
 cargo fmt --all
-cargo clippy -p irohcore --all-targets --features test-utils -- -D warnings
-cargo clippy -p dropwire --all-targets -- -D warnings
-cargo test   -p irohcore --features test-utils
+cargo clippy -p irohcore --all-targets --features test-utils --locked -- -D warnings
+cargo clippy -p dropwire --all-targets --locked -- -D warnings
+cargo test   -p irohcore --features test-utils --locked
+cargo test   -p dropwire --locked
 ```
 
-These are the checks CI runs. Keep `--features test-utils`: without it the nearby consent and
+These are the checks CI runs on Windows, macOS and Linux. CI also checks the engine on the
+minimum Rust version in `Cargo.toml` and scans `Cargo.lock` against the RustSec advisory database. Keep `--features test-utils`: without it the nearby consent and
 relay suites are compiled out and the test run still reports success.
 
 - Keep changes focused; match the surrounding style.

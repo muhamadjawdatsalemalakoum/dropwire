@@ -1,5 +1,8 @@
 # Dropwire — Design System & Interaction Spec
 
+> Historical record: the June 2026 design spec. The shipped interface (0.3 and 1.0) is the fixed frameless
+> window with a `Send · Receive · Activity` switch described in the CHANGELOG; where this differs, the app is right.
+>
 > Status: **design v1 (next-gen redesign)**, 2026-06-16. Owner: product design / design engineering.
 > Scope: the **desktop** app UI/UX (Tauri WebView2/Chromium, ~980×680, resizable, **dark-first**).
 > Pairs with [`ARCHITECTURE.md`](../ARCHITECTURE.md) (the build),

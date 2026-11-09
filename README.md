@@ -31,12 +31,56 @@ resumable, and open source.
 
 ---
 
-> **Status:** stable. The transfer engine and desktop app work end to end on Windows,
-> macOS, and Linux: send a file or folder, send straight to a nearby device with no code,
-> preview before accepting, download only the files you want, resume an interrupted
-> transfer, and run several at once. The interface was rebuilt in 0.3 as a fixed native
-> frame rather than a page in a window. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
-> design and [`CHANGELOG.md`](CHANGELOG.md) for what landed when.
+> **Dropwire 1.0 is here.** The first stable release: send files and folders between
+> Windows, macOS and Linux, straight from one device to the other, end-to-end encrypted.
+> [**Download 1.0**](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases/latest) ·
+> [What's new](#whats-new-in-10) · [Full changelog](CHANGELOG.md)
+
+## What's new in 1.0
+
+1.0 is the result of an end-to-end audit of every path a file takes: sending, receiving,
+nearby devices, the desktop shell and the release pipeline. Highlights:
+
+- **Many files, one code.** Pick or drop several files and folders and they all go under a
+  single code. Up to 100,000 files per transfer.
+- **Resume that really resumes.** A dropped connection keeps the receive resumable, Resume in
+  Activity downloads only what is missing, and it keeps the files you picked in the preview.
+- **Saving is safe by construction.** An existing file is never overwritten, one file that
+  cannot be written does not stop the rest, the folder is checked before anything downloads,
+  and received files no longer leave a second copy in the app's data folder.
+- **Errors in plain words.** A used code, a code cut off in a chat, an offline sender and a
+  full disk are told apart and explained, instead of one generic failure.
+- **Nearby, hardened.** Offers only from devices seen on your network, the device you tap is
+  the one asked, an offer can be taken back, and turning Nearby off stops browsing too.
+- **Security.** Received files carry the "downloaded from the internet" mark, file names are
+  cleaned of reserved names and hidden direction-override characters, both windows run under
+  a content security policy, and each code serves only its live send to its one device.
+- **A desktop app that behaves.** Start at login works, a second launch brings the running
+  window forward, the tray opens on the display you clicked, and quitting shuts down cleanly.
+- **Verifiable downloads.** Every installer ships with `SHA256SUMS` and a signed
+  build-provenance attestation.
+
+Everything, item by item, is in the [changelog](CHANGELOG.md#100---2026-11-09).
+
+## Install
+
+Grab the installer for your system from the
+[latest release](https://github.com/muhamadjawdatsalemalakoum/dropwire/releases/latest):
+
+| System | File | Notes |
+| ------ | ---- | ----- |
+| Windows 10 / 11 | `Dropwire_<version>_x64-setup.exe` | Installs for your user account |
+| macOS 10.15+ | `Dropwire_<version>_universal.dmg` | One app for Apple Silicon and Intel |
+| Linux | `.AppImage`, `.deb` or `.rpm` | Ubuntu 22.04+, Debian 12+, Fedora and relatives |
+
+The installers are not code-signed yet, so the first launch shows a warning. On Windows
+choose **More info → Run anyway**; on macOS open **System Settings → Privacy & Security** and
+choose **Open Anyway**. To check a download is the one this repository built:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify Dropwire_<version>_x64-setup.exe --repo muhamadjawdatsalemalakoum/dropwire
+```
 
 ## Why Dropwire
 
@@ -64,7 +108,8 @@ your files through their servers with size caps and ads. Dropwire is the missing
 - **Take only what you want.** Receiving a folder? Untick the files you don't need;
   only what you choose is transferred.
 - **One code, one recipient.** A code isn't a public link: it's served to the first
-  device that connects, and others are refused.
+  device that connects, and others are refused. It also stops working once you stop
+  sharing.
 - **Several at once.** Run multiple sends and receives in parallel, each with its own
   live progress and a direct-vs-relayed badge.
 - **A desktop app, not a web page in a window.** One fixed frame that draws its own title
@@ -78,9 +123,9 @@ your files through their servers with size caps and ads. Dropwire is the missing
 
 ## How it works
 
-1. **Pick** a file or folder.
-2. **Share** the one-time transfer code or QR Dropwire gives you: copy it into any chat,
-   or have them scan the QR.
+1. **Pick** files or a folder, or drop them on the window.
+2. **Share** the one-time transfer code Dropwire gives you: copy it into any chat, and
+   they paste it into Receive.
 3. The other person enters the code, **previews exactly what's being sent (names, sizes,
    and count) and accepts** (or declines, and you're told instantly). Then it runs
    **directly, device to device**, with a live direct-vs-relayed badge.
@@ -143,7 +188,7 @@ per-file breakdown, and the verified file list.
 ![The first-run welcome screen explaining what Dropwire is, with a single Set up this device button](www/screenshots/app-welcome.png)
 
 Two screens: what Dropwire is, then name this device and choose whether to be visible.
-Nothing touches the network until you finish.
+Nearby devices cannot see you until you finish.
 
 ### Tray
 

@@ -1,6 +1,23 @@
-# Dropwire — Architecture (Desktop MVP)
+# Dropwire: Architecture
 
-> Status: **design draft**, 2026-06-16. Scope: the **desktop** target (Windows / macOS / Linux).
+> **As shipped in 1.0 (2026-11-09).** This document began as the June 2026 design record and is kept
+> for the reasoning behind each decision. Where it differs from the code, the code is right. The
+> facts that changed since the draft:
+>
+> - **Infra:** serverless by default. Mainline-DHT discovery (this device publishes a signed record
+>   mapping its key to a relay address, never an IP) plus n0's public relay as the fallback. The
+>   self-hosted relay and DNS in §6 are optional, not the default, and Dropwire runs no servers.
+> - **Stack:** iroh 1.0.2, iroh-blobs 0.103.0 (wrapped behind `irohcore`), Tauri 2.
+> - **Shipped beyond the draft:** the metadata control plane of §5.7 (verified preview, selective
+>   download, one-to-one binding, the `dropwire/ctrl/1` channel with instant decline), nearby
+>   devices over mDNS with two-sided consent, and several files and folders under one code.
+> - **Pairing code:** 12 characters in 4 groups, derived from a hash of the whole identity.
+> - **History:** a JSON catalog (`transfers.json`), saved atomically, not SQLite.
+> - **UI:** plain HTML/CSS/JS in `ui/` with no build step, in one fixed frameless window.
+> - **Limits:** one code lists at most 100,000 files with a names list of at most 16 MB; both the
+>   sender and the receiver enforce this.
+>
+> Original status: **design draft**, 2026-06-16. Scope: the **desktop** target (Windows / macOS / Linux).
 > Mobile, web, and enterprise hardening are explicitly out of scope here — see [Roadmap](#14-out-of-scope--roadmap).
 >
 > **Product decision (2026-06-16):** completely free (donations/grants only, no paid tier), **zero servers the
@@ -11,8 +28,7 @@
 > Pinned stack: **iroh 1.0.0** (stable) · **iroh-blobs 0.103.0** (0.10x line, pre-1.0 — wrapped) · **Tauri v2**.
 > All API names below are from primary sources verified on 2026-06-16; items that still need confirmation
 > at implementation time are collected in [§13 Verify-before-coding](#13-verify-before-coding).
-> Background research: [`_research_synthesis.md`](_research_synthesis.md) (the why) and
-> [`_spec_specifics.md`](_spec_specifics.md) (the code-level how).
+> Background research notes were kept outside the repository.
 
 ---
 
@@ -20,7 +36,7 @@
 
 **Goal:** a polished desktop app where a non-technical user picks a file or folder, gets a short code + QR,
 and the recipient enters it to receive the data — **directly peer-to-peer, end-to-end encrypted, resumable,
-with no account and no central server carrying the bytes** (except the relay fallback we self-host).
+with no account and no central server carrying the bytes** (except the encrypted relay fallback, which only ever sees ciphertext).
 
 **Design principles**
 
@@ -410,7 +426,7 @@ SENDER                                   RECEIVER
   download; declined/failed offers release the binding and stop serving.
 - **Identity:** offers carry the sender's hex EndpointId (authenticated by the
   QUIC handshake — `Connection::remote_id()`), display name (a claim), and a
-  short base32 **pairing fingerprint** (9 chars, 3 groups) both UIs show for
+  short base32 **pairing fingerprint** (12 chars, 4 groups as shipped) both UIs show for
   human verification. File count/size come from the catalog record; the
   authoritative names/sizes remain BLAKE3-bound in the ticket manifest (§5.7).
 - **Visibility gate:** with nearby mode ON, incoming offers from endpoints not
@@ -668,7 +684,8 @@ SENDER                                   INFRA                         RECEIVER
   short-lived, shown only to the intended recipient. (Future: optional per-transfer PIN / one-time tickets.)
 - **App-locked relay** via shared token keeps our relay from becoming an open proxy; it is **not** user auth and
   isn't secret-grade (it ships in the binary) — rotate via the server's multi-token list.
-- **Private discovery:** `mainline.enabled = false` keeps node records off the public DHT.
+- **Private discovery (not the shipped default):** an infra mode without Mainline keeps node records off the
+  public DHT. The shipped default publishes to Mainline; see the 1.0 note at the top.
 - **Known gap:** no published third-party audit of iroh's own handshake/relay code yet (upstream QUIC/TLS is
   well-vetted). Fine for a consumer MVP; commission an audit before the enterprise tier.
 
@@ -708,7 +725,7 @@ Confirmed names that still need a final check against the pinned docs (don't gue
    and the **correct `iroh-relay` / `iroh-dns-server` versions/git-revs** that pair with iroh 1.0.0.
 8. **`AccessConfig::Http`** request/response contract (only if we later want an external auth service).
 
-(Full list with sources in [`_spec_specifics.md`](_spec_specifics.md) → "Open Items".)
+(These were resolved during implementation; the tests in `core/tests/` are the record.)
 
 ---
 

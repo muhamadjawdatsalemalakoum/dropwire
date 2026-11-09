@@ -42,6 +42,15 @@ recipient.
 
 ## Supported versions
 
-Dropwire is pre-1.0. Security fixes land on `main` and ship in the next release, so only the
-latest release is supported. Pinned dependencies of note: `iroh 1.0`, `iroh-blobs 0.10x` (pre-1.0,
-wrapped behind our `irohcore` API).
+| Version | Supported |
+| ------- | --------- |
+| 1.x (latest release) | Yes |
+| 0.x and the 0.3.0 betas | No: please update to 1.x |
+
+Security fixes land on `main` and ship in the next 1.x release, so only the latest release is
+supported. Every release since 1.0.0 lists a `SHA256SUMS` file and a signed build-provenance
+attestation, so you can check an installer came from this repository's release workflow:
+`gh attestation verify <file> --repo muhamadjawdatsalemalakoum/dropwire`.
+
+Pinned dependencies of note: `iroh 1.0`, `iroh-blobs 0.10x` (pre-1.0, wrapped behind our
+`irohcore` API so its changes never reach the app).

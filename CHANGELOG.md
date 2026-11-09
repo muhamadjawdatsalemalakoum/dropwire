@@ -6,6 +6,128 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-09
+
+The first stable release. 1.0 follows 0.3.0-beta.6 and is the result of an
+end-to-end audit of every path a file takes: sending, receiving, nearby
+devices, the desktop shell and the release pipeline. The 0.3.0 betas all
+showed "0.3.0" in Settings; this build shows 1.0.0. Installers are still not
+code-signed, and there is no in-app updater yet: get new versions from the
+Releases page.
+
+### Added
+- **Several files and folders under one code.** Pick several files, or drop
+  several on the window or the tray panel, and they all go under one code.
+  Dropping five photos used to send only the first. One code holds up to
+  100,000 files; a bigger selection is refused up front, before anything is
+  hashed, instead of producing a code nobody can open.
+- **Take a nearby offer back.** Tap the device you are asking again to
+  withdraw the offer; cancelling a send withdraws its offer too, and the
+  other device's dialog closes.
+- **Resume failed receives too.** Resume in Activity now works for a receive
+  that failed, not only one that was interrupted.
+- Progress while a large send is being prepared, and Cancel stops the
+  preparation (including listing a very large folder) instead of waiting.
+- Opening Dropwire again while it runs in the tray brings the running window
+  forward. A clear message when Dropwire cannot start, instead of nothing.
+- Every release ships `SHA256SUMS` and a signed build-provenance attestation,
+  so a download can be checked against what this repository's workflow built.
+
+### Changed
+- Failures are explained in plain words, and a used code, a code cut off in a
+  chat, an offline sender, a full disk and a folder that cannot be written to
+  are told apart instead of all reading "That code does not look right".
+- Activity names a receive after what it holds, and shows its real size and
+  duration. A send shows one progress bar for the whole transfer.
+- A sender sees "Sent" only after a finished download, never after a preview,
+  and is told when the receiver previews, leaves mid-transfer, or declines.
+- Received files no longer stay in the app's data folder after they are
+  saved, so a receive no longer needs twice its size on disk.
+- This device's address is now really published to the Mainline DHT (it was
+  never published before), so a code still works after the sender's relay or
+  network changes. Only the relay address is published, never an IP.
+- "Start at login" now adds Dropwire to the system's startup list (it only
+  saved a preference before), and a login start opens quietly in the tray.
+- Closing the window quits Dropwire when "Keep running in the tray" is off.
+- Activity and the tray no longer redraw on every progress tick: updates are
+  batched, and the tray icon changes only when its state does. Less CPU while
+  transferring, and no tray-icon flicker on Windows.
+- Linux packages are built on Ubuntu 22.04, so the `.deb` and AppImage run on
+  Ubuntu 22.04+, Debian 12 and their relatives, not only the newest releases.
+- The README and the website no longer claim a QR can be scanned, that nothing
+  touches the network during setup, or that no server is involved at all.
+
+### Fixed
+- **Saving never overwrites an existing file**: a taken name is saved as
+  "name (1)", and one file that cannot be written no longer stops the rest.
+- A folder that cannot be saved to is refused before anything downloads, and
+  Linux without a Downloads folder no longer falls back to "./Dropwire".
+- **Resume**: a receive stays resumable when the connection drops, a partial
+  selection resumes instead of starting over, Resume keeps the files you
+  picked in the preview, and a redone receive leaves one history entry.
+- Declining a preview, including closing it with Esc or a click outside it,
+  reaches the sender at once and frees the code for the next device. The same
+  goes for a nearby offer, so the sender is not left waiting out a timer.
+- Cancelling a send stops a download already in progress, and sending the
+  same files twice no longer breaks the first send.
+- A receive can be cancelled while it is still reading the file list, and a
+  sender that connects and then stops answering no longer leaves a preview,
+  a receive or a decline waiting forever.
+- Links inside a sent folder are kept, and an empty folder is refused instead
+  of producing a code with nothing in it.
+- Transfer history survives a record it cannot read, and settings are saved
+  atomically, keeping a damaged file aside instead of resetting.
+- Nearby: the send you tapped is the one offered; a declined or unreachable
+  offer no longer cancels the send; a send with a receiver is never offered to
+  a second device; devices stay listed after sharing is turned off and on; a
+  device that stops sharing leaves other screens; a device name too long to
+  advertise is refused and the old one kept.
+- The frameless title bar can be dragged, minimized, maximized and closed on
+  every platform, and the first window fits the screen with its title bar on it.
+- The tray panel opens on the display whose icon was clicked, inside its work
+  area, takes a dropped file, closes from its icon, and shows recent transfers
+  as of when it was opened rather than as of launch.
+- Renaming the device and clearing history work on macOS, where the system
+  webview silently ignored the dialogs they used.
+- First run saves each choice on its own: a name the engine refuses keeps setup
+  open to fix it instead of skipping the other choices and turning Nearby on.
+- Quitting shuts the engine down cleanly, so other devices stop listing this
+  one right away. A second copy on the same data folder fails fast instead of
+  hanging invisibly.
+- Uninstalling on Windows removes the "Start at login" entry.
+
+### Security
+- Received files carry the "downloaded from the internet" mark (Mark of the Web
+  on Windows, quarantine on macOS), so SmartScreen, Gatekeeper and Office
+  Protected View treat them like any other download.
+- Received file names are cleaned on every platform: reserved Windows names,
+  colons and trailing dots, and now also invisible and direction-override
+  characters, so a file cannot pose as `invoice.pdf` while being saved as an
+  `.exe`. The preview shows the names exactly as they will be saved.
+- File lists that are too large, or whose sizes overflow, are refused before
+  the preview, so a crafted code cannot exhaust memory or fake a total.
+- A code serves only its live send, and only to the device it is bound to; an
+  offer whose code points at another device is declined.
+- Nearby offers are shown only from devices seen on the local network, at most
+  a few at a time, and stalled control connections are dropped. Names sent by
+  other devices are cleaned before they are shown, and a host on the network
+  can no longer take over another device's name or address in the list.
+- With Nearby off, the app no longer browses the local network either.
+- A file edited after it was shared is no longer served under its old code,
+  and an edited local copy is never saved as a received file.
+- Both windows run under a content security policy, the tray panel gets only
+  the permissions it uses, Reveal never launches a file, and only https links
+  open in the browser.
+- "Send text" snippets are kept in the data folder and deleted once unused.
+- The Windows installer adds its firewall rule without writing an elevated
+  script to the temp folder.
+- Release builds publish with least-privilege tokens, refuse to rebuild a
+  release that is already public, and refuse a tag that does not match the
+  app's version. CI now checks dependencies against the RustSec advisory
+  database, and private vulnerability reporting is open.
+- Dependencies: iroh 1.0.2, rustls 0.23.46, hickory-resolver 0.26.3,
+  tauri-plugin-dialog 2.7.3 and current patch releases; tauri-action 1.0.
+
 ## [0.3.0-beta.6] - 2026-09-04
 
 Two ways to get stuck, both found on real hardware.
@@ -216,7 +338,8 @@ turned up.
 - CI (engine tests on Linux + Windows) and a cross-platform release workflow
   (Windows, macOS, Linux) that publishes downloads automatically.
 
-[Unreleased]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.6...HEAD
+[Unreleased]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.6...v1.0.0
 [0.3.0-beta.6]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.5...v0.3.0-beta.6
 [0.3.0-beta.5]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.4...v0.3.0-beta.5
 [0.3.0-beta.4]: https://github.com/muhamadjawdatsalemalakoum/dropwire/compare/v0.3.0-beta.3...v0.3.0-beta.4
