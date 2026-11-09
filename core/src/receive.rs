@@ -40,11 +40,21 @@ fn connect_timeout(infra: &crate::Infra) -> Duration {
 /// Most files one transfer may list. Far above any real folder send, and low
 /// enough that a crafted code cannot make preview or receive walk (and probe)
 /// millions of entries.
-const MAX_FILES: usize = 100_000;
+pub(crate) const MAX_FILES: usize = 100_000;
 
 /// Largest names blob we agree to fetch and parse. Real ones hold a short path
 /// per file, so even a full 100 000-file transfer stays well under this.
-const MAX_META_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_META_BYTES: u64 = 16 * 1024 * 1024;
+
+/// How long the sender gets to answer a request for the file list (hash list,
+/// sizes, names) once connected. A sender that accepts the connection and then
+/// never answers would otherwise hold a preview, or a receive that cannot yet
+/// be cancelled, open forever: keep-alives stop the connection timing out.
+const METADATA_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Said when the sender connected but stopped answering.
+const STALLED: &str =
+    "The sender stopped answering. Ask them to check Dropwire is open, then try again.";
 
 /// Byte cap for the collection's hash list: one 32-byte hash per file plus the
 /// names blob. Anything larger is refused before a single size is probed.
@@ -60,7 +70,13 @@ async fn fetch_sizes(
     conn: &iroh::endpoint::Connection,
     hash: &iroh_blobs::Hash,
 ) -> Result<(iroh_blobs::hashseq::HashSeq, Vec<u64>)> {
-    match get_hash_seq_and_sizes(conn, hash, MAX_HASH_SEQ_BYTES, None).await {
+    let fetched = tokio::time::timeout(
+        METADATA_TIMEOUT,
+        get_hash_seq_and_sizes(conn, hash, MAX_HASH_SEQ_BYTES, None),
+    )
+    .await
+    .map_err(|_| CoreError::Unreachable(STALLED.into()))?;
+    match fetched {
         Ok((hash_seq, sizes)) => {
             check_manifest(&sizes, MAX_FILES, MAX_META_BYTES)?;
             Ok((hash_seq, sizes.to_vec()))
@@ -117,6 +133,19 @@ fn check_manifest(sizes: &[u64], max_files: usize, max_meta: u64) -> Result<()> 
     };
     if meta > max_meta || sizes.len() - 1 > max_files {
         return Err(CoreError::Other(anyhow!(TOO_LARGE)));
+    }
+    // Sizes are proven only by each file's last chunk, so a sender can claim
+    // any u64 with nothing behind it. Totals of claims that overflow would wrap
+    // (two 2^63-byte files read as 0 B); refuse them instead. Every later total
+    // is a sum over a subset of these, so it cannot overflow either.
+    if sizes[1..]
+        .iter()
+        .try_fold(0u64, |acc, &s| acc.checked_add(s))
+        .is_none()
+    {
+        return Err(CoreError::Other(anyhow!(
+            "This transfer's file list is empty or damaged."
+        )));
     }
     Ok(())
 }
@@ -267,16 +296,24 @@ impl Core {
             .child(0, ChunkRanges::all())
             .build(hash);
         let mut stream = store.remote().execute_get(conn, request).stream();
-        while let Some(item) = stream.next().await {
-            match item {
-                GetProgressItem::Done(_) => break,
-                GetProgressItem::Error(e) if refused(&e) => return Err(CoreError::AlreadyClaimed),
-                GetProgressItem::Error(e) => {
-                    return Err(CoreError::Unreachable(format!("fetch metadata: {e:#}")))
+        let fetch_names = async {
+            while let Some(item) = stream.next().await {
+                match item {
+                    GetProgressItem::Done(_) => break,
+                    GetProgressItem::Error(e) if refused(&e) => {
+                        return Err(CoreError::AlreadyClaimed)
+                    }
+                    GetProgressItem::Error(e) => {
+                        return Err(CoreError::Unreachable(format!("fetch metadata: {e:#}")))
+                    }
+                    GetProgressItem::Progress(_) => {}
                 }
-                GetProgressItem::Progress(_) => {}
             }
-        }
+            Ok(())
+        };
+        tokio::time::timeout(METADATA_TIMEOUT, fetch_names)
+            .await
+            .map_err(|_| CoreError::Unreachable(STALLED.into()))??;
 
         let collection = Collection::load(hash, store.as_ref())
             .await
@@ -285,7 +322,11 @@ impl Core {
             .iter()
             .enumerate()
             .map(|(i, (name, _hash))| FilePreview {
-                name: name.clone(),
+                // The name it will be saved under, not the raw one: the same
+                // cleaning the export applies (no control, invisible or
+                // direction-override characters, no names Windows refuses),
+                // so what is approved here is what lands on disk.
+                name: export::sanitize_segments(name).join("/"),
                 size: sizes.get(i + 1).copied().unwrap_or(0),
             })
             .collect();
@@ -351,7 +392,12 @@ async fn run_receive(
 
     // Total size for the progress bar (provider advertises sizes up front).
     // Oversized manifests are refused here, before anything is fetched.
-    let (hash_seq, sizes) = fetch_sizes(&conn, &hash).await?;
+    // Cancel works from here on, not only once the download starts.
+    let (hash_seq, sizes) = tokio::select! {
+        biased;
+        _ = token.cancelled() => return finish_cancelled(&core, id, &tx).await,
+        r = fetch_sizes(&conn, &hash) => r?,
+    };
     // The chosen files as a lookup table (one flag per file), so the export
     // loop checks membership in O(1). Out-of-range and repeated indices drop out.
     let wanted: Option<Vec<bool>> = selected.map(|idx| {
@@ -391,12 +437,15 @@ async fn run_receive(
     // stored already (the preview fetched them); if not, "N files" stands in
     // until they arrive.
     let name_from = |collection: &Collection| {
-        let names: Vec<&str> = collection
+        // Cleaned the same way as the files on disk, so history never shows
+        // a name with hidden direction overrides in it.
+        let cleaned: Vec<String> = collection
             .iter()
             .enumerate()
             .filter(|(i, _)| is_wanted(*i))
-            .map(|(_, (name, _))| name.as_str())
+            .map(|(_, (name, _))| export::sanitize_segments(name).join("/"))
             .collect();
+        let names: Vec<&str> = cleaned.iter().map(String::as_str).collect();
         display_name(&names)
     };
     let name = match Collection::load(hash, store.as_ref()).await {

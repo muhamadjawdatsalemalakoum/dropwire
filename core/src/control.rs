@@ -215,8 +215,17 @@ impl Core {
         self.dial_ctrl(addr, &offer::Frame::from(&msg)).await
     }
 
-    /// Dial the control ALPN, deliver `frame`, wait for the echo-ack.
+    /// Dial the control ALPN, deliver `frame`, wait for the echo-ack. Bounded:
+    /// a peer that accepts and then never answers cannot hold a decline (and
+    /// the dialog waiting on it) open forever.
     async fn dial_ctrl(&self, addr: iroh::EndpointAddr, frame: &offer::Frame) -> Result<()> {
+        const CTRL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+        tokio::time::timeout(CTRL_TIMEOUT, self.dial_ctrl_inner(addr, frame))
+            .await
+            .map_err(|_| CoreError::Unreachable("the other device stopped answering".into()))?
+    }
+
+    async fn dial_ctrl_inner(&self, addr: iroh::EndpointAddr, frame: &offer::Frame) -> Result<()> {
         let endpoint = self.inner.router.endpoint();
         let conn = endpoint
             .connect(addr, CTRL_ALPN)

@@ -782,7 +782,7 @@ pub(crate) fn clean_label(s: &str, max: usize) -> String {
 /// around them reads: direction marks, embeddings, overrides and isolates,
 /// zero-width spaces and the like. (Joiners and variation selectors stay:
 /// emoji and some scripts need them.)
-fn invisible(c: char) -> bool {
+pub(crate) fn invisible(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'

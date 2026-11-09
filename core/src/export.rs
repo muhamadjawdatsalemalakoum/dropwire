@@ -110,7 +110,10 @@ pub(crate) fn sanitize_segment(seg: &str) -> Option<String> {
     let replaced: String = seg
         .chars()
         .map(|c| {
-            if c.is_control() || RESERVED_CHARS.contains(&c) {
+            // Invisible and direction-override characters too: a name like
+            // "invoice\u{202E}fdp.exe" would otherwise show as "invoiceexe.pdf"
+            // in the preview and the file manager while saving a .exe.
+            if c.is_control() || crate::discover::invisible(c) || RESERVED_CHARS.contains(&c) {
                 '_'
             } else {
                 c
@@ -761,6 +764,15 @@ mod tests {
         assert_eq!(clean("a<b>c|d\"e*f"), "a_b_c_d_e_f");
         assert_eq!(clean("10:30.log"), "10_30.log");
         assert_eq!(clean("tab\there\u{1}.txt"), "tab_here_.txt");
+    }
+
+    #[test]
+    fn hidden_direction_overrides_cannot_disguise_an_extension() {
+        // Shown as "invoiceexe.pdf" if the override survived; saved as .exe.
+        assert_eq!(clean("invoice\u{202E}fdp.exe"), "invoice_fdp.exe");
+        assert_eq!(clean("a\u{200B}b\u{2066}c\u{FEFF}.txt"), "a_b_c_.txt");
+        // Joiners stay: emoji and some scripts need them.
+        assert_eq!(clean("👩\u{200D}💻.png"), "👩\u{200D}💻.png");
     }
 
     #[test]

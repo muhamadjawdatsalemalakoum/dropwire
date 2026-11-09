@@ -79,13 +79,45 @@ async fn run_send(
     let store = &core.inner.store;
 
     // 1. Enumerate files (single file -> one entry; directory -> recursive).
-    let Listing {
-        files,
-        skipped,
-        display_name,
-        roots,
-    } = list_paths(&paths)?;
-    let total: u64 = files.iter().map(|(_, p)| file_len(p)).sum();
+    // Walking a large folder is slow, blocking file-system work: it runs off
+    // the async threads, and Cancel works while it does.
+    let listing = {
+        let paths = paths.clone();
+        let walk = tokio::task::spawn_blocking(move || {
+            let listing = list_paths(&paths)?;
+            let total: u64 = listing.files.iter().map(|(_, p)| file_len(p)).sum();
+            anyhow::Ok((listing, total))
+        });
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                let _ = tx.send(Progress::Cancelled { id }).await;
+                return Ok(());
+            }
+            r = walk => r.context("list the chosen files")??,
+        }
+    };
+    let (
+        Listing {
+            files,
+            skipped,
+            display_name,
+            roots,
+        },
+        total,
+    ) = listing;
+    // A receiver refuses a transfer over these limits, so say so now instead
+    // of hashing everything and handing out a code nobody can open.
+    let names_bytes: u64 = files.iter().map(|(n, _)| n.len() as u64 + 8).sum();
+    if files.len() > crate::receive::MAX_FILES || names_bytes > crate::receive::MAX_META_BYTES {
+        return Err(crate::error::CoreError::Other(anyhow::anyhow!(
+            "This is too much to send under one code: {} files. One code can hold up to {} files. \
+             Send the folder in parts, or zip it first.",
+            files.len(),
+            crate::receive::MAX_FILES
+        ))
+        .into());
+    }
 
     // 2. Import each file, holding the TempTags so nothing is GC'd while serving.
     let mut tags: Vec<TempTag> = Vec::with_capacity(files.len());
