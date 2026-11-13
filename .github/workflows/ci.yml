@@ -46,7 +46,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -85,7 +85,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install Linux dependencies
         # Same WebKitGTK stack the release build installs.
@@ -142,7 +142,7 @@ jobs:
           toolchain: ${{ steps.msrv.outputs.version }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Check the engine on the minimum supported Rust
         env:
